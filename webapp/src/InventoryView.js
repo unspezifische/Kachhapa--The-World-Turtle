@@ -99,45 +99,41 @@ export default function InventoryView({ username, characterName, accountType, he
 
   // Update active_users and list of players
   useEffect(() => {
-    socket.on('active_users', fetchPlayers);
+    if (socket) {
+      socket.on('active_users', fetchPlayers);
 
-    return () => {
-      socket.off('active_users');
-    };
+      return () => {
+        socket.off('active_users');
+      };
+    }
   }, [socket]);
 
   // Update Player Inventory on change
-  const fetchInventory = async () => {
-    // console.log("**** Fetching Inventory ****");
-    // console.log("accountType:", accountType);
+  function fetchInventory() {
+    console.log("**** Fetching Inventory ****");
+    console.log("accountType:", accountType);
     if (accountType === 'Player') {
-      try {
-        const response = await axios.get('http://127.0.0.1:5001/api/inventory', {
-          headers: {
-            ...headers,
-            'Character-Name': characterName // Include the character name in the request headers
-          }
-        })
-        // console.log("INVENTORY- response for " + characterName + ":", response.data);
-        const inventory = response.data.inventory;
+      axios.get('http://127.0.0.1:5001/api/inventory', { headers })
+      .then(response => {
+        console.log("INVENTORY- response:", response);
         if (inventory.length > 0) {
-          setInventory(inventory); // Save all inventory items in state
+          setInventory(response.data.inventory); // Save all inventory items in state
           // setSortedInventory(inventory);
         }
-      } catch (error) {
+      })
+      .catch(error => {
         console.error('Error loading inventory:', error.response.data);
-      }
+      });
     } else if (accountType === "DM") {
-      try {
-        const response = await axios.get('http://127.0.0.1:5001/api/items', { headers: headers });
-        const inventory = response.data.items;
-        if (inventory && inventory.length > 0) {
-          setInventory(inventory); // Save all inventory items in state
-          // setSortedInventory(inventory);
-        }
-      } catch (error) {
+      axios.get('http://127.0.0.1:5001/api/items', { headers })
+      .then(response => {
+        console.log("INVENTORY- DM response:", response);
+        setInventory(response.data.items); // Save all inventory items in state
+        // setSortedInventory(inventory);
+      })
+      .catch(error => {
         console.error('Error loading inventory:', error.response.data);
-      }
+      });
     }
   };
 
@@ -147,14 +143,16 @@ export default function InventoryView({ username, characterName, accountType, he
 
   // Runs fetchInventory when the socket message is received
   useEffect(() => {
-    // Listen for 'items_updated' event
-    socket.on('items_updated', fetchInventory);
+    if (socket) {
+      // Listen for 'items_updated' event
+      socket.on('items_updated', fetchInventory);
 
-    // Cleanup function to remove the event listener when component unmounts
-    return () => {
-      socket.off('items_updated');
-    };
-  }, [socket, fetchInventory, accountType]);
+      // Cleanup function to remove the event listener when component unmounts
+      return () => {
+        socket.off('items_updated');
+      };
+    }
+  }, [socket, fetchInventory]);
 
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -278,24 +276,26 @@ export default function InventoryView({ username, characterName, accountType, he
 
   // For when a player is given a new item
   useEffect(() => {
-    socket.on('inventory_update', async function(data) {
-      // Update the player's inventory
-      // console.log('Inventory update:', data);
-      // console.log("Does " + data.character_name + " match " + characterName + "?", data.character_name === characterName);
-      // Request the server to get the latest inventory
-      const response = await axios.get('http://127.0.0.1:5001/api/inventory', {
-        headers: {
-          'Character-Name': characterName // Include the character name in the request headers
-        }})
-      const updatedInventory = response.data.inventory;
+    if (socket) {
+      socket.on('inventory_update', async function(data) {
+        // Update the player's inventory
+        // console.log('Inventory update:', data);
+        // console.log("Does " + data.character_name + " match " + characterName + "?", data.character_name === characterName);
+        // Request the server to get the latest inventory
+        const response = await axios.get('http://127.0.0.1:5001/api/inventory', {
+          headers: {
+            'Character-Name': characterName // Include the character name in the request headers
+          }})
+        const updatedInventory = response.data.inventory;
 
-      setInventory(updatedInventory);
-      setSortedInventory(updatedInventory);
-    });
+        setInventory(updatedInventory);
+        setSortedInventory(updatedInventory);
+      });
 
-    return () => {
-      socket.off('inventory_update');
-    };
+      return () => {
+        socket.off('inventory_update');
+      };
+    }
   }, [headers, socket]);
 
 

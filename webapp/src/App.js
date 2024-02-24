@@ -43,6 +43,10 @@ function App() {
   const [accountType, setAccountType] = useState('');
   const [headers, setHeaders] = useState({});
 
+  useEffect(() => {
+    console.log('headers:', headers);
+  }, [headers]);
+
   const [inCombat, setInCombat] = useState(false);
 
   function authenticateUserWithToken(token) {
@@ -59,6 +63,7 @@ function App() {
           // Fetch user data here
           axios.get('http://127.0.0.1:5001/api/profile', { headers: { Authorization: `Bearer ${token}` } })
             .then(response => {
+              console.log("User data:", response.data);
               setUsername(response.data.username);
               setUserID(response.data.id); // Set the userID
               setIsLoading(false); // Set loading to false when user data has been fetched
@@ -73,12 +78,16 @@ function App() {
               console.error(error);
               setIsLoading(false); // Set loading to false if there was an error fetching user data
             });
-        } else {
-          console.log("Token is invalid");
-          localStorage.removeItem('token'); // Remove invalid token
-          setIsLoading(false); // Set loading to false if the token was invalid
         }
         setIsLoading(false); // Set loading to false if the token was invalid
+      })
+      .catch(error => {
+        console.error(error);
+        localStorage.removeItem('token'); // Remove invalid token
+        if (error.response && error.response.status === 401) {
+          console.log("Unauthorized request");
+        }
+        setIsLoading(false); // Set loading to false if the request fails
       });
   }
 
@@ -247,7 +256,7 @@ function App() {
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socket} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socket} />} />
-                  <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} />} />
+                  <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} />} />
                 </Routes>
               </Col>
               <Col md={3} className="chat-column">
@@ -283,7 +292,10 @@ function App() {
             </Row>
           </Container>
           ) : (
-              <AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} />
+              <AccountProfile headers={headers}
+              setSelectedCampaign={setSelectedCampaign}
+              setCharacterName={setCharacterName}
+              setAccountType={setAccountType} />
           )
         ) : (
           <Container fluid>

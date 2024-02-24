@@ -32,12 +32,14 @@ function Menu({ accountType, selectedCampaign }) {
   }
 
   function openWiki() {
-    if (selectedCampaign && selectedCampaign.name) {
-      console.log("selectedCampaign: ", selectedCampaign)
-      window.open('http://app.raspberrypi.local/' + selectedCampaign.name + '/wiki', '_blank');
-    } else {
-      console.log("No selected campaign or campaign name");
-    }
+      if (selectedCampaign && selectedCampaign.name) {
+        console.log("selectedCampaign: ", selectedCampaign)
+        var encodedName = encodeURIComponent(selectedCampaign.name);
+        window.open('http://localhost:5001/' + encodedName, '_blank');
+        console.log("Opening wiki: localhost:5001/" + encodedName);
+      } else {
+        console.log("No selected campaign or campaign name");
+      }
   }
 
   return (
@@ -84,14 +86,14 @@ function Menu({ accountType, selectedCampaign }) {
             </NavText>
           </NavItem>
           {/* Comment out this block if Spellbook isn't ready in time */}
-          <NavItem eventKey="Spellbook" className={location.pathname === "/Spellbook" ? "active" : ""}>
+          {/* <NavItem eventKey="Spellbook" className={location.pathname === "/Spellbook" ? "active" : ""}>
             <NavIcon>
               <AutoFixHighIcon />
             </NavIcon>
             <NavText>
               Spellbook
             </NavText>
-          </NavItem>
+          </NavItem> */}
           <NavItem eventKey="journal" className={location.pathname === "/journal" ? "active" : ""}>
             <NavIcon>
               <HistoryEduIcon />

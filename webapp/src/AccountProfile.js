@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { Card, Button, Modal, Navbar, Container, Row, Col } from 'react-bootstrap';
+import campaignIcon from './campaign.webp';
 
-const AccountProfile = ({ headers, setSelectedCampaign }) => {
+const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType }) => {
   const navigate = useNavigate();
 
   const [campaigns, setCampaigns] = useState([]);
@@ -35,8 +36,18 @@ const AccountProfile = ({ headers, setSelectedCampaign }) => {
         ownerId: campaign.owner_id
       });
     if (campaign.dm_id === headers.userID || campaign.owner_id === headers.userID) {
+      setAccountType('DM') 
       navigate('/dmTools');
     } else {
+      setAccountType('Player') 
+      axios.get('http://127.0.0.1:5001/api/character', { headers })
+        .then(response => {
+          console.log("response.data:", response.data);
+          setCharacterName(response.data.characterName);
+        })
+        .catch(error => {
+          console.error('Error fetching characters:', error)
+        });
       navigate('/characterSheet');
     }
   };
@@ -51,18 +62,33 @@ const AccountProfile = ({ headers, setSelectedCampaign }) => {
           {campaigns.map((campaign) => (
             <Col sm={4} key={campaign.id}>
               <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={() => handleCampaignSelection(campaign)}>
-                <Card.Img variant="top" src={campaign.icon} />
-                <Card.Body>
-                  <Card.Title>{campaign.name}</Card.Title>
-                </Card.Body>
+                <Row>
+                  <Col xs={4}>
+                    <Card.Img variant="top" src={campaign.icon || campaignIcon} />
+                  </Col>
+                  <Col xs={8}>
+                    <Card.Body>
+                      <Card.Title>{campaign.name}</Card.Title>
+                      <Card.Subtitle className="mb-2 text-muted">{campaign.system}</Card.Subtitle>
+                      {/* Add more details here */}
+                    </Card.Body>
+                  </Col>
+                </Row>
               </Card>
             </Col>
           ))}
           <Col sm={4}>
             <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={handleShow}>
-              <Card.Body>
-                <Card.Title>Create New Campaign</Card.Title>
-              </Card.Body>
+              <Row>
+                <Col xs={4}>
+                  <Card.Img variant="top" src={campaignIcon} />
+                </Col>
+                <Col xs={8}>
+                  <Card.Body>
+                    <Card.Title>Create A New Campaign</Card.Title>
+                  </Card.Body>
+                </Col>
+              </Row>
             </Card>
           </Col>
         </Row>
