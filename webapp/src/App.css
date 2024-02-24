@@ -1,0 +1,50 @@
+ .App {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 64px 1fr 20%;
+  grid-template-rows: 100vh;
+  grid-template-areas: "menu content chat";
+}
+
+.menu-column {
+  width: 64px;
+  grid-area: menu;
+  background: #db3d44;
+}
+
+.content-column {
+  grid-area: content;
+  overflow-y: auto;
+}
+
+.chat-column {
+  grid-area: chat;
+}
+
+.spinner {
+  display: inline-block;
+  width: 80px;
+  height: 80px;
+}
+
+.spinner .circle {
+  box-sizing: border-box;
+  display: block;
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  margin: 8px;
+  border: 8px solid #000;
+  border-radius: 50%;
+  animation: spinner 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  border-color: #000 transparent transparent transparent;
+}
+
+@keyframes spinner {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}

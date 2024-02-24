@@ -1,0 +1,74 @@
+/* Menu.css */
+
+/* For Desktop */
+@media (min-width: 768px) {
+  .sidenav {
+    position: sticky;
+    top: 0;
+    /* left: 0; */
+    z-index: 1006;
+    min-width: 64px;
+    background: #db3d44;
+    transition: min-width 0.2s;
+  }
+
+  .sidenav.expanded {
+    min-width: 64px;
+  }
+}
+
+/* For Mobile */
+@media (max-width: 767px) {
+  .sidenav {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1006;
+    width: 100%;
+    height: 100vh;
+    overflow: auto;
+    background: #db3d44;
+    transition: transform 0.3s ease-out;
+    transform: translateX(-100%);
+  }
+
+  .sidenav.expanded {
+    transform: translateX(0);
+  }
+}
+
+.sidenav-nav {
+  float: left;
+  padding: 0;
+  margin: 0;
+  clear: both;
+  list-style: none;
+  width: 100%;
+}
+
+.sidenav-navitem {
+  clear: both;
+  position: relative;
+}
+
+.navitem {
+  position: relative;
+  display: block;
+  line-height: 50px;
+  height: 50px;
+  white-space: nowrap;
+  text-decoration: none;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.navitem:hover {
+  background-color: #555;
+}
+
+.navitem.selected {
+  background-color: #333;
+}

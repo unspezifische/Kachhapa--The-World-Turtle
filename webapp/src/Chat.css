@@ -1,0 +1,75 @@
+/* Chat.css */
+
+.chat-widget {
+  display: flex;
+  flex-direction: column;
+  max-height: 100vh;
+}
+
+.messageContainer,
+.usersList {
+  overflow-y: auto;
+}
+
+.messageContainer {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  cursor: pointer;
+  align-items: flex-start;
+  flex-grow: 1;
+  height: 50vh;
+  max-height: calc(80vh - 110px);
+}
+
+.usersList {
+  flex-grow: 1;
+  height: 20vh;
+  max-height: 50vh;
+  /* margin: 0 10px; */
+}
+
+.send-interface {
+  justify-content: space-between;
+}
+
+.message {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 5px;
+  font-size: 16px;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.message.sent {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  background-color: #add8e6; /* Light blue */
+}
+
+.message.received {
+  flex-direction: row;
+  justify-content: flex-start;
+  background-color: #dcf8c6; /* Light green */
+}
+
+.sender {
+  margin: 0 10px;
+  font-size: small;
+  color: gray;
+}
+
+.new-group {
+  padding-top: 20px;
+}
+
+.ToggleButton {
+  flex-grow: 0;
+  height: 30px; /* Set this to the desired height */
+}

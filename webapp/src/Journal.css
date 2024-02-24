@@ -1,0 +1,49 @@
+/* Journal.css */
+
+/* Set the main container to occupy 100% of the viewport height */
+.container {
+  height: 100vh;
+  /* overflow: hidden; */
+  /* display: flex; */
+  /* flex-direction: column; */
+}
+
+/* Set the table of entries to take up a fixed height */
+.entriesTable {
+  height: 30%;
+  width: 90%;
+  overflow-y: auto;
+  /* margin-bottom: 20px; */
+}
+
+/* Set the main entry area to take the remaining space */
+.editorContainer {
+  display: block;
+  flex-grow: 1;
+  overflow-y: auto;
+  /* border: 1px solid black; */
+  /* padding: 10px; */
+  height: 50%;
+  width: 100%;
+}
+
+.editorContainer .editor-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: #fff;
+}
+
+/* Set the maximum width for the table */
+.entriesTable Table {
+  table-layout: fixed; /* Helps to prevent cell content from overflowing */
+  overflow: hidden;
+  /* padding: 10px; */
+  /* margin: 10px; */
+  width: 90%;
+}
+/* Optional: Add styles for individual table cells to ensure they don't overflow */
+.entriesTable td {
+  text-overflow: ellipsis; /* Adds "..." when the content is too long */
+  white-space: nowrap; /* Prevents text from wrapping to the next line */
+}

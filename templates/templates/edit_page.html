@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  <div id="editor"></div>
+  <input type="hidden" id="originalContent" value="{{ content }}">
+  <button id="saveButton" class="btn btn-primary mt-2">Save</button>
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      var originalContent = document.getElementById("originalContent").value;
+      var quill = new Quill('#editor', {
+        theme: 'snow'
+      });
+      quill.clipboard.dangerouslyPasteHTML(0, originalContent);
+
+      // save the updated content when the save button is clicked
+      document.getElementById("saveButton").addEventListener("click", function() {
+        var content = quill.root.innerHTML;
+        console.log("Saving content:", content);
+
+        axios.post('{{ request.path }}', 'content=' + encodeURIComponent(content), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          }
+        })
+        .then(response => {
+          if (response.data.success) {
+            alert("Saved successfully");
+            window.location.href = window.location.pathname.replace('/edit', '');  // Go back to the read-only page after saving
+          } else {
+            alert("Error saving");
+          }
+        })
+        .catch(error => {
+          console.error("Axios error:", error);
+          alert("Error saving");
+        });
+      });
+    });
+  </script>
+{% endblock %}
