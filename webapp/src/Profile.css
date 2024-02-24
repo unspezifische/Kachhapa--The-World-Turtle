@@ -1,0 +1,104 @@
+.tile-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); /* Adjust the minmax values according to your design */
+  gap: 16px; /* Gap between tiles */
+}
+
+.tile {
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  background-color: #fff;
+  padding: 10px; /* Padding inside the tile */
+  /* overflow-y: auto; */
+  /*text-overflow: ellipsis; /* Add ellipsis if text overflows */
+  /*white-space: nowrap; /* Prevent text from wrapping */
+}
+
+/* Responsive text size */
+@media (max-width: 600px) {
+  .tile {
+    font-size: 14px; /* Adjust the font size for small screens */
+  }
+}
+
+@media (min-width: 601px) and (max-width: 1200px) {
+  .tile {
+    font-size: 16px; /* Adjust the font size for medium screens */
+  }
+}
+
+@media (min-width: 1201px) {
+  .tile {
+    font-size: 18px; /* Adjust the font size for large screens */
+  }
+}
+
+
+.edit-icon {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: none;  /* Initially hide the EditIcon */
+}
+
+.tile:hover .edit-icon {
+  display: block;  /* Show the EditIcon when a user hovers over a tile */
+}
+
+.tile.characterName {
+  background-color: #f9f9f9;
+}
+
+.tile.classLevel {
+  background-color: #f0f0f0;
+}
+
+.label {
+  margin-right: 0px;
+  margin-bottom: 5px;
+  font-size: small;
+  color: gray;
+}
+
+.skill-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.label-right {
+  text-align: right;
+  font-size: small;
+  color: gray;
+}
+
+.characterName {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.ability-score-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  margin: 5px;
+  padding: 5px;
+  background-color: #f0f0f0;
+}
+
+.ability-score-value {
+  font-size: 2em;
+  background-color: #ddd;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0px; /* Reduced margin-top */
+  line-height: 50px; /* Added line-height */
+}

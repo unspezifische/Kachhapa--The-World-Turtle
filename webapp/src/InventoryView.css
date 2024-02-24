@@ -1,0 +1,17 @@
+.table-fixed-header thead {
+  position: sticky;
+  top: 0;
+  background-color: white;
+}
+
+.table-fixed-header tbody {
+  display: block;
+  max-height: 80%;  /* Set this to the desired max height of your table body */
+  overflow-y: auto;
+}
+
+.table-fixed-header tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}

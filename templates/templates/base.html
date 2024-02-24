@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{{ page_title }} - Adventures in Neverwinter</title>
+    <link rel="icon" href="/turtle.svg"/>
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/quill/quill.snow.css">
+    <link rel="stylesheet" href="/static/fonts/MaterialIcons">
+    <!-- <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons" > -->
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top" style="padding-left:20px;">
+      <a class="navbar-brand" href="/wiki/">Adventures in Neverwinter</a>
+      <div class="dropdown">
+        <input class="form-control mr-sm-2 dropdown-toggle" type="text" id="searchInput" placeholder="Search" aria-label="Search" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+        <div class="dropdown-menu" id="searchResults">
+        </div>
+      </div>
+      <script>
+        const searchInput = document.getElementById('searchInput');
+        const resultsDiv = document.getElementById('searchResults');
+
+        searchInput.addEventListener('input', function() {
+          fetch(`/search?q=${searchInput.value}`)
+            .then(response => response.json())
+            .then(data => {
+              resultsDiv.innerHTML = '';
+              data.forEach(title => {
+                const resultItem = document.createElement('a');
+                resultItem.href = "#"; // Or link to the actual page
+                resultItem.innerText = title;
+                resultItem.classList.add('dropdown-item');
+                resultsDiv.appendChild(resultItem);
+              });
+            });
+        });
+      </script>
+      <div class="dropdown">
+        <button class="btn btn-primary dropdown-toggle" type="button" id="createNewPageDropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            Create New Page
+        </button>
+        <div class="dropdown-menu" aria-labelledby="createNewPageDropdown">
+            <a class="dropdown-item" href="/create/business">Business Template</a>
+            <a class="dropdown-item" href="/create/city">City Template</a>
+            <a class="dropdown-item" href="/create/npc">NPC Template</a>
+            <a class="dropdown-item" href="/create/blank">Blank Page</a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container mt-4">
+      {% block content %}{% endblock %}
+    </div>
+
+    <script src="/static/jquery-3.5.1.min.js"></script>
+    <script src="/static/axios.min.js"></script>
+    <script src="/static/popper.min.js"></script>
+    <script src="/static/js/bootstrap.min.js"></script>
+    <script src="/static/quill/quill.js"></script>
+  </body>
+</html>

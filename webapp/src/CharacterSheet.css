@@ -1,0 +1,33 @@
+.register-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.register-container form {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.register-container input,
+.register-container select,
+.register-container button {
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.register-container button {
+  cursor: pointer;
+  background-color: #007bff;
+  color: #fff;
+}
+
+.register-container button:hover {
+  background-color: #0056b3;
+}

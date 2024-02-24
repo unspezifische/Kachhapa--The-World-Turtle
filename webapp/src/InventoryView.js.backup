@@ -1,0 +1,346 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Container, Row, Col, Table, Button, Modal, ModalDialog, Form } from 'react-bootstrap';
+import 'bootstrap/dist/css/bootstrap.min.css';
+
+function InventoryView({ headers, characterName, accountType, socket }) {
+  const [inventory, setInventory] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [showItemDetails, setShowItemDetails] = useState(false);
+  const [addingItem, setAddingItem] = useState(false);
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemType, setNewItemType] = useState('');
+  const [newItemCost, setNewItemCost] = useState('');
+  const [newItemCurrency, setNewItemCurrency] = useState('Gold');
+  const [newItemDescription, setNewItemDescription] = useState('');
+
+  // For the DM to issue items to players
+  const [players, setPlayers] = useState([]);
+  const [selectedPlayer, setSelectedPlayer] = useState('');
+  const [quantity, setQuantity] = useState(1);
+
+  useEffect(() => {
+    socket.on('inventory_update', function(data) {
+      // Update the player's inventory
+      console.log('Inventory update:', data);
+
+      // Find the item in the inventory
+      const itemIndex = inventory.findIndex(item => item.id === data.item_id);
+
+      if (itemIndex !== -1) {
+        // If the item is already in the inventory, update its quantity
+        const updatedInventory = [...inventory];
+        updatedInventory[itemIndex].quantity += data.quantity;
+        setInventory(updatedInventory);
+      } else {
+        // If the item isn't in the inventory, add it
+        // This requires a request to the server to get the item details
+        axios.get(`api/items/${data.item_id}`, { headers })
+          .then(response => {
+            const newItem = response.data.item;
+            newItem.quantity = data.quantity;
+            setInventory(prevInventory => [...prevInventory, newItem]);
+          });
+      }
+    });
+  }, []);
+
+
+  useEffect(() => {
+    if (accountType === 'Player') {
+      axios.get('api/inventory', { headers })
+        .then(response => {
+          setInventory(response.data.inventory);
+        });
+    } else if (accountType === 'DM') {
+      axios.get('api/items', { headers })
+        .then(response => {
+          setInventory(response.data.items);
+        });
+      // Fetch the list of players
+      axios.get('api/players', { headers })
+        .then(response => {
+          setPlayers(response.data.players);
+          console.log("players:", response.data.players)
+        });
+    }
+  }, [headers, accountType]);
+
+  const handleItemSelection = (item) => {
+    setSelectedItem(item);
+    setShowItemDetails(true);
+  };
+
+  const createItem = async () => {
+    try {
+      const response = await axios.post('api/items', {
+        name: newItemName,
+        type: newItemType,
+        cost: newItemCost,
+        currency: newItemCurrency,
+        description: newItemDescription
+      }, { headers });
+      setNewItemName('');
+      setNewItemType('');
+      setNewItemCost('');
+      setNewItemCurrency('Gold');
+      setNewItemDescription('');
+      setInventory(prevInventory => [...prevInventory, response.data.item]);
+      setAddingItem(false);
+    } catch (error) {
+      console.error('Error creating item:', error);
+    }
+  };
+
+  const giveItemToAnotherPlayer = (selectedItem) => {
+    // Function body goes here
+  };
+
+  const initiateTradeRequest = (selectedItem) => {
+    // Function body goes here
+  };
+
+  // Issue an item to a player
+  const issueItemToPlayer = async () => {
+    console.log("selectedPlayer:", selectedPlayer);
+    console.log("selectedPlayer.username:", selectedPlayer.username);
+    console.log("selectedItem:", selectedItem);
+    console.log("selectedItem.id:", selectedItem.id);
+    try {
+      axios.post('api/inventory', {
+        username: selectedPlayer.username,
+        item_id: selectedItem.id,
+        quantity: parseInt(quantity)
+      }, { headers });
+      setShowItemDetails(false);
+    } catch (error) {
+        console.error('Error issuing item:', error);
+    }
+  };
+
+  const handleCloseItemDetails = async () => {
+    try {
+      await axios.put(`api/items/${selectedItem.id}`, selectedItem, { headers });
+      setInventory(inventory.map(item => item.id === selectedItem.id ? selectedItem : item));
+      setShowItemDetails(false);
+    } catch (error) {
+      console.error('Error updating item:', error);
+    }
+  };
+
+  const deleteItem = async (itemId) => {
+    try {
+      await axios.delete(`api/items/${itemId}`, { headers });
+      setInventory(inventory.filter(item => item.id !== itemId));
+      setShowItemDetails(false);
+    } catch (error) {
+      console.error('Error deleting item:', error);
+    }
+  };
+
+
+  return (
+    <Container>
+      <h1>Welcome back, {characterName}!</h1>
+      <Table striped bordered hover>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            {accountType === 'Player' && <th>Quantity</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {inventory.length === 0 ? (
+            <tr>
+              <td colSpan="3">You don't have anything in your inventory yet!</td>
+            </tr>
+          ) : (
+            inventory.map((item, index) => (
+              <tr key={index} onClick={() => handleItemSelection(item)}>
+                <td>{item.name}</td>
+                <td>{item.type}</td>
+                {accountType === 'Player' && <td>{item.quantity}</td>}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </Table>
+      {accountType === 'DM' && (
+        <Button onClick={() => setAddingItem(true)}>Add Item</Button>
+      )}
+
+      {/* Create New Item Modal */}
+      <Modal show={addingItem} onHide={() => setAddingItem(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Add Item</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <input
+            type="text"
+            placeholder="Item Name"
+            value={newItemName}
+            onChange={e => setNewItemName(e.target.value)}
+          />
+          <select
+            value={newItemType}
+            onChange={e => setNewItemType(e.target.value)}
+          >
+            <option value="Armor">Armor</option>
+            <option value="Weapon">Weapon</option>
+            <option value="Potion">Potion</option>
+            <option value="Scroll">Scroll</option>
+            <option value="Wand">Wand</option>
+            <option value="Ring">Ring</option>
+            <option value="Rod">Rod</option>
+            <option value="Staff">Staff</option>
+            <option value="Wondrous Item">Wondrous Item</option>
+            <option value="Adventuring Gear">Adventuring Gear</option>
+            <option value="Tools">Tools</option>
+            <option value="Mounts and Vehicles">Mounts and Vehicles</option>
+            <option value="Trade Goods">Trade Goods</option>
+            <option value="Treasure">Treasure</option>
+          </select>
+          <input
+            type="number"
+            placeholder="Item Cost"
+            value={newItemCost}
+            onChange={e => setNewItemCost(e.target.value)}
+          />
+          <select
+            value={newItemCurrency}
+            onChange={e => setNewItemCurrency(e.target.value)}
+          >
+            <option value="Copper">Copper</option>
+            <option value="Silver">Silver</option>
+            <option value="Electrum">Electrum</option>
+            <option value="Gold">Gold</option>
+            <option value="Platinum">Platinum</option>
+          </select>
+          <textarea
+            placeholder="Item Description"
+            value={newItemDescription}
+            onChange={e => setNewItemDescription(e.target.value)}
+          />
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setAddingItem(false)}>
+            Close
+          </Button>
+          <Button variant="primary" onClick={createItem}>
+            Add Item
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* ItemDetails Modal */}
+      <Modal show={showItemDetails} onHide={handleCloseItemDetails} centered>
+        <ModalDialog>
+          <Modal.Header closeButton>
+            <Modal.Title className="w-100 text-center">
+              <Form.Control
+                type="text"
+                value={selectedItem?.name}
+                onChange={e => setSelectedItem({ ...selectedItem, name: e.target.value })}
+              />
+            </Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <Container>
+              <Row>
+                <Col>
+                <Form.Control
+                  as="select"
+                  value={selectedItem?.type}
+                  onChange={e => setSelectedItem({ ...selectedItem, type: e.target.value })}
+                  >
+                  <option value="Armor">Armor</option>
+                  <option value="Weapon">Weapon</option>
+                  <option value="Potion">Potion</option>
+                  <option value="Scroll">Scroll</option>
+                  <option value="Wand">Wand</option>
+                  <option value="Ring">Ring</option>
+                  <option value="Rod">Rod</option>
+                  <option value="Staff">Staff</option>
+                  <option value="Wondrous Item">Wondrous Item</option>
+                  <option value="Adventuring Gear">Adventuring Gear</option>
+                  <option value="Tools">Tools</option>
+                  <option value="Mounts and Vehicles">Mounts and Vehicles</option>
+                  <option value="Trade Goods">Trade Goods</option>
+                  <option value="Treasure">Treasure</option>
+                  </Form.Control>
+                </Col>
+                <Col className="text-right">
+                  <Form.Control
+                    type="number"
+                    value={selectedItem?.cost}
+                    onChange={e => setSelectedItem({ ...selectedItem, cost: e.target.value })}
+                  />
+                  <Form.Control
+                    as="select"
+                    value={selectedItem?.currency}
+                    onChange={e => setSelectedItem({ ...selectedItem, currency: e.target.value })}
+                  >
+                    <option value="Copper">Copper</option>
+                    <option value="Silver">Silver</option>
+                    <option value="Electrum">Electrum</option>
+                    <option value="Gold">Gold</option>
+                    <option value="Platinum">Platinum</option>
+                  </Form.Control>
+                </Col>
+                <Form.Control
+                  as="textarea"
+                  value={selectedItem?.description}
+                  onChange={e => setSelectedItem({ ...selectedItem, description: e.target.value })}
+                />
+              </Row>
+            </Container>
+          </Modal.Body>
+          <Modal.Footer>
+            <Row className="justify-content-between">
+              {accountType === 'DM' && (
+                <Button variant="danger" onClick={() => deleteItem(selectedItem.id)}>
+                  Delete Item
+                </Button>
+              )}
+              <Button variant="secondary" onClick={handleCloseItemDetails}>
+                Close
+              </Button>
+              {accountType === 'DM' && (
+                <>
+                <select onChange={e => setSelectedPlayer(players.find(player => player.character_name === e.target.value))}>
+                  {players.map((player, index) => (
+                    <option key={index} value={player.character_name}>{player.character_name}
+                    </option>
+                  ))}
+                </select>
+                  <input
+                      type="number"
+                      placeholder="Quantity"
+                      value={quantity}
+                      onChange={e => setQuantity(e.target.value)}
+                  />
+                  <Button variant="primary" onClick={issueItemToPlayer}>
+                    Issue to Player
+                  </Button>
+                </>
+              )}
+              {accountType === 'Player' && (
+                <>
+                  <Button variant="primary" onClick={() => giveItemToAnotherPlayer(selectedItem)}>
+                    Give to Party Member
+                  </Button>
+                  <Button variant="primary" onClick={() => initiateTradeRequest(selectedItem)}>
+                    Trade with Party Member
+                  </Button>
+                </>
+              )}
+            </Row>
+          </Modal.Footer>
+        </ModalDialog>
+      </Modal>
+    </Container>
+  );
+}
+
+export default InventoryView;
