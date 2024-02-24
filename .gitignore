@@ -6,3 +6,4 @@ webapp/node_modules
 database_migration.log
 instances/
 wiki/
+node_modules/

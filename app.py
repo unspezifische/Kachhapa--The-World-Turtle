@@ -1,9 +1,11 @@
 from flask import Flask, abort, request, jsonify, send_from_directory
-from flask import render_template ## For rendering Wiki pages
+from flask import render_template ## For rendering wiki pages
 from flask import redirect, url_for
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
@@ -80,6 +82,7 @@ class User(db.Model):
 
     def to_dict(self):
         return {
+            'id': self.id,
             'username': self.username,
             'is_online': self.is_online,
             'sid': self.sid,
@@ -508,7 +511,7 @@ def login():
 
     user.is_online = True
     db.session.commit()
-    emit_active_users()
+    # emit_active_users()()
     return jsonify({
         'message': 'Login successful!', 
         'access_token': access_token,
@@ -533,7 +536,7 @@ def register():
     new_user.is_online = True
     db.session.add(new_user)
     db.session.commit()
-    emit_active_users()
+    # emit_active_users()()
     ## app.logger.info(new_user.is_online)   ## For test purposes
     access_token = create_access_token(identity=new_user.username)
     return jsonify({
@@ -551,7 +554,7 @@ def get_profile():
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
         print("PROFILE- user:", user.to_dict())
-        return jsonify({'username': user.username})
+        return jsonify({'username': user.username, 'id': user.id})
     except InvalidTokenError:
         return jsonify({'error': 'Invalid token'}), 401
     except ExpiredSignatureError:
@@ -625,13 +628,7 @@ def get_character():
         character_id = result.character_id if result else None
 
         character = Character.query.filter_by(id=character_id).first()
-        # if character is None:
-        #     print("Creating new Character entry")
-        #     # Create a new character with default values
-        #     character = Character(character_id=character_id)
-        #     db.session.add(character)
-        #     db.session.commit()
-        print("Getting character profile:", character.to_dict())
+
         return jsonify(character.to_dict()), 200
 
     except InvalidTokenError:
@@ -942,19 +939,37 @@ def save_items():
 
 
 @app.route('/api/inventory', methods=['GET', 'POST'], endpoint='inventory')
+@jwt_required()
 def inventory():
     if request.method == 'GET':
+        username = get_jwt_identity()
+        user = User.query.filter_by(username=username).first()
+
+        if user is None:
+            return jsonify({'error': 'User not found.'}), 404
+        
+        print("user", user.to_dict())
+
         campaign_id = request.headers.get('Campaign-ID')
-        user_id = request.headers.get('User-ID')
-        if campaign_id is None or user_id is None:
-            return jsonify({'error': 'Campaign ID or User ID not provided in the request header.'}), 400
+
+        if campaign_id is None:
+            return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+        
 
         # Find the character associated with the user and the campaign
-        character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
-        if character is None:
+        stmt = select(campaign_members.c.character_id).where(
+            campaign_members.c.campaign_id == campaign_id, 
+            campaign_members.c.user_id == user.id
+        )
+        result = db.session.execute(stmt).first()
+
+        if result is None:
             return jsonify({'error': 'Character not found.'}), 404
 
-        inventory_items = InventoryItem.query.filter_by(character_id=character.id).all()
+
+        character_id = result.character_id if result else None
+
+        inventory_items = InventoryItem.query.filter_by(character_id=character_id).all()
         inventory = []
         for inventory_item in inventory_items:
             item = Item.query.get(inventory_item.item_id)
@@ -1094,7 +1109,7 @@ def get_equipment():
     user = User.query.filter_by(username=username).first()
 
     campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
+
     print('Equipment: campaign_id:', campaign_id)
     print("Equipment: user_id:", user.id)
 
@@ -1614,6 +1629,72 @@ def update_spellbook_item(spell_id):
 
 
 ##************************##
+## **    Wiki Stuff    ** ##
+##************************##
+
+@app.route('/<campaign_name>/search', methods=['GET'])
+def search():
+    query = request.args.get('q')
+    results = Page.query.filter(Page.title.contains(query)).all()
+    return jsonify([page.title for page in results])
+
+@app.route('/<campaign_name>', methods=['GET'])
+def index(campaign_name):
+    page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title=="Main Page", Campaign.name==campaign_name).first()
+    if not page:
+        return render_template('index.html')
+
+    # Preprocess the Markdown
+    preprocessed_content = page.content.replace('](/', f'](/{campaign_name}/')
+
+    html_content = markdown.markdown(preprocessed_content)
+
+    return render_template('page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
+
+@app.route('/<campaign_name>/<page_title>', methods=['GET'])
+def wiki_page(campaign_name, page_title):
+    print("campaign_name:", campaign_name)
+    print("page_title:", page_title)
+
+    ## Get the campaign ID from the campaign name
+    campaign = Campaign.query.filter_by(name=campaign_name).first()
+    print("campaign:", campaign)
+
+    ## Get the page using the Campaign ID and the page title
+    page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
+
+    if page is None:
+        return f"No page found for campaign with the ID: {campaign.id} and page title {page_title}", 404
+
+    # Preprocess the Markdown
+    preprocessed_content = page.content.replace('](/', f'](/{campaign_name}/')
+
+    html_content = markdown.markdown(preprocessed_content)
+
+    return render_template('page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
+
+@app.route('/<campaign_name>/<page_title>/edit', methods=['GET', 'POST'])
+def edit_page(campaign_name, page_title):
+    page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
+    if not page:
+        return "Page not found", 404
+
+    # Handle POST request for saving edits
+    if request.method == "POST":
+        content = request.form.get('content')
+        page.content = content
+        db.session.commit()
+
+        # Send a response with success: true
+        return jsonify(success=True)
+
+    # Handle GET request for displaying the edit page
+    elif request.method == "GET":
+        html_content = markdown.markdown(page.content)
+        return render_template('edit_page.html', content=html_content)
+
+
+##************************##
 ## **  SocketIO Stuff  ** ##
 ##************************##
 
@@ -1644,7 +1725,7 @@ def connected():
                 user.is_online = True
                 user.sid = request.sid  # Update the SID associated with this user
                 db.session.commit()
-                emit_active_users()
+                # emit_active_users()
     except jwt.ExpiredSignatureError:
         # emit a custom event to notify client about the expired token
         socketio.emit('token_expired')
@@ -1665,11 +1746,11 @@ def handle_user_connected(data):
             user.is_online = True
             user.sid = request.sid  # Set the sid field
             db.session.commit()
-            emit_active_users()
+            # emit_active_users()
         else:
             user.sid = request.sid  # Set the sid field
             db.session.commit()
-            emit_active_users()
+            # emit_active_users()
             ## app.logger.info("HANDLE CONNETION- %s is already online", user.username)
             print("HANDLE CONNETION-", user.username, "is already online")
 
@@ -1908,69 +1989,10 @@ def disconnected():
         print("DISCONNECT-", user.username, "is logging off!")
         user.is_online = False
         db.session.commit()
-        emit_active_users()
+        # emit_active_users()()
         socketio.emit("disconnect",f"user {user.username} disconnected", room='/')
         ## app.logger.info("DISCONNECT- %s disconnected", user.username)
         print("DISCONNECT-", user.username, "disconnected")
-
-@app.route('/search', methods=['GET'])
-def search():
-    query = request.args.get('q')
-    results = Page.query.filter(Page.title.contains(query)).all()
-    return jsonify([page.title for page in results])
-
-
-@app.route('/', methods=['GET'])
-def index():
-    page = Page.query.filter_by(title="Main Page").first()
-    if not page:
-        return render_template('index.html')
-
-    html_content = markdown.markdown(page.content)
-
-    return render_template('page.html', content=html_content, page_title=page.title)
-
-
-@app.route('/<page_title>', methods=['GET'])
-def wiki_page(page_title):
-    print("page_title:", page_title)
-    ## Decode any %20 in the URL to space
-    # page_title = unquote(page_title)
-    # print("Adjusted page_title:", page_title)
-
-    page = Page.query.filter_by(title=page_title).first()
-    if not page:
-        return "Page not found", 404
-
-    html_content = markdown.markdown(page.content)
-
-    return render_template('page.html', content=html_content, page_title=page.title)
-
-@app.route('/<page_title>/edit', methods=['GET', 'POST'])
-def edit_page(page_title):
-    print("Accessing edit page for:", page_title)
-    page = Page.query.filter_by(title=page_title).first()
-    if not page:
-        return "Page not found", 404
-
-    # Handle POST request for saving edits
-    if request.method == "POST":
-        print("Saving edits for:", page_title)
-        content = request.form.get('content')
-        page.content = content
-        db.session.commit()
-        
-        # Redirect to the non-editing version of the page
-        return redirect(url_for('wiki_page', page_title=page_title))
-
-    # Handle GET request for displaying the edit page
-    elif request.method == "GET":
-        html_content = markdown.markdown(page.content)
-        return render_template('edit_page.html', content=html_content)
-
-    # Return an error for any other request method
-    else:
-        return "Method not allowed", 405
 
 
 if __name__ == '__main__':

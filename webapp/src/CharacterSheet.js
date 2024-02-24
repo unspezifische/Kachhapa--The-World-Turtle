@@ -201,6 +201,13 @@ function CharacterSheet({ headers, characterName }) {
     Feats: [''],  // mostly determined by class? also race?
   });
 
+  useEffect(() => {
+    setCharacter(prevCharacter => ({
+      ...prevCharacter,
+      Name: characterName
+    }));
+  }, [characterName]);
+
   const [addAmount, setAddAmount] = useState(0);
   const [spendAmount, setSpendAmount] = useState(0);
 
@@ -261,7 +268,7 @@ function CharacterSheet({ headers, characterName }) {
 
   // Fetch the character data from the server when the component mounts
   useEffect(() => {
-    console.log("character.Name:", character.Name);
+    // console.log("character.Name:", character.Name);
     axios.get(`http://127.0.0.1:5001/api/character`, { headers: headers })
     .then(response => {
       console.log('Fetched character data:', response.data);
@@ -312,8 +319,11 @@ function CharacterSheet({ headers, characterName }) {
       // error case
       console.error(error);
     });
-    console.log("Updated Character:", character);
   }, [character.Name])
+
+  useEffect(() => {
+    console.log("Character:", character);
+  }, [character]);
 
 
   function handleEdit(tileId) {
@@ -431,11 +441,11 @@ function CharacterSheet({ headers, characterName }) {
     if (character.Class) {
       axios.get(`http://127.0.0.1:5001/api/classes/${character.Class}`)
         .then(response => {
-          console.log('Class info from Flask- response.data:', response.data);
+          // console.log('Class info from Flask- response.data:', response.data);
           setHitPoints( response.data.hit_points );
           const hpPerLevel = response.data.hit_points.level_increment + getModifier(character.abilityScores.constitution);
           const hitPointMax = response.data.hit_points.base + (character.Level * hpPerLevel);
-          console.log("hitPointMax:", hitPointMax);
+          // console.log("hitPointMax:", hitPointMax);
 
           const features = [];
           for (let i = 0; i < character.Level; i++) {
@@ -448,7 +458,7 @@ function CharacterSheet({ headers, characterName }) {
           if (character.Race) {
             axios.get(`http://127.0.0.1:5001/api/races/${character.Race}`)
               .then(response => {
-                console.log('Race info from Flask- response.data:', response.data);
+                // console.log('Race info from Flask- response.data:', response.data);
                 tempProficiencies = [...tempProficiencies, ...Object.values(response.data.traits)];
 
                 setCharacter(prevState => ({
@@ -593,7 +603,7 @@ function CharacterSheet({ headers, characterName }) {
   function generateTileContent(tileId) {
     switch (tileId) {
       case 'Name':
-        return (<h1 className="characterName">{character.Name}</h1>);
+        return (<h1 className="h1">{character.Name}</h1>);
       case 'Class':
         return (
           <>

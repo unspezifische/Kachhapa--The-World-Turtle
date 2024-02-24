@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>{{ page_title }} - Adventures in Neverwinter</title>
+    <title>{{ page_title }} - {{ campaign_name }}</title>
     <link rel="icon" href="/turtle.svg"/>
-    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
-    <link rel="stylesheet" href="/static/quill/quill.snow.css">
-    <link rel="stylesheet" href="/static/fonts/MaterialIcons">
+    <link rel="stylesheet" href="/static/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/quill.snow.css">
+    <!-- <link rel="stylesheet" href="/static/fonts/MaterialIcons"> -->
     <!-- <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons" > -->
   </head>
   <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top" style="padding-left:20px;">
-      <a class="navbar-brand" href="/wiki/">Adventures in Neverwinter</a>
+      <a class="navbar-brand" href="{{ url_for('index', campaign_name=campaign_name) }}">{{ campaign_name }}</a>
       <div class="dropdown">
         <input class="form-control mr-sm-2 dropdown-toggle" type="text" id="searchInput" placeholder="Search" aria-label="Search" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
         <div class="dropdown-menu" id="searchResults">
@@ -52,10 +52,19 @@
       {% block content %}{% endblock %}
     </div>
 
+    <script>
+      window.onload = function() {
+        var links = document.getElementsByTagName('a');
+        for (var i = 0; i < links.length; i++) {
+          links[i].target = '_self';
+        }
+      };
+      </script>
+
     <script src="/static/jquery-3.5.1.min.js"></script>
     <script src="/static/axios.min.js"></script>
     <script src="/static/popper.min.js"></script>
-    <script src="/static/js/bootstrap.min.js"></script>
-    <script src="/static/quill/quill.js"></script>
+    <script src="/static/bootstrap.min.js"></script>
+    <script src="/static/quill.js"></script>
   </body>
 </html>
