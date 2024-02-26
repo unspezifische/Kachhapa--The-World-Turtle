@@ -31,3 +31,21 @@
 .register-container button:hover {
   background-color: #0056b3;
 }
+
+.tile {
+  /* other styles */
+  position: relative; /* make sure the tile is positioned */
+}
+
+.edit-icon {
+  /* other styles */
+  position: absolute; /* position the icon absolutely within the tile */
+  top: 0; /* adjust as needed */
+  right: 0; /* adjust as needed */
+  display: none; /* hide the icon by default */
+}
+
+.tile:hover .edit-icon {
+  display: block; /* show the icon when the user hovers over the tile */
+}
+

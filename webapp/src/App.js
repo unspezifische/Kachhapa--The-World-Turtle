@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import io from 'socket.io-client';
@@ -27,13 +27,18 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 
 
 function App() {
-  const [userID, setUserID] = useState(null);
   const [username, setUsername] = useState(null);
+
+  const [token, setToken] = useState(null);
+  const [userID, setUserID] = useState(null);
+  const headers = useMemo(() => ({
+    Authorization: `Bearer ${token}`,
+    'User-ID': userID
+  }), [token, userID]);
 
   // Socket Stuff
   const [socket, setSocket] = useState(null);
   const [socketLoading, setSocketLoading] = useState(true);
-  const [token, setToken] = useState(null);
 
   // State variables from useAuthHandler
   const [isLoading, setIsLoading] = useState(false);
@@ -41,7 +46,6 @@ function App() {
   const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
   const [characterName, setCharacterName] = useState('');
   const [accountType, setAccountType] = useState('');
-  const [headers, setHeaders] = useState({});
 
   useEffect(() => {
     console.log('headers:', headers);
@@ -67,12 +71,6 @@ function App() {
               setUsername(response.data.username);
               setUserID(response.data.id); // Set the userID
               setIsLoading(false); // Set loading to false when user data has been fetched
-
-              // Update headers with user ID
-              setHeaders(prevHeaders => ({
-                ...prevHeaders, // Spread the previous headers to ensure we don't overwrite any existing properties
-                'User-ID': response.data.id
-              }));
             })
             .catch(error => {
               console.error(error);
@@ -108,19 +106,6 @@ function App() {
     }
   }, [isLoggedIn, socket, username]);
 
-
-  // Update the useEffect that updates the headers
-  useEffect(() => {
-    console.log("Updating Headers")
-    const token = localStorage.getItem('token');
-
-    if (token) {
-      setHeaders(prevHeaders => ({
-        ...prevHeaders, // Spread the previous headers to ensure we don't overwrite any existing properties
-        Authorization: `Bearer ${token}`
-      }));
-    }
-  }, [token]);
 
   // Web Socket stuff
   useEffect(() => {
@@ -304,18 +289,18 @@ function App() {
                 path="/login"
                 element={
                   <Login setIsLoggedIn={setIsLoggedIn}
-                  setToken={(token) => {setToken(token)}}
-                  setUsername={(username) => {setUsername(username)}}
-                  setHeaders={(headers) => {setHeaders(headers)}}
+                    setToken={setToken}
+                    setUsername={setUsername}
+                    setUserID={setUserID}
                 />}
               />
               <Route
                 path="/register"
                 element={
                   <Register setIsLoggedIn={setIsLoggedIn}
-                    setToken={(token) => {setToken(token)}}
-                    setUsername={(username) => {setUsername(username)}}
-                    setHeaders={(headers) => { setHeaders(headers) }}
+                    setToken={setToken}
+                    setUsername={setUsername}
+                    setUserID={setUserID}
                   />}
                 />
               <Route path="*" element={<Navigate to="/login" />} /> {/* Default route */}

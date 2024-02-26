@@ -89,7 +89,6 @@ class User(db.Model):
             'campaigns': [campaign.to_dict() for campaign in self.campaigns]
         }
 
-
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
@@ -175,7 +174,6 @@ class Character(db.Model):
             'pp': self.pp,
             'Feats': json.loads(self.Feats) if self.Feats else [],
         }
-
 
 class Page(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -331,7 +329,6 @@ class InventoryItem(db.Model):
         item_dict = {
             'id': self.id,
             'name': self.name,
-            'user_id': self.user_id,
             'item_id': self.item_id,
             'quantity': self.quantity,
             'equipped': self.equipped,
@@ -368,7 +365,7 @@ class Spellbook(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
-            'user_id': self.user_id,
+            'character_id': self.character_id,
             'SpellID': self.spell_id,
             'Quantity': self.quantity,
             'Name': self.spell.name,
@@ -385,7 +382,9 @@ class Spellbook(db.Model):
 
 class Journal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    character_id = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
+    character_id = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=True)
     title = db.Column(db.String(100), nullable=False)
     entry = db.Column(db.Text, nullable=False)
     date_created = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -702,11 +701,51 @@ def get_users():
 @app.route('/api/players', methods=['GET'])
 @jwt_required()
 def get_players():
-    campaign_id = request.headers.get('Campaign-ID')
-    players = User.query.join(campaign_members, User.id == campaign_members.user_id).filter(campaign_members.campaign_id == campaign_id, User.account_type == 'Player').all()
-    print("players:", players)
-    return jsonify({'players': [{'username': player.username, 'character_name': player.character_name} for player in players] if players else []})
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
 
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+
+    campaign_id = request.headers.get('Campaign-ID')
+
+    if campaign_id is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    # Find the character associated with the user and the campaign
+    stmt = select(campaign_members.c.character_id, campaign_members.c.user_id).where(
+        campaign_members.c.campaign_id == campaign_id
+    )
+    result = db.session.execute(stmt).all()
+
+    # Separate the character IDs and user IDs into two lists
+    character_ids, user_ids = zip(*result)
+
+    print("Character IDs:", character_ids)
+    print("User IDs:", user_ids)
+
+    # Get the DM's user ID
+    dm_id = Campaign.query.filter_by(id=campaign_id).first().dm_id
+
+    # Filter out invalid character IDs
+    valid_character_ids = [character_id for character_id in character_ids if character_id != user.id and character_id != dm_id and character_id is not None]
+
+    # Get the players for the valid character IDs
+    players = [User.query.get(user_id) for user_id in user_ids]
+
+    print("players:", len(players))
+
+    # Get the character name for each player
+    players_info = []
+    for i, character_id in enumerate(character_ids):
+        player = players[i]
+        if player is not None:
+            # print("players:", player.to_dict())
+            character = Character.query.get(character_id)
+            character_name = character.character_name if character else None
+            players_info.append({'username': player.username, 'character_name': character_name})
+
+    return jsonify({'players': players_info if players_info else []})
 
 @app.route('/api/items', methods=['GET', 'POST']) ##, endpoint='items')
 @jwt_required()
@@ -947,15 +986,12 @@ def inventory():
 
         if user is None:
             return jsonify({'error': 'User not found.'}), 404
-        
-        print("user", user.to_dict())
 
         campaign_id = request.headers.get('Campaign-ID')
 
         if campaign_id is None:
             return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
         
-
         # Find the character associated with the user and the campaign
         stmt = select(campaign_members.c.character_id).where(
             campaign_members.c.campaign_id == campaign_id, 
@@ -966,11 +1002,11 @@ def inventory():
         if result is None:
             return jsonify({'error': 'Character not found.'}), 404
 
-
         character_id = result.character_id if result else None
 
         inventory_items = InventoryItem.query.filter_by(character_id=character_id).all()
         inventory = []
+
         for inventory_item in inventory_items:
             item = Item.query.get(inventory_item.item_id)
             if item is not None:
@@ -1062,10 +1098,30 @@ def inventory():
 @app.route('/api/inventory/<int:item_id>', methods=['PUT'])
 @jwt_required()
 def update_inventoryItem(item_id):
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+
     campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
-    inventory_item = InventoryItem.query.filter_by(character_id=character.id, item_id=item_id).first()
+
+    if campaign_id is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    # Find the character associated with the user and the campaign
+    stmt = select(campaign_members.c.character_id).where(
+        campaign_members.c.campaign_id == campaign_id, 
+        campaign_members.c.user_id == user.id
+    )
+    result = db.session.execute(stmt).first()
+
+    if result is None:
+        return jsonify({'error': 'Character not found.'}), 404
+
+    character_id = result.character_id if result else None
+
+    inventory_item = InventoryItem.query.filter_by(character_id=character_id, item_id=item_id).first()
     if not inventory_item:
         return jsonify({'message': 'Item not found in inventory!'}), 404
 
@@ -1137,12 +1193,31 @@ def create_journal_entry():
     if 'title' not in data or 'entry' not in data:
         return jsonify({'message': 'Title and Entry are required!'}), 400
 
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+
     campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+
+    if campaign_id is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    # Find the character associated with the user and the campaign
+    stmt = select(campaign_members.c.character_id).where(
+        campaign_members.c.campaign_id == campaign_id, 
+        campaign_members.c.user_id == user.id
+    )
+    result = db.session.execute(stmt).first()
+
+    if result is None:
+        return jsonify({'error': 'Character not found.'}), 404
+
+    character_id = result.character_id if result else None
 
     new_journal_entry = Journal(
-        character_id=character.id,
+        character_id=character_id,
         title=data['title'],
         entry=data['entry'],
         date_created=datetime.utcnow(),
@@ -1156,11 +1231,30 @@ def create_journal_entry():
 @app.route('/api/journal', methods=['GET'])
 @jwt_required()
 def get_journal_entries():
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
 
-    entries = Journal.query.filter_by(character_id=character.id).order_by(Journal.date_created.desc()).all()
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+
+    campaign_id = request.headers.get('Campaign-ID')
+
+    if campaign_id is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    # Find the character associated with the user and the campaign
+    stmt = select(campaign_members.c.character_id).where(
+        campaign_members.c.campaign_id == campaign_id, 
+        campaign_members.c.user_id == user.id
+    )
+    result = db.session.execute(stmt).first()
+
+    if result is None:
+        return jsonify({'error': 'Character not found.'}), 404
+
+    character_id = result.character_id if result else None
+
+    entries = Journal.query.filter_by(character_id=character_id).order_by(Journal.date_created.desc()).all()
     return jsonify({'entries': [{
         'id': entry.id,
         'title': entry.title,
@@ -1173,10 +1267,29 @@ def get_journal_entries():
 @jwt_required()
 def update_journal_entry(entry_id):
     data = request.get_json()
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+
     campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
-    entry = Journal.query.filter_by(id=entry_id, character_id=character.id).first()
+
+    if campaign_id is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    # Find the character associated with the user and the campaign
+    stmt = select(campaign_members.c.character_id).where(
+        campaign_members.c.campaign_id == campaign_id, 
+        campaign_members.c.user_id == user.id
+    )
+    result = db.session.execute(stmt).first()
+
+    if result is None:
+        return jsonify({'error': 'Character not found.'}), 404
+
+    character_id = result.character_id if result else None
+    entry = Journal.query.filter_by(id=entry_id, character_id=character_id).first()
 
     if entry is None:
         return jsonify({'message': 'Journal entry not found'}), 404
@@ -1193,10 +1306,30 @@ def update_journal_entry(entry_id):
 @app.route('/api/journal/<entry_id>', methods=['DELETE'])
 @jwt_required()
 def delete_journal_entry(entry_id):
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+
     campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
-    entry = Journal.query.filter_by(id=entry_id, character_id=character.id).first()
+
+    if campaign_id is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    # Find the character associated with the user and the campaign
+    stmt = select(campaign_members.c.character_id).where(
+        campaign_members.c.campaign_id == campaign_id, 
+        campaign_members.c.user_id == user.id
+    )
+    result = db.session.execute(stmt).first()
+
+    if result is None:
+        return jsonify({'error': 'Character not found.'}), 404
+
+    character_id = result.character_id if result else None
+
+    entry = Journal.query.filter_by(id=entry_id, character_id=character_id).first()
 
     if entry is None:
         return jsonify({'message': 'Journal entry not found'}), 404
@@ -1239,25 +1372,33 @@ def get_file(filename):
 @jwt_required()
 def get_chat_history():
     username = get_jwt_identity()
-
-    # Fetch the user
     user = User.query.filter_by(username=username).first()
+    campaign_id = request.headers.get('Campaign-ID')
 
-    if user is None:
-        return jsonify({'message': 'User not found'}), 404
+    stmt = select(campaign_members.c.character_id).where(
+        campaign_members.c.campaign_id == campaign_id, 
+        campaign_members.c.user_id == user.id
+    )
+
+    result = db.session.execute(stmt).first()
+
+    character_id = result.character_id if result else None
+
+    if character_id is None:
+        return jsonify({'message': 'Character not found'}), 404
 
     def message_to_client_format(message):
         # Get sender's character name
-        sender_user = User.query.filter_by(id=message.sender_id).first()
-        sender_name = sender_user.character_name if sender_user else 'Unknown'
+        sender_character = Character.query.filter_by(id=message.sender_id).first()
+        sender_name = sender_character.name if sender_character else 'Unknown'
 
         # Get recipients' character names
         recipient_ids = message.recipient_ids.split(',')
         recipient_names = []
         for id in recipient_ids:
             if id:
-                recipient_user = User.query.filter_by(id=int(id)).first()
-                recipient_names.append(recipient_user.character_name if recipient_user else 'Unknown')
+                recipient_character = Character.query.filter_by(id=int(id)).first()
+                recipient_names.append(recipient_character.name if recipient_character else 'Unknown')
 
         return {
             'sender': sender_name,
@@ -1266,16 +1407,15 @@ def get_chat_history():
             'group_id': message.group_id,
         }
 
-    # Fetch the messages sent by the user and received by the user
-    sent_messages = Message.query.filter_by(sender_id=user.id).all()
-    received_messages = Message.query.filter(Message.recipient_ids.contains(str(user.id))).all()
+    # Fetch the messages sent by the character and received by the character
+    sent_messages = Message.query.filter_by(sender_id=character_id).all()
+    received_messages = Message.query.filter(Message.recipient_ids.contains(str(character_id))).all()
 
     # Combine, sort by timestamp, and convert to JSON-friendly format
     messages = sorted(sent_messages + received_messages, key=lambda msg: msg.timestamp)
     messages_json = [message_to_client_format(message) for message in messages]
 
     return jsonify(messages_json), 200
-
 
 @app.route('/api/lootboxes', methods=['GET'])
 def get_all_loot_boxes():
