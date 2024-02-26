@@ -205,19 +205,24 @@ function Journal({ headers, characterName }) {
 
   const saveEntry = async () => {
     const entryContent = editorRef.current.value();
-
-    try {
       if (selectedEntry) { // If an existing entry is selected, update it
-        const response = await axios.put(`http://127.0.0.1:5001/api/journal/${selectedEntry.id}`, { entry: entryContent, title: title }, { headers });
-        console.log(response.data);
+        axios.put(`http://127.0.0.1:5001/api/journal/${selectedEntry.id}`, { entry: entryContent, title: title }, { headers })
+        .then(response =>
+          console.log(response.data)
+        )
+        .catch(error =>
+          console.error('Error saving journal entry:', error.response.data)
+        );
       } else { // Otherwise, create a new entry
-        const response = await axios.post('http://127.0.0.1:5001/api/journal', { entry: entryContent, title: title }, { headers });
-        console.log(response.data);
+        axios.post('http://127.0.0.1:5001/api/journal', { entry: entryContent, title: title }, { headers })
+        .then(response =>
+          console.log(response.data)
+        )
+        .catch(error =>
+          console.error('Error creating journal entry:', error.response.data)
+        );
       }
       fetchEntries(); // Refetch entries after saving
-    } catch (error) {
-      console.error('Error saving journal entry:', error.response.data);
-    }
   };
 
   const deleteEntry = async (event, entryId) => {

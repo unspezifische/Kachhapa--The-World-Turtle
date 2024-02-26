@@ -326,7 +326,12 @@ function CharacterSheet({ headers, characterName }) {
   }, [character]);
 
 
-  function handleEdit(tileId) {
+  function handleEdit(event, tileId) {
+    console.log('handleEdit called');
+    console.log('event:', event);
+    console.log('tileId:', tileId);
+    event.stopPropagation();
+    console.log('Editing tile:', tileId);
     setEditingTileId(tileId);
     setIsModalShown(true);
   }
@@ -857,12 +862,12 @@ function CharacterSheet({ headers, characterName }) {
               key={tile.i}
               className="tile"
             >
-              {generateTileContent(tile.i)}
               <div className="edit-icon">
-                <EditIcon onClick={() => handleEdit(tile.i)} />
+                <EditIcon onClick={(event) => handleEdit(event, tile.id)} />
               </div>
+              {generateTileContent(tile.i)}
             </div>
-            ))}
+          ))}
         </ResponsiveGridLayout>
       </div>
 
@@ -1084,8 +1089,8 @@ function CharacterSheet({ headers, characterName }) {
                 case 'Equipment':
                   return (
                     <>
-                      <Form.Control as="select" onChange={handleEquipmentChange}>
-                        <option value="" disabled selected>Select item</option>
+                      <Form.Control as="select" defaultValue="" onChange={handleEquipmentChange}>
+                        <option value="" disabled>Select item</option>
                         {character.Equipment.map((item, index) => (
                           <option key={index} value={item.name}>
                             {item.name}

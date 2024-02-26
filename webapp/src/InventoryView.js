@@ -115,11 +115,8 @@ export default function InventoryView({ username, characterName, accountType, he
     if (accountType === 'Player') {
       axios.get('http://127.0.0.1:5001/api/inventory', { headers })
       .then(response => {
-        console.log("INVENTORY- response:", response);
-        if (inventory.length > 0) {
-          setInventory(response.data.inventory); // Save all inventory items in state
-          // setSortedInventory(inventory);
-        }
+        console.log("INVENTORY- response:", response.data);
+        setInventory(response.data.inventory); // Save all inventory items in state
       })
       .catch(error => {
         console.error('Error loading inventory:', error.response.data);

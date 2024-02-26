@@ -6,7 +6,7 @@ import axios from 'axios'; // Import axios
 
 import './Login.css';
 
-function Login({ setIsLoggedIn, setToken, setUsername: setAppUsername, headers }) {
+function Login({ setIsLoggedIn, setToken, setUserID }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -23,14 +23,10 @@ function Login({ setIsLoggedIn, setToken, setUsername: setAppUsername, headers }
     .then(response => {
       console.log("LOGIN-", response.data);
       setToken(response.data.access_token);
+      setUserID(response.data.user_id);
       localStorage.setItem('token', response.data.access_token);
 
-      // Update headers state to include user_id
-      headers.userId = response.data.user_id;
-
-      setAppUsername(username); // Update username state in App.js
       setIsLoggedIn(true);
-      // setIsLoading(false);
       navigate("/accoutProfile");
     })
     .catch(error => {

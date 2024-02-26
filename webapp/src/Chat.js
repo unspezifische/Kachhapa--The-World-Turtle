@@ -24,15 +24,16 @@ function Chat({ headers, socket, isLoggedIn, characterName, username }) {
       // Check if characterName has been initialized
       if (characterName) {
         console.log("CHAT- Getting message history for " + characterName);
-        try {
-          const response = await axios.get('http://127.0.0.1:5001/api/chat_history', { headers: headers });
+        axios.get('http://127.0.0.1:5001/api/chat_history', { headers: headers })
+        .then(response => {
           const data = response.data;
           console.log("CHAT- response:", data)
 
           setMessages(data);
-        } catch (error) {
+        })
+        .catch(error => {
           console.error("CHAT- Error fetching chat history:", error);
-        }
+        })
       }
     };
 
