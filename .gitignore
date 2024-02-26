@@ -1,6 +1,9 @@
 Library/
 classes/
 races/
+avatars/
+instance/
+items/
 webapp/build/
 webapp/node_modules
 database_migration.log

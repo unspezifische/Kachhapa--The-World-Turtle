@@ -1831,7 +1831,7 @@ def edit_page(campaign_name, page_title):
     # Handle GET request for displaying the edit page
     elif request.method == "GET":
         html_content = markdown.markdown(page.content)
-        return render_template('edit_page.html', content=html_content)
+        return render_template('edit_page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
 
 
 ##************************##
