@@ -64,6 +64,7 @@ function App() {
           setIsLoggedIn(true);
           // Store the token in local storage
           localStorage.setItem('token', token);
+          setToken(token);
           // Fetch user data here
           axios.get('http://127.0.0.1:5001/api/profile', { headers: { Authorization: `Bearer ${token}` } })
             .then(response => {

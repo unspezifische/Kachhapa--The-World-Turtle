@@ -24,7 +24,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
         });
       }
     fetchData();
-  }, []);
+  }, [headers]);
 
   const handleCampaignSelection = (campaign) => {
     // Add the Campaign-ID to the headers

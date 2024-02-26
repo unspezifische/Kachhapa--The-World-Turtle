@@ -35,7 +35,7 @@ function Menu({ accountType, selectedCampaign }) {
       if (selectedCampaign && selectedCampaign.name) {
         console.log("selectedCampaign: ", selectedCampaign)
         var encodedName = encodeURIComponent(selectedCampaign.name);
-        window.open('http://localhost:5001/' + encodedName, '_blank');
+        window.open('http://localhost:5001/' + encodedName + '/Main%20Page', '_blank');
         console.log("Opening wiki: localhost:5001/" + encodedName);
       } else {
         console.log("No selected campaign or campaign name");
