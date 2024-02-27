@@ -1,0 +1,22 @@
+{
+  "Name": "Mercenary Veteran",
+  "Description": "As a sell-sword who fought battles for coin, you're well acquainted with risking life and limb for a chance at a share of treasure. Now, you look forward to fighting foes and reaping even greater rewards as an adventurer.",
+  "Skill Proficiency": {
+    "1": "Athletics",
+    "2": "Persuasion"
+  },
+  "Tool Proficiency": {
+    "1": "One type of gaming set",
+    "2": "Vehicles (land)"
+  },
+  "languages": 0,
+  "Equipment": {
+    "1": "A uniform of your company (traveler's clothes in quality)",
+    "2": "An insignia of your ranke",
+    "3": "A gaming set of your choice",
+    "4": "10 gp"
+  },
+  "Feature": {
+    "Veteran's Eye": "Your years of experience in battle have sharpened your instincts and perception. You have advantage on Wisdom (Perception) checks to detect hidden enemies or ambushes. Additionally, you can use your action to make a Wisdom (Perception) check to analyze the battlefield and gain tactical insights. On a successful check, you can provide tactical advice to your allies, granting them advantage on their next attack roll or ability check."
+  }
+}

@@ -16,14 +16,13 @@ import MapIcon from '@mui/icons-material/Map';       // Link to Settlement page
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 
 
-function Menu({ accountType, selectedCampaign }) {
+function Menu({ accountType, selectedCampaign, setSelectedCampaign }) {
   const [isOpen, setIsOpen] = useState(false); // Start closed on desktop
   const navigate = useNavigate(); // used to navigate between pages
   const location = useLocation(); // used to get the current location
 
   const toggleOpen = () => setIsOpen(!isOpen);
   const toggleClosed = () => setIsOpen(false);
-
 
 
   function navigateToExternalLink(url) {
@@ -48,6 +47,9 @@ function Menu({ accountType, selectedCampaign }) {
         onSelect={(selected) => {
           console.log("MENU- Current location: " + location.pathname);
           console.log("MENU- Navigating to: " + selected);
+          if (selected === 'accountProfile') {
+            setSelectedCampaign({ id: null, name: null, dmId: null, ownerId: null });
+          }
           navigate(selected);
           toggleClosed();
         }}

@@ -231,7 +231,7 @@ function App() {
             <Container fluid style={{ height: '100vh', width: '100%', overflow: 'auto' }}>
             <Row className="d-none d-md-flex">
               <Col md={2} className="menu-column">
-                  <Menu accountType={accountType} selectedCampaign={selectedCampaign} />
+                  <Menu accountType={accountType} selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} />
               </Col>
               <Col md={8} className="content-column">
                 <Routes>

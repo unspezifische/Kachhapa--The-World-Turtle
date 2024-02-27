@@ -3,8 +3,10 @@ from flask import render_template ## For rendering wiki pages
 from flask import redirect, url_for
 
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
+
+from flask_migrate import Migrate
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -89,32 +91,12 @@ class User(db.Model):
             'campaigns': [campaign.to_dict() for campaign in self.campaigns]
         }
 
-class Campaign(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    system = db.Column(db.String(50), nullable=False)
-    description = db.Column(db.Text)
-    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    dm_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    owner = db.relationship('User', foreign_keys=[owner_id], backref='owned_campaigns')
-    dm = db.relationship('User', foreign_keys=[dm_id], backref='dm_campaigns')
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'name': self.name,
-            'system': self.system,
-            'description': self.description,
-            'owner': self.owner.username,
-            'owner_id': self.owner.id,
-            'dm': self.dm.username,
-            'dm_id': self.dm.id,
-        }
-
 class Character(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    # userID = db.Column(db.Integer, db.ForeignKey('user.id'))  # link to the User table
-    # campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'))  # link to the Campaign table
+    icon = db.Column(db.String(120))  # icon filepath or name
+    userID = db.Column(db.Integer, db.ForeignKey('user.id'))  # link to the User table
+    campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'))  # link to the Campaign table
+    campaign = db.relationship('Campaign', backref='party_members')  # relationship to the Campaign model
     character_name = db.Column(db.String(50), nullable=True) # character's name
     Class = db.Column(db.String(50))  # name of the class (e.g., "Wizard")
     Background = db.Column(db.String(50))  # character's background (e.g., "Noble")
@@ -147,9 +129,11 @@ class Character(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
-            # 'userID': self.userID,
-            # 'campaignID': self.campaignID,
-            'characterName': self.character_name,
+            'icon': self.icon,
+            'userID': self.userID,
+            'campaignID': self.campaignID,
+            'campaign': self.campaign.name if self.campaign else None,
+            'name': self.character_name,
             'Class': self.Class,
             'Background': self.Background,
             'Race': self.Race,
@@ -173,6 +157,30 @@ class Character(db.Model):
             'gp': self.gp,
             'pp': self.pp,
             'Feats': json.loads(self.Feats) if self.Feats else [],
+        }
+
+class Campaign(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    system = db.Column(db.String(50), nullable=False)
+    icon = db.Column(db.String(120))  # icon filepath or name
+    description = db.Column(db.Text)
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    dm_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    owner = db.relationship('User', foreign_keys=[owner_id], backref='owned_campaigns')
+    dm = db.relationship('User', foreign_keys=[dm_id], backref='dm_campaigns')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'system': self.system,
+            'description': self.description,
+            'icon': self.icon,
+            'owner': self.owner.username,
+            'owner_id': self.owner.id,
+            'dm': self.dm.username,
+            'dm_id': self.dm.id,
         }
 
 class Page(db.Model):
@@ -203,7 +211,7 @@ class Item(db.Model):
     cost = db.Column(db.Integer, nullable=False)
     currency = db.Column(db.String(80), nullable=False)
     weight = db.Column(db.Integer)
-    description = db.Column(db.String(120))
+    description = db.Column(db.Text)
 
     # The relationships
     armor = db.relationship('Armor', backref='item', cascade='all, delete-orphan')
@@ -422,7 +430,6 @@ class LootBox(db.Model):
             'name': self.name,
         }
 
-
 class NPC(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False)
@@ -439,8 +446,65 @@ class NPC(db.Model):
             'attack_stats': self.attack_stats,
         }
 
+class GameElement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    system = db.Column(db.String(50))  # e.g., 'D&D 5e', 'pathfinder'
+    element_type = db.Column(db.String(50))  # e.g., 'class', 'race', 'character_background', 'character_sheet'
+    module = db.Column(db.String(50), nullable=True)  # Specific module, if applicable
+    setting = db.Column(db.String(50), nullable=True)  # Specific setting, if applicable
+    name = db.Column(db.String(50), unique=True)
+    data = db.Column(JSONB)
+
+    def __repr__(self):
+        return f'<GameElement {self.element_type} {self.name}>'
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'system': self.system,
+            'element_type': self.element_type,
+            'module': self.module,
+            'setting': self.setting,
+            'name': self.name,
+            'data': self.data,
+        }
+
+
+def load_json_files(directory):
+    elements = []
+    if os.path.exists(directory):
+        for filename in os.listdir(directory):
+            if filename.endswith('.json'):
+                with open(os.path.join(directory, filename), 'r') as file:
+                    try:
+                        data = json.load(file)
+                        elements.append((filename.rstrip('.json'), data))
+                    except json.JSONDecodeError:
+                        print(f"Error decoding JSON from file {filename}")
+    return elements
+
+def insert_elements(system, element_type, directory):
+    if not os.path.exists(directory):
+        # print(f"Directory {directory} does not exist. Skipping...")
+        return
+    elements = load_json_files(directory)
+    # print(f"Elements from {directory}: {elements}")  # Print the elements
+    for name, data in elements:
+        existing_element = GameElement.query.filter_by(name=name).first()
+        if existing_element is None:
+            new_element = GameElement(name=name, system=system, element_type=element_type, data=data, setting='Faerun')
+            # print(f"New element: {new_element}")  # Print the new element
+            db.session.add(new_element)
+    db.session.commit()
+
 
 def set_all_users_offline():
+    # insert_elements('D&D 5e', 'class', './classes')
+    # insert_elements('D&D 5e', 'race', './races')
+    insert_elements('D&D 5e', 'character_background', './characterBackgrounds')
+    insert_elements('D&D 5e', 'character_sheet', './characterSheets')
+
+
     users = User.query.all()
 
     # Get the campaign with ID 1
@@ -455,6 +519,7 @@ with app.app_context():
     db.create_all()
     set_all_users_offline()
 
+migrate = Migrate(app, db)
 
 @app.after_request
 def refresh_expiring_jwts(response):
@@ -464,13 +529,29 @@ def refresh_expiring_jwts(response):
         target_timestamp = datetime.timestamp(now + timedelta(minutes=30))
             
         if target_timestamp > exp_timestamp:
+            print(target_timestamp, ">", exp_timestamp)
             access_token = create_access_token(identity=get_jwt_identity())
             response.set_cookie('access_token', access_token)  # Set the new token in a cookie
-            response.json['new_token'] = access_token  # Include the new token in the response body
+            
+            # Get the JSON data from the response
+            data = response.get_json()
+            
+            # Check if data is a list
+            if isinstance(data, list):
+                # Add the new token to each dictionary in the list
+                for item in data:
+                    if isinstance(item, dict):
+                        item['new_token'] = access_token
+            elif isinstance(data, dict):
+                # Add the new token to the data dictionary
+                data['new_token'] = access_token
+            
+            # Create a new response with the updated JSON data
+            response = jsonify(data)
         return response
     
     except (RuntimeError, KeyError):
-        # Case where there is not a valid JWT. Just return the original respone
+        # Case where there is not a valid JWT. Just return the original response
         return response
 
 ## Verify a user's JWT token
@@ -545,66 +626,137 @@ def register():
     })
 
 
-## Get a specific user profile
 @app.route('/api/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
     try:
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
-        print("PROFILE- user:", user.to_dict())
-        return jsonify({'username': user.username, 'id': user.id})
+        campaign_id = request.headers.get('Campaign-ID')
+        if campaign_id:
+            character = Character.query.filter_by(user_id=user.id, campaign_id=campaign_id).first()
+            if character:
+                return jsonify({'username': user.username, 'id': user.id, 'character': character.to_dict()})
+            else:
+                return jsonify({'username': user.username, 'id': user.id, 'character': None})
+        else:
+            return jsonify({'username': user.username, 'id': user.id})
     except InvalidTokenError:
         return jsonify({'error': 'Invalid token'}), 401
     except ExpiredSignatureError:
         return jsonify({'error': 'Expired token'}), 401
 
-
-@app.route('/api/campaigns', methods=['GET'])
+@app.route('/api/campaigns', methods=['GET', 'POST'])
 @jwt_required()
-def get_user_campaigns():
+def campaigns():
+    if request.method == 'GET':
+        username = get_jwt_identity()
+        user = User.query.filter_by(username=username).first()
+        # print("CAMPAIGNS- user:", user.to_dict())
+        campaigns = user.campaigns
+        campaign_list = [campaign.to_dict() for campaign in campaigns]
+        print("CAMPAIGNS- campaigns:", campaign_list)
+        return jsonify(campaign_list)
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        username = get_jwt_identity()
+        user = User.query.filter_by(username=username).first()
+        print("CAMPAIGN- username:", username)
+        print("CAMPAIGN- user:", user.to_dict())
+        campaign = Campaign(name=data['name'], system=data['system'], owner_id=user.id, dm_id=user.id)
+        db.session.add(campaign)
+        print("CAMPAIGN- campaign:", campaign.to_dict())
+
+        # Check if the user wants to use a module
+        if 'module' in data and data['module']:
+            # Retrieve the module's information from the GameElements table
+            pages = GameElement.query.filter_by(name=data['module'], element_type="wiki").all()
+            for page in pages:
+                if page:
+                    # Pre-populate the wiki with the module's information
+                    wiki = Page(title=page.data.title, content=page.data.content, campaign_id=campaign.id)
+                    db.session.add(wiki)
+
+        # Get all users except the current user
+        other_users = User.query.filter(User.id != user.id).all()
+        for other_user in other_users:
+            # Add each user to the campaign's members
+            db.session.execute(campaign_members.insert().values(user_id=other_user.id, campaign_id=campaign.id))
+
+        db.session.commit()
+        print("CAMPAIGN- campaign:", campaign.to_dict())
+        return jsonify(campaign.to_dict()), 201
+
+@app.route('/api/characters', methods=['GET'])
+@jwt_required()
+def get_user_characters():
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
-    print("CAMPAIGNS- user:", user.to_dict())
-    campaigns = user.campaigns
-    campaign_list = [campaign.to_dict() for campaign in campaigns]
-    return jsonify(campaign_list)
+    # print("CHARACTERS- user:", user.to_dict())
+    characters = Character.query.filter_by(userID=user.id).all()
+    character_list = [character.to_dict() for character in characters]
+    # print("CHARACTERS- characters:", [character.to_dict() for character in characters])
+    return jsonify(character_list)
 
-## List defined classes
+
+@app.route('/api/characterSheet')
+def get_characterSheet():
+    # Determine the System in use
+    campaign_id = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    system = campaign.system if campaign else 'D&D 5e'
+
+    characterSheet = GameElement.query.filter_by(element_type='character_sheet', system=system).first()
+    print("CharacterSheet-", [c.data for c in characterSheet])
+    return jsonify([c.data for c in characterSheet])
+
 @app.route('/api/classes')
 def get_class_listing():
-    # List the files in the 'classes' directory
-    files = os.listdir('classes')
-    # Remove the '.json' extension from each filename
-    class_names = [file[:-5] for file in files if file.endswith('.json')]
-    return jsonify(class_names or [])
+    # Determine the System in use
+    campaign_id = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    system = campaign.system if campaign else 'D&D 5e'
 
-## Get Class info
+    classes = GameElement.query.filter_by(element_type='class', system=system).all()
+    # print("Classes:", [c.to_dict() for c in classes])
+    return jsonify([c.to_dict() for c in classes])
+
 @app.route('/api/classes/<class_name>')
 def get_class_info(class_name):
-    try:
-        # Attempt to open the JSON file for the specified class
-        with open(f'classes/{class_name}.json', 'r') as f:
-            class_info = json.load(f)
-        return jsonify(class_info)
-    except FileNotFoundError:
-        # If the file doesn't exist, return an error message
+    # Determine the System in use
+    campaign_id = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    system = campaign.system if campaign else 'D&D 5e'
+
+    game_element = GameElement.query.filter_by(name=class_name, element_type='class', system=system).first()
+    if game_element:
+        return jsonify(game_element.data)
+    else:
         return jsonify({"error": f"No class named '{class_name}' found"}), 404
 
-## List defined races
 @app.route('/api/races', methods=['GET'])
 def get_race_listing():
-    races = [f.replace('.json', '') for f in os.listdir('races') if f.endswith('.json')]
-    return jsonify(races or [])
+    # Determine the System in use
+    campaign_id = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    system = campaign.system if campaign else 'D&D 5e'
+    
+    races = GameElement.query.filter_by(element_type='race', system=system).all()
+    # print([r.to_dict() for r in races])
+    return jsonify([r.to_dict() for r in races])
 
-## Get Race info
-@app.route('/api/races/<race>', methods=['GET'])
-def get_race_info(race):
-    try:
-        with open(f'races/{race}.json') as f:
-            race_info = json.load(f)
-        return jsonify(race_info)
-    except FileNotFoundError:
+@app.route('/api/races/<race_name>', methods=['GET'])
+def get_race_info(race_name):
+    # Determine the System in use
+    campaign_id = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    system = campaign.system if campaign else 'D&D 5e'
+    
+    game_element = GameElement.query.filter_by(name=race_name, element_type='race', system=system).first()
+    if game_element:
+        return jsonify(game_element.data)
+    else:
         abort(404, description="Resource not found")
 
 ## GET Character Profile
@@ -1368,6 +1520,8 @@ def get_file(filename):
     # Send the requested file
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+
+
 @app.route('/api/chat_history', methods=['GET'])
 @jwt_required()
 def get_chat_history():
@@ -1390,7 +1544,7 @@ def get_chat_history():
     def message_to_client_format(message):
         # Get sender's character name
         sender_character = Character.query.filter_by(id=message.sender_id).first()
-        sender_name = sender_character.name if sender_character else 'Unknown'
+        sender_name = sender_character.character_name if sender_character else 'Unknown'
 
         # Get recipients' character names
         recipient_ids = message.recipient_ids.split(',')
@@ -1398,7 +1552,7 @@ def get_chat_history():
         for id in recipient_ids:
             if id:
                 recipient_character = Character.query.filter_by(id=int(id)).first()
-                recipient_names.append(recipient_character.name if recipient_character else 'Unknown')
+                recipient_names.append(recipient_character.character_name if recipient_character else 'Unknown')
 
         return {
             'sender': sender_name,

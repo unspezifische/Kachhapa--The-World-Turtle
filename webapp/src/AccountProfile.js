@@ -1,17 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Modal, Navbar, Container, Row, Col } from 'react-bootstrap';
+import { Card, Button, Modal, Navbar, Container, Row, Col, Form, Carousel } from 'react-bootstrap';
 import campaignIcon from './campaign.webp';
+
+import CreateCharacterModal from './CreateCharacterModal';
 
 const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType }) => {
   const navigate = useNavigate();
 
   const [campaigns, setCampaigns] = useState([]);
-  const [showModal, setShowModal] = useState(false);
+  const [characters, setCharacters] = useState([]);
 
-  const handleClose = () => setShowModal(false);
-  const handleShow = () => setShowModal(true);
+  const [showModalCampaign, setShowModalCampaign] = useState(false);
+  const [showModalCharacter, setShowModalCharacter] = useState(false);
+
+  const handleCloseModalCampaign = () => setShowModalCampaign(false);
+  const handleCreateCampaign = () => setShowModalCampaign(true);
+
+  const handleCloseModalCharacter = () => setShowModalCharacter(false);
+  const handleCreateCharacter = () => setShowModalCharacter(true);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -24,6 +32,17 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
         });
       }
     fetchData();
+  }, [headers]);
+
+  useEffect(() => {
+    // Fetch characters
+    axios.get('http://127.0.0.1:5001/api/characters', { headers })
+      .then(response => {
+        setCharacters(response.data)
+      })
+      .catch(error => {
+        console.error('Error fetching characters:', error)
+      });
   }, [headers]);
 
   const handleCampaignSelection = (campaign) => {
@@ -40,25 +59,91 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
       navigate('/dmTools');
     } else {
       setAccountType('Player') 
-      axios.get('http://127.0.0.1:5001/api/character', { headers })
+      axios.get('http://127.0.0.1:5001/api/profile', { headers })
         .then(response => {
-          console.log("response.data:", response.data);
-          setCharacterName(response.data.characterName);
+          if (response.data.character) {
+            setCharacterName(response.data.character.name);
+            navigate('/characterSheet');
+          } else {
+            handleCreateCharacter(); // Show the CreateCharacterModal
+          }
         })
         .catch(error => {
-          console.error('Error fetching characters:', error)
+          console.error('Error fetching profile:', error)
         });
       navigate('/characterSheet');
     }
   };
 
+  const [newCampaign, setNewCampaign] = useState({
+    name: '',
+    system: 'D&D',
+    module: '',
+    description: ''
+  });
+
+  const [newCharacter, setNewCharacter] = useState({
+    name: '',
+    system: 'D&D',
+    class: ''
+  });
+
+  const handleInputChange = (event) => {
+    setNewCampaign({
+      ...newCampaign,
+      [event.target.name]: event.target.value
+    });
+  };
+
+  const handleFormSubmit = (event) => {
+    event.preventDefault();
+    axios.post('http://127.0.0.1:5001/api/campaigns', newCampaign, { headers })
+      .then(response => {
+        setCampaigns([...campaigns, response.data]);
+        handleCloseModalCampaign();
+      })
+      .catch(error => {
+        console.error('Error creating campaign:', error);
+      });
+  };
+
   return (
     <>
-      <Container>
+      <Container style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         <Row>
           <h1>Account Profile</h1>
         </Row>
-        <Row>
+        <Row style={{ flex: '1 1 auto', overflow: 'hidden', height: '0' }}>
+          <Carousel style={{ width: '100%', height: '100%' }}>
+            {campaigns.map((campaign, index) => (
+              <Carousel.Item key={campaign.id}>
+                <Carousel.Caption>
+                  <h3>{campaign.name}</h3>
+                  <p>{campaign.system}</p>
+                </Carousel.Caption>
+                <img
+                  className="d-block w-100"
+                  src={campaign.icon || campaignIcon}
+                  alt={`Campaign ${index}`}
+                />
+              </Carousel.Item>
+            ))}
+            {characters.map((character, index) => (
+              <Carousel.Item key={character.id}>
+                <Carousel.Caption>
+                  <h3>{character.name}</h3>
+                  <p>{character.Class}</p>
+                </Carousel.Caption>
+                <img
+                  className="d-block w-100"
+                  src={process.env.PUBLIC_URL + '/avatars/' + character.icon || campaignIcon}
+                  alt={`Character ${index}`}
+                />
+              </Carousel.Item>
+            ))}
+          </Carousel>
+        </Row>
+        <Row style={{ flex: 'none' }}>
           {campaigns.map((campaign) => (
             <Col sm={4} key={campaign.id}>
               <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={() => handleCampaignSelection(campaign)}>
@@ -78,7 +163,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
             </Col>
           ))}
           <Col sm={4}>
-            <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={handleShow}>
+            <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={handleCreateCampaign}>
               <Row>
                 <Col xs={4}>
                   <Card.Img variant="top" src={campaignIcon} />
@@ -92,24 +177,86 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
             </Card>
           </Col>
         </Row>
+        <Row style={{ flex: 'none' }}>
+          {characters.map((character) => (
+            console.log("character:", character),
+            <Col sm={4} key={character.id}>
+              <Card style={{ width: '18rem', marginBottom: '1rem' }}>
+                <Row>
+                  <Col xs={4}>
+                    <Card.Img variant="top" src={process.env.PUBLIC_URL + '/avatars/' +  character.icon || campaignIcon} />
+                  </Col>
+                  <Col xs={8}>
+                    <Card.Body>
+                      <Card.Title>{character.name}</Card.Title>
+                      <Card.Subtitle className="mb-2 text-muted">{character.Class}</Card.Subtitle>
+                      {/* Add more details here */}
+                    </Card.Body>
+                  </Col>
+                </Row>
+              </Card>
+            </Col>
+          ))}
+          <Col sm={4}>
+            <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={handleCreateCharacter}>
+              <Row>
+                <Col xs={4}>
+                  <Card.Img variant="top" src={campaignIcon} />
+                </Col>
+                <Col xs={8}>
+                  <Card.Body>
+                    <Card.Title>Create A New Character</Card.Title>
+                  </Card.Body>
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        </Row>
       </Container>
 
-      <Modal show={showModal} onHide={handleClose}>
+      {/* Campaign Creation Modal */}
+      <Modal show={showModalCampaign} onHide={handleCloseModalCampaign}>
         <Modal.Header closeButton>
           <Modal.Title>Create New Campaign</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          {/* Add form fields for creating a new campaign here */}
+          <Form onSubmit={handleFormSubmit}>
+            <Form.Group controlId="campaignName">
+              <Form.Label>Campaign Name</Form.Label>
+              <Form.Control type="text" name="name" value={newCampaign.name} onChange={handleInputChange} required />
+            </Form.Group>
+            <Form.Group controlId="campaignSystem">
+              <Form.Label>System</Form.Label>
+              <Form.Control as="select" name="system" value={newCampaign.system} onChange={handleInputChange} required>
+                <option>D&D</option>
+                {/* Add more options here as needed */}
+              </Form.Control>
+            </Form.Group>
+            <Form.Group controlId="campaignModule">
+              <Form.Label>Module</Form.Label>
+              <Form.Control as="select" name="module" value={newCampaign.module} onChange={handleInputChange} >
+                <option value="">Select a module (optional)</option>
+                <option>Lost Mine of Phandelver</option>
+                <option>Waterdeep Dragon Heist</option>
+                {/* Add more options here as needed */}
+              </Form.Control>
+            </Form.Group>
+            <Form.Group controlId="campaignDescription">
+              <Form.Label>Description</Form.Label>
+              <Form.Control as="textarea" name="description" value={newCampaign.description} onChange={handleInputChange} />
+            </Form.Group>
+            <Button variant="primary" type="submit">Create Campaign</Button>
+          </Form>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={handleClose}>
+          <Button variant="secondary" onClick={handleCloseModalCampaign}>
             Close
-          </Button>
-          <Button variant="primary" onClick={handleClose}>
-            Save Changes
           </Button>
         </Modal.Footer>
       </Modal>
+
+      {/* Character Creation Modal */}
+      <CreateCharacterModal show={showModalCharacter} onHide={handleCloseModalCharacter} headers={headers} />
     </>
   );
 };
