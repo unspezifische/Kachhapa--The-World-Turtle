@@ -1,0 +1,67 @@
+{
+  "Name": "Hermit",
+  "Description": "You lived in seclusion—either in a sheltered community such as a monastery, or entirely alone—for a formative part of your life. In your time apart from the clamor of society, you found quiet, solitude, and perhaps some of the answers you were looking for.",
+  "Skill Proficiency": {
+    "1": "Medicine",
+    "2": "Religion"
+  },
+  "Tool Proficiency": {
+    "1": "Herbalism Kit"
+  },
+  "languages": false,
+  "Equipment": {
+    "1": "a scroll case stuffed full of notes from your studies or prayers",
+    "2": "a winter blanket",
+    "3": "a set of common clothes",
+    "4": "an herbalism kit",
+    "5": "5 gp"
+  },
+  "Feature": {
+    "Discovery": "The quiet seclusion of your extended hermitage gave you access to a unique and powerful discovery. The exact nature of this revelation depends on the nature of your seclusion. It might be a great truth about the cosmos, the deities, the powerful beings of the outer planes, or the forces of nature. It could be a site that no one else has ever seen. You might have uncovered a fact that has long been forgotten, or unearthed some relic of the past that could rewrite history. It might be information that would be damaging to the people who or consigned you to exile, and hence the reason for your return to society.",
+    "Life of Seclusion": "Since you lived in seclusion, you are accustomed to solitude and rarely speak, preferring gestures and the occasional grunt. You are often lost in your own thoughts and contemplation, oblivious to your surroundings. The people who know you might find you strange or unsettling."
+  },
+  "Variant": {
+    "Discovery": "The quiet seclusion of your extended hermitage gave you access to a unique and powerful discovery. The exact nature of this revelation depends on the nature of your seclusion. It might be a great truth about the cosmos, the deities, the powerful beings of the outer planes, or the forces of nature. It could be a site that no one else has ever seen. You might have uncovered a fact that has long been forgotten, or unearthed some relic of the past that could rewrite history. It might be information that would be damaging to the people who or consigned you to exile, and hence the reason for your return to society.",
+    "Life of Seclusion": "Since you lived in seclusion, you are accustomed to solitude and rarely speak, preferring gestures and the occasional grunt. You are often lost in your own thoughts and contemplation, oblivious to your surroundings. The people who know you might find you strange or unsettling."
+  },
+  "Defining Event": {
+    "1": "I was searching for spiritual enlightenment.",
+    "2": "I was partaking in a pilgrimage.",
+    "3": "I was seeking to atone for a past sin.",
+    "4": "I was hiding from persecution.",
+    "5": "I was living in the wilderness as a hermit.",
+    "6": "I was exiled for a crime I didn't commit."
+  },
+  "Personality Trait": {
+    "1": "I am always calm, no matter what the situation. I never raise my voice or let my emotions control me.",
+    "2": "I am utterly serene, even in the face of disaster.",
+    "3": "The leader of my community had something wise to say on every topic, and I am eager to share that wisdom.",
+    "4": "I feel tremendous empathy for all who suffer.",
+    "5": "I'm oblivious to etiquette and social expectations.",
+    "6": "I connect everything that happens to me to a grand, cosmic plan."
+  },
+  "Ideal": {
+    "1": "Greater Good. My gifts are meant to be shared with all, not used for my own benefit. (Good)",
+    "2": "Logic. Emotions must not cloud our sense of what is right and true, or our logical thinking. (Lawful)",
+    "3": "Free Thinking. Inquiry and curiosity are the pillars of progress. (Chaotic)",
+    "4": "Power. Solitude and contemplation are paths toward mystical or magical power. (Evil)",
+    "5": "Live and Let Live. Meddling in the affairs of others only causes trouble. (Neutral)",
+    "6": "Self-Knowledge. If you know yourself, there's nothing left to know. (Any)"
+  },
+  "Bond": {
+    "1": "Nothing is more important than the other members of my hermitage, order, or association.",
+    "2": "I entered seclusion to hide from the ones who might still be hunting me. I must someday confront them.",
+    "3": "I'm still seeking the enlightenment I pursued in my seclusion, and it still eludes me.",
+    "4": "I entered seclusion because I loved someone I could not have.",
+    "5": "Should my discovery come to light, it could bring ruin to the world.",
+    "6": "My isolation gave me great insight into a great evil that only I can destroy."
+  },
+  "Flaw": {
+    "1": "Now that I've returned to the world, I enjoy its delights a little too much.",
+    "2": "I harbor dark, bloodthirsty thoughts that my isolation and meditation failed to quell.",
+    "3": "I am dogmatic in my thoughts and philosophy.",
+    "4": "I let my need to win arguments overshadow friendships and harmony.",
+    "5": "I'd risk too much to uncover a lost bit of knowledge.",
+    "6": "I like keeping secrets and won't share them with anyone."
+  }
+}
