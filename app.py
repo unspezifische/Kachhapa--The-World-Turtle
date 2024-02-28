@@ -69,9 +69,9 @@ db.init_app(app)
 
 # Association table
 campaign_members = db.Table('campaign_members',
-    db.Column('user_id', db.Integer, db.ForeignKey('user.id'), primary_key=True),
-    db.Column('campaign_id', db.Integer, db.ForeignKey('campaign.id'), primary_key=True),
-    db.Column('character_id', db.Integer, db.ForeignKey('character.id'))  # new column
+    db.Column('userID', db.Integer, db.ForeignKey('user.id'), primary_key=True),
+    db.Column('campaignID', db.Integer, db.ForeignKey('campaign.id'), primary_key=True),
+    db.Column('characterID', db.Integer, db.ForeignKey('character.id'))  # new column
 )
 
 class User(db.Model):
@@ -199,7 +199,7 @@ class Revisions(db.Model):
 
 # Loot association table
 loot_box_items = db.Table('loot_box_items',
-    db.Column('item_id', db.Integer, db.ForeignKey('item.id'), primary_key=True),
+    db.Column('itemID', db.Integer, db.ForeignKey('item.id'), primary_key=True),
     db.Column('loot_box_id', db.Integer, db.ForeignKey('loot_box.id'), primary_key=True),
     db.Column('quantity', db.Integer)
 )
@@ -233,7 +233,7 @@ class Item(db.Model):
         }
 
 class Weapon(db.Model):
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
+    itemID = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
     weapon_type = db.Column(db.String(20), nullable=False)
     damage = db.Column(db.String(20), nullable=False)
     damage_type = db.Column(db.String(20), nullable=False)
@@ -248,7 +248,7 @@ class Weapon(db.Model):
         }
 
 class Armor(db.Model):
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
+    itemID = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
     armor_class = db.Column(db.Integer, nullable=False)
     armor_type = db.Column(db.String(20), nullable=False)
     strength_needed = db.Column(db.Integer)
@@ -293,9 +293,9 @@ class Spell(db.Model):
 class SpellItem(db.Model):
     __tablename__ = 'spell_items'
 
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
+    itemID = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
     charges = db.Column(db.Integer)
-    spell_id = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=True)  # Allow spell items without an associated spell
+    spellID = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=True)  # Allow spell items without an associated spell
 
 
     def to_dict(self):
@@ -305,7 +305,7 @@ class SpellItem(db.Model):
         }
 
 class MountVehicle(db.Model):
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
+    itemID = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
     speed = db.Column(db.Integer, nullable=False)
     speed_unit = db.Column(db.String(20), nullable=False)
     capacity = db.Column(db.Integer, nullable=True)
@@ -325,8 +325,8 @@ class InventoryItem(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False)
-    character_id = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=False)
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=False)
+    characterID = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=False)
+    itemID = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     equipped = db.Column(db.Boolean)
 
@@ -337,7 +337,7 @@ class InventoryItem(db.Model):
         item_dict = {
             'id': self.id,
             'name': self.name,
-            'item_id': self.item_id,
+            'itemID': self.itemID,
             'quantity': self.quantity,
             'equipped': self.equipped,
             'type': self.item.type,
@@ -362,8 +362,8 @@ class Spellbook(db.Model):
     __tablename__ = 'spellbook'
 
     id = db.Column(db.Integer, primary_key=True)
-    character_id = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=False)
-    spell_id = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=False)
+    characterID = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=False)
+    spellID = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     equipped = db.Column(db.Boolean)
 
@@ -373,8 +373,8 @@ class Spellbook(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
-            'character_id': self.character_id,
-            'SpellID': self.spell_id,
+            'characterID': self.characterID,
+            'SpellID': self.spellID,
             'Quantity': self.quantity,
             'Name': self.spell.name,
             'Level': self.spell.level,
@@ -390,9 +390,9 @@ class Spellbook(db.Model):
 
 class Journal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
-    character_id = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=True)
+    userID = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
+    characterID = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=True)
     title = db.Column(db.String(100), nullable=False)
     entry = db.Column(db.Text, nullable=False)
     date_created = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -560,19 +560,24 @@ def verify_token():
     data = request.get_json()
     token = data.get('token')
     print("Token:", token)
+    app.logger.info("Token:", token)
     try:
         decoded_token = decode_token(token)
         print("Decoded Token:", decoded_token)
+        app.logger.info("Decoded Token:", decoded_token)
         user = User.query.filter_by(username=decoded_token['sub']).first()
         if user is None:
             print("Invalid user")
+            app.logger.info("Invalid user")
             return jsonify({'error': 'Invalid user'}), 401
         return jsonify({'success': True, "id": user.id, "username": user.username})
     except InvalidTokenError:
         print("Invalid token")
+        app.logger.info("Invalid token")
         return jsonify({'error': 'Invalid token- InvalidTokenError'}), 401
     except ExpiredSignatureError:
         print("Expired token")
+        app.logger.info("Expired token")
         return jsonify({'error': 'Expired token- ExpiredSignatureError'}), 401
 
 ## Used to log in a new user
@@ -587,6 +592,7 @@ def login():
     elif not check_password_hash(user.password, data['password']):
         return jsonify({'message': 'Incorrect Password'}), 401
     print("Creating Access Token for", user.username)
+    app.logger.info("Creating Access Token for", user.username)
     access_token = create_access_token(identity=user.username)
 
     user.is_online = True
@@ -595,13 +601,14 @@ def login():
     return jsonify({
         'message': 'Login successful!', 
         'access_token': access_token,
-        'user_id': user.id  # Include the user's ID in the response
+        'userID': user.id  # Include the user's ID in the response
     })
 
 @app.route('/api/register', methods=['POST'])
 def register():
     ## app.logger.info("/api/register: %s", request.json)  # ## app.logger.info the incoming request
     print("/api/register:", request.json)
+    app.logger.info("/api/register: %s", request.json)
     data = request.get_json()
     if 'username' not in data or 'password' not in data or 'character_name' not in data or 'account_type' not in data:
         return jsonify({'message': 'Username, password, character name, and account type are required!'}), 400
@@ -622,7 +629,7 @@ def register():
     return jsonify({
         'message': 'Login successful!', 
         'access_token': access_token,
-        'user_id': new_user.id  # Include the user's ID in the response
+        'userID': new_user.id  # Include the user's ID in the response
     })
 
 
@@ -632,9 +639,9 @@ def get_profile():
     try:
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
-        campaign_id = request.headers.get('Campaign-ID')
-        if campaign_id:
-            character = Character.query.filter_by(user_id=user.id, campaign_id=campaign_id).first()
+        campaignID = request.headers.get('Campaign-ID')
+        if campaignID:
+            character = Character.query.filter_by(userID=user.id, campaignID=campaignID).first()
             if character:
                 return jsonify({'username': user.username, 'id': user.id, 'character': character.to_dict()})
             else:
@@ -656,6 +663,7 @@ def campaigns():
         campaigns = user.campaigns
         campaign_list = [campaign.to_dict() for campaign in campaigns]
         print("CAMPAIGNS- campaigns:", campaign_list)
+        app.logger.info("CAMPAIGNS- campaigns: %s", campaign_list)
         return jsonify(campaign_list)
     
     elif request.method == 'POST':
@@ -663,10 +671,13 @@ def campaigns():
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
         print("CAMPAIGN- username:", username)
+        app.logger.info("CAMPAIGN- username: %s", username)
         print("CAMPAIGN- user:", user.to_dict())
+        app.logger.info("CAMPAIGN- user: %s", user.to_dict())
         campaign = Campaign(name=data['name'], system=data['system'], owner_id=user.id, dm_id=user.id)
         db.session.add(campaign)
         print("CAMPAIGN- campaign:", campaign.to_dict())
+        app.logger.info("CAMPAIGN- campaign: %s", campaign.to_dict())
 
         # Check if the user wants to use a module
         if 'module' in data and data['module']:
@@ -675,17 +686,18 @@ def campaigns():
             for page in pages:
                 if page:
                     # Pre-populate the wiki with the module's information
-                    wiki = Page(title=page.data.title, content=page.data.content, campaign_id=campaign.id)
+                    wiki = Page(title=page.data.title, content=page.data.content, campaignID=campaign.id)
                     db.session.add(wiki)
 
         # Get all users except the current user
         other_users = User.query.filter(User.id != user.id).all()
         for other_user in other_users:
             # Add each user to the campaign's members
-            db.session.execute(campaign_members.insert().values(user_id=other_user.id, campaign_id=campaign.id))
+            db.session.execute(campaign_members.insert().values(userID=other_user.id, campaignID=campaign.id))
 
         db.session.commit()
         print("CAMPAIGN- campaign:", campaign.to_dict())
+        app.logger.info("CAMPAIGN- campaign: %s", campaign.to_dict())
         return jsonify(campaign.to_dict()), 201
 
 @app.route('/api/characters', methods=['GET'])
@@ -703,19 +715,20 @@ def get_user_characters():
 @app.route('/api/characterSheet')
 def get_characterSheet():
     # Determine the System in use
-    campaign_id = request.headers.get('Campaign-ID')
-    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    campaignID = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
 
     characterSheet = GameElement.query.filter_by(element_type='character_sheet', system=system).first()
     print("CharacterSheet-", [c.data for c in characterSheet])
+    app.logger.info("CharacterSheet- %s", [c.data for c in characterSheet])
     return jsonify([c.data for c in characterSheet])
 
 @app.route('/api/classes')
 def get_class_listing():
     # Determine the System in use
-    campaign_id = request.headers.get('Campaign-ID')
-    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    campaignID = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
 
     classes = GameElement.query.filter_by(element_type='class', system=system).all()
@@ -725,8 +738,8 @@ def get_class_listing():
 @app.route('/api/classes/<class_name>')
 def get_class_info(class_name):
     # Determine the System in use
-    campaign_id = request.headers.get('Campaign-ID')
-    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    campaignID = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
 
     game_element = GameElement.query.filter_by(name=class_name, element_type='class', system=system).first()
@@ -738,8 +751,8 @@ def get_class_info(class_name):
 @app.route('/api/races', methods=['GET'])
 def get_race_listing():
     # Determine the System in use
-    campaign_id = request.headers.get('Campaign-ID')
-    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    campaignID = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
     
     races = GameElement.query.filter_by(element_type='race', system=system).all()
@@ -749,8 +762,8 @@ def get_race_listing():
 @app.route('/api/races/<race_name>', methods=['GET'])
 def get_race_info(race_name):
     # Determine the System in use
-    campaign_id = request.headers.get('Campaign-ID')
-    campaign = Campaign.query.filter_by(id=campaign_id).first()
+    campaignID = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
     
     game_element = GameElement.query.filter_by(name=race_name, element_type='race', system=system).first()
@@ -767,18 +780,18 @@ def get_character():
     try:
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
-        campaign_id = request.headers.get('Campaign-ID')
+        campaignID = request.headers.get('Campaign-ID')
 
-        stmt = select(campaign_members.c.character_id).where(
-            campaign_members.c.campaign_id == campaign_id, 
-            campaign_members.c.user_id == user.id
+        stmt = select(campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID, 
+            campaign_members.c.userID == user.id
         )
 
         result = db.session.execute(stmt).first()
 
-        character_id = result.character_id if result else None
+        characterID = result.characterID if result else None
 
-        character = Character.query.filter_by(id=character_id).first()
+        character = Character.query.filter_by(id=characterID).first()
 
         return jsonify(character.to_dict()), 200
 
@@ -793,17 +806,20 @@ def get_character():
 @jwt_required()
 def update_character():
     print("Saving Character Profile:", request.headers)
+    app.logger.info("Saving Character Profile: %s", request.headers)
     try:
-        campaign_id = request.headers.get('Campaign-ID')
-        user_id = request.headers.get('User-ID')
-        character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+        campaignID = request.headers.get('Campaign-ID')
+        userID = request.headers.get('User-ID')
+        character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
         if character is None:
             print("Making a new Character entry")
+            app.logger.info("Making a new Character entry")
             # Create a new character if it doesn't exist
-            character = Character(user_id=user_id)
+            character = Character(userID=userID)
             db.session.add(character)
         data = request.json
         print("Character- data:", data)
+        app.logger.info("Character- data: %s", data)
 
         # Hardcode the mapping
         character.Class = data.get('Class')
@@ -836,6 +852,7 @@ def update_character():
 
         db.session.commit()
         print("Updated character:", character.to_dict())
+        app.logger.info("Updated character: %s", character.to_dict())
         return jsonify(character.to_dict()), 200
 
     except InvalidTokenError:
@@ -846,8 +863,8 @@ def update_character():
 @app.route('/api/users', methods=['GET'])
 @jwt_required()
 def get_users():
-    campaign_id = request.headers.get('Campaign-ID')
-    users = User.query.join(campaign_members, User.id == campaign_members.user_id).filter(campaign_members.campaign_id == campaign_id).all()
+    campaignID = request.headers.get('Campaign-ID')
+    users = User.query.join(campaign_members, User.id == campaign_members.userID).filter(campaign_members.campaignID == campaignID).all()
     return jsonify({'users': [user.character_name for user in users]})
 
 @app.route('/api/players', methods=['GET'])
@@ -859,41 +876,44 @@ def get_players():
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    if campaign_id is None:
+    if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
     
     # Find the character associated with the user and the campaign
-    stmt = select(campaign_members.c.character_id, campaign_members.c.user_id).where(
-        campaign_members.c.campaign_id == campaign_id
+    stmt = select(campaign_members.c.characterID, campaign_members.c.userID).where(
+        campaign_members.c.campaignID == campaignID
     )
     result = db.session.execute(stmt).all()
 
     # Separate the character IDs and user IDs into two lists
-    character_ids, user_ids = zip(*result)
+    characterIDs, userIDs = zip(*result)
 
-    print("Character IDs:", character_ids)
-    print("User IDs:", user_ids)
+    print("Character IDs:", characterIDs)
+    app.logger.info("Character IDs: %s", characterIDs)
+    print("User IDs:", userIDs)
+    app.logger.info("User IDs: %s", userIDs)
 
     # Get the DM's user ID
-    dm_id = Campaign.query.filter_by(id=campaign_id).first().dm_id
+    dm_id = Campaign.query.filter_by(id=campaignID).first().dm_id
 
     # Filter out invalid character IDs
-    valid_character_ids = [character_id for character_id in character_ids if character_id != user.id and character_id != dm_id and character_id is not None]
+    valid_characterIDs = [characterID for characterID in characterIDs if characterID != user.id and characterID != dm_id and characterID is not None]
 
     # Get the players for the valid character IDs
-    players = [User.query.get(user_id) for user_id in user_ids]
+    players = [User.query.get(userID) for userID in userIDs]
 
     print("players:", len(players))
+    app.logger.info("players: %s", len(players))
 
     # Get the character name for each player
     players_info = []
-    for i, character_id in enumerate(character_ids):
+    for i, characterID in enumerate(characterIDs):
         player = players[i]
         if player is not None:
             # print("players:", player.to_dict())
-            character = Character.query.get(character_id)
+            character = Character.query.get(characterID)
             character_name = character.character_name if character else None
             players_info.append({'username': player.username, 'character_name': character_name})
 
@@ -914,19 +934,19 @@ def items():
                 item_data = item.to_dict()
 
                 if item.type == 'Weapon':
-                    weapon = Weapon.query.filter_by(item_id=item.id).first()
+                    weapon = Weapon.query.filter_by(itemID=item.id).first()
                     if weapon:
                         item_data.update(weapon.to_dict())
                 elif item.type == 'Armor':
-                    armor = Armor.query.filter_by(item_id=item.id).first()
+                    armor = Armor.query.filter_by(itemID=item.id).first()
                     if armor:
                         item_data.update(armor.to_dict())
                 elif item.type == 'MountVehicle':
-                    mountVehicle = MountVehicle.query.filter_by(item_id=item.id).first()
+                    mountVehicle = MountVehicle.query.filter_by(itemID=item.id).first()
                     if mountVehicle:
                         item_data.update(mountVehicle.to_dict())
                 elif item.type in ['Ring', 'Wand', 'Scroll']:
-                    magic_item = SpellItem.query.filter_by(item_id=item.id).first()
+                    magic_item = SpellItem.query.filter_by(itemID=item.id).first()
                     if magic_item:
                         item_data.update(magic_item.to_dict())
 
@@ -942,6 +962,7 @@ def items():
         data = request.get_json()
         # app.logger.info("POST to items- data: %s", data)
         print("POST to items- data:", data)
+        app.logger.info("POST to items- data: %s", data)
 
         name = data.get('name')
         type = data.get('type')
@@ -954,10 +975,11 @@ def items():
         db.session.add(item)
         db.session.commit()
         print(f"New item ID: {item.id}")
+        app.logger.info(f"New item ID: {item.id}")
 
         try:
             if type == 'Weapon':
-                weapon = Weapon.query.filter_by(item_id=item.id).first()
+                weapon = Weapon.query.filter_by(itemID=item.id).first()
                 damage = data.get('damage')
                 damage_type = data.get('damageType')
                 weapon_type = data.get('weaponType')
@@ -968,11 +990,11 @@ def items():
                     weapon.weapon_type = weapon_type
                     weapon.weapon_range = weapon_range
                 else:
-                    weapon = Weapon(item_id=item.id, damage=damage, damage_type=damage_type, weapon_type=weapon_type, weapon_range=weapon_range)
+                    weapon = Weapon(itemID=item.id, damage=damage, damage_type=damage_type, weapon_type=weapon_type, weapon_range=weapon_range)
                     db.session.add(weapon)
                 db.session.commit()
             elif type == 'Armor':
-                armor = Armor.query.filter_by(item_id=item.id).first()
+                armor = Armor.query.filter_by(itemID=item.id).first()
                 ac = data.get('ac')
                 armor_type = data.get('armorType')
                 stealth_disadvantage = data.get('stealthDisadvantage', False)
@@ -985,23 +1007,23 @@ def items():
                     armor.strength_needed = strength_needed
                 else:
                     # Insert new record
-                    armor = Armor(item_id=item.id, armor_class=ac, armor_type=armor_type, stealth_disadvantage=stealth_disadvantage, strength_needed=strength_needed)
+                    armor = Armor(itemID=item.id, armor_class=ac, armor_type=armor_type, stealth_disadvantage=stealth_disadvantage, strength_needed=strength_needed)
                     db.session.add(armor)
                 db.session.commit()
 
             elif type in ['Ring', 'Wand', 'Scroll']:
-                spellItem = SpellItem.query.filter_by(item_id=item.id).first()
+                spellItem = SpellItem.query.filter_by(itemID=item.id).first()
                 spell = data.get('spell')
                 charges = data.get('charges')
                 if spellItem:
                     spellItem.spell = spell
                     spellItem.charges = charges
                 else:
-                    magic_item = SpellItem(item_id=item.id, spell=spell, charges=charges)
+                    magic_item = SpellItem(itemID=item.id, spell=spell, charges=charges)
                     db.session.add(magic_item)
                 db.session.commit()
             elif type == 'MountVehicle':  # Handle MountVehicle items
-                mountVehicle = MountVehicle.query.filter_by(item_id=item.id).first()
+                mountVehicle = MountVehicle.query.filter_by(itemID=item.id).first()
                 speed = data.get('speed')
                 speed_unit = data.get('speedUnit')
                 capacity = data.get('capacity')
@@ -1010,7 +1032,7 @@ def items():
                     mountVehicle.speed_unit = speed_unit
                     mountVehicle.capacity = capacity
                 else:
-                    mount_vehicle = MountVehicle(item_id=item.id, speed=speed, speed_unit=speed_unit, capacity=capacity)
+                    mount_vehicle = MountVehicle(itemID=item.id, speed=speed, speed_unit=speed_unit, capacity=capacity)
                     db.session.add(mount_vehicle)
                 db.session.commit()
 
@@ -1018,19 +1040,21 @@ def items():
         except Exception as e:
             # app.logger.error(f"Error creating item: {e}")
             print("Error creating item:", e)
+            app.logger.info("Error creating item: %s", e)
             # app.logger.error(f"Error occurred: {traceback.format_exc()}")
             print(f"Error occurred: {traceback.format_exc()}")
+            app.logger.info(f"Error occurred: {traceback.format_exc()}")
             return jsonify({'message': e}), 500
 
 
 ## Update details for an Item entry
-@app.route('/api/items/<int:item_id>', methods=['PUT'])
+@app.route('/api/items/<int:itemID>', methods=['PUT'])
 @jwt_required()
-def update_item(item_id):
+def update_item(itemID):
     data = request.get_json()
-    # item = Item.query.get(item_id)
-    item = Item.query.filter_by(id=item_id).first()
-    item = Item.query.filter_by(id=item_id).first()
+    # item = Item.query.get(itemID)
+    item = Item.query.filter_by(id=itemID).first()
+    item = Item.query.filter_by(id=itemID).first()
     if not item:
         return jsonify({'message': 'Item not found!'}), 404
     item.name = data.get('name', item.name)
@@ -1042,12 +1066,13 @@ def update_item(item_id):
     return jsonify({'message': 'Item updated!', 'item': item.to_dict()})
 
 ## Delete a specific Item entry
-@app.route('/api/items/<int:item_id>', methods=['DELETE'])
+@app.route('/api/items/<int:itemID>', methods=['DELETE'])
 @jwt_required()
-def delete_item(item_id):
-    print("Deleteing Item:", item_id)
-    # item = Item.query.get(item_id)
-    item = Item.query.filter_by(id=item_id).first()
+def delete_item(itemID):
+    print("Deleteing Item:", itemID)
+    app.logger.info("Deleteing Item: %s", itemID)
+    # item = Item.query.get(itemID)
+    item = Item.query.filter_by(id=itemID).first()
     if not item:
         return jsonify({'message': 'Item not found!'}), 404
     db.session.delete(item)
@@ -1077,6 +1102,7 @@ def save_items():
     items = data.get('items')
     ## app.logger.info("SAVE CSV- items received: %s", items)
     print("SAVE CSV- items received:", items)
+    app.logger.info("SAVE CSV- items received: %s", items)
 
     if not items or not isinstance(items, list):
         return jsonify(error='Invalid items'), 400
@@ -1096,29 +1122,30 @@ def save_items():
                 db.session.commit()
 
                 item_type = item['Type']
-                item_id = new_item.id
+                itemID = new_item.id
 
                 if item_type == 'Weapon':
                     print(item, "is a Weapon")
-                    weapon = Weapon(item_id=item_id, damage=item.get('Damage'), damage_type=item.get('DamageType'),
+                    weapon = Weapon(itemID=itemID, damage=item.get('Damage'), damage_type=item.get('DamageType'),
                     weapon_type=item.get('Weapon type'), weapon_range=item.get('Range'))
                     db.session.add(weapon)
                 elif item_type == 'Armor':
                     print(item, "is Armor")
-                    armor = Armor(item_id=item_id, armor_class=item.get('Armor class'), armor_type=item.get('Armor type'), stealth_disadvantage=item.get('Stealth'), strength_needed=item.get('Strength'))
+                    armor = Armor(itemID=itemID, armor_class=item.get('Armor class'), armor_type=item.get('Armor type'), stealth_disadvantage=item.get('Stealth'), strength_needed=item.get('Strength'))
                     db.session.add(armor)
                 elif item_type in ['Ring', 'Wand', 'Scroll']:
                     print(item, "is a Magic Item")
-                    magic_item = SpellItem(item_id=item_id, spell=item.get('Spell'), charges=item.get('Charges'))
+                    magic_item = SpellItem(itemID=itemID, spell=item.get('Spell'), charges=item.get('Charges'))
                     db.session.add(magic_item)
                 elif item_type == 'Mounts and Vehicles':
                     print(item, "is a Mount or Vehicle")
-                    mount_vehicle = MountVehicle(item_id=item_id, speed=item.get('Speed'), speed_unit=item.get('Units'), capacity=item.get('Capacity'), vehicle_type=item.get('Vehicle type'))
+                    mount_vehicle = MountVehicle(itemID=itemID, speed=item.get('Speed'), speed_unit=item.get('Units'), capacity=item.get('Capacity'), vehicle_type=item.get('Vehicle type'))
                     db.session.add(mount_vehicle)
 
                 db.session.commit()
             else:
                 print("SAVE CSV- Item", {item['Name']}, "already exists in the database. Skipping...")
+                app.logger.info("SAVE CSV- Item %s already exists in the database. Skipping...", {item['Name']})
 
         socketio.emit('items_updated')
         return jsonify(message='Items saved'), 200
@@ -1139,31 +1166,31 @@ def inventory():
         if user is None:
             return jsonify({'error': 'User not found.'}), 404
 
-        campaign_id = request.headers.get('Campaign-ID')
+        campaignID = request.headers.get('Campaign-ID')
 
-        if campaign_id is None:
+        if campaignID is None:
             return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
         
         # Find the character associated with the user and the campaign
-        stmt = select(campaign_members.c.character_id).where(
-            campaign_members.c.campaign_id == campaign_id, 
-            campaign_members.c.user_id == user.id
+        stmt = select(campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID, 
+            campaign_members.c.userID == user.id
         )
         result = db.session.execute(stmt).first()
 
         if result is None:
             return jsonify({'error': 'Character not found.'}), 404
 
-        character_id = result.character_id if result else None
+        characterID = result.characterID if result else None
 
-        inventory_items = InventoryItem.query.filter_by(character_id=character_id).all()
+        inventory_items = InventoryItem.query.filter_by(characterID=characterID).all()
         inventory = []
 
         for inventory_item in inventory_items:
-            item = Item.query.get(inventory_item.item_id)
+            item = Item.query.get(inventory_item.itemID)
             if item is not None:
                 item_details = {
-                    'id': inventory_item.item_id,
+                    'id': inventory_item.itemID,
                     'name': inventory_item.name,
                     'type': item.type,
                     'cost': item.cost,
@@ -1197,7 +1224,7 @@ def inventory():
                     if spellItem is not None:
                         item_details.update({
                             'charges': spellItem.charges,
-                            'spell_id': spellItem.spell_id
+                            'spellID': spellItem.spellID
                         })
                 elif item.type == 'MountVehicle':
                     mountVehicle = MountVehicle.query.get(item.id)
@@ -1216,64 +1243,65 @@ def inventory():
         print("**** Giving Item to Player ****")
         data = request.get_json()
         print("POST INVENTORY- data:", data)
+        app.logger.info("POST INVENTORY- data: %s", data)
 
         current_user = User.query.filter_by(username=get_jwt_identity()).first()
-        if 'character_id' in data and current_user.account_type != 'DM':
+        if 'characterID' in data and current_user.account_type != 'DM':
             return jsonify({'message': 'Only DMs can issue items to other players!'}), 403
-        character_id = data['character_id']
+        characterID = data['characterID']
 
-        character = Character.query.get(character_id)
+        character = Character.query.get(characterID)
         print("FLASK- character:", character.character_name)
         if character is None:
             return jsonify({'message': 'Character not found'}), 404
 
-        item = Item.query.get(data['item_id'])
+        item = Item.query.get(data['itemID'])
         print("FLASK- item:", item.name)
         if item is None:
             return jsonify({'message': 'Item not found'}), 404
 
-        inventory_item = InventoryItem.query.filter_by(character_id=character.id, item_id=item.id).first()
+        inventory_item = InventoryItem.query.filter_by(characterID=character.id, itemID=item.id).first()
         if inventory_item:
             inventory_item.quantity += int(data['quantity'])
         else:
-            inventory_item = InventoryItem(character_id=character.id, item_id=item.id, quantity=data['quantity'])
+            inventory_item = InventoryItem(characterID=character.id, itemID=item.id, quantity=data['quantity'])
             db.session.add(inventory_item)
         db.session.commit()
 
         print("FLASK- Emitting inventory update")
-        socketio.emit('inventory_update', {'character_name': character.character_name, 'item_id': data['item_id'], 'quantity': data['quantity']}, to=character.user.sid)
+        socketio.emit('inventory_update', {'character_name': character.character_name, 'itemID': data['itemID'], 'quantity': data['quantity']}, to=character.user.sid)
 
         return jsonify({'message': 'Item added to inventory!'})
 
 
 ## When a player wants to nickname or equip an item from their inventory
-@app.route('/api/inventory/<int:item_id>', methods=['PUT'])
+@app.route('/api/inventory/<int:itemID>', methods=['PUT'])
 @jwt_required()
-def update_inventoryItem(item_id):
+def update_inventoryItem(itemID):
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
 
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    if campaign_id is None:
+    if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
     
     # Find the character associated with the user and the campaign
-    stmt = select(campaign_members.c.character_id).where(
-        campaign_members.c.campaign_id == campaign_id, 
-        campaign_members.c.user_id == user.id
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
 
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    character_id = result.character_id if result else None
+    characterID = result.characterID if result else None
 
-    inventory_item = InventoryItem.query.filter_by(character_id=character_id, item_id=item_id).first()
+    inventory_item = InventoryItem.query.filter_by(characterID=characterID, itemID=itemID).first()
     if not inventory_item:
         return jsonify({'message': 'Item not found in inventory!'}), 404
 
@@ -1290,13 +1318,13 @@ def update_inventoryItem(item_id):
     db.session.commit()
     return jsonify({'message': 'Item updated!'})
 
-@app.route('/api/inventory/<int:item_id>', methods=['DELETE'])
+@app.route('/api/inventory/<int:itemID>', methods=['DELETE'])
 @jwt_required()
-def drop_item(item_id):
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
-    inventory_item = InventoryItem.query.filter_by(character_id=character.id, item_id=item_id).first()
+def drop_item(itemID):
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
+    inventory_item = InventoryItem.query.filter_by(characterID=character.id, itemID=itemID).first()
     if not inventory_item:
         return jsonify({'message': 'Item not found in inventory!'}), 404
 
@@ -1316,21 +1344,21 @@ def get_equipment():
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
 
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    print('Equipment: campaign_id:', campaign_id)
-    print("Equipment: user_id:", user.id)
+    print('Equipment: campaignID:', campaignID)
+    print("Equipment: userID:", user.id)
 
-    stmt = select(campaign_members.c.character_id).where(
-        campaign_members.c.campaign_id == campaign_id, 
-        campaign_members.c.user_id == user.id
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
     )
 
     result = db.session.execute(stmt).first()
 
-    character_id = result.character_id if result else None
+    characterID = result.characterID if result else None
 
-    equippedItems = InventoryItem.query.filter_by(character_id=character_id, equipped=True).all()
+    equippedItems = InventoryItem.query.filter_by(characterID=characterID, equipped=True).all()
 
     # Convert the SQLAlchemy objects to dictionaries
     equippedItems = [item.to_dict() for item in equippedItems]
@@ -1351,25 +1379,25 @@ def create_journal_entry():
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    if campaign_id is None:
+    if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
     
     # Find the character associated with the user and the campaign
-    stmt = select(campaign_members.c.character_id).where(
-        campaign_members.c.campaign_id == campaign_id, 
-        campaign_members.c.user_id == user.id
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
 
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    character_id = result.character_id if result else None
+    characterID = result.characterID if result else None
 
     new_journal_entry = Journal(
-        character_id=character_id,
+        characterID=characterID,
         title=data['title'],
         entry=data['entry'],
         date_created=datetime.utcnow(),
@@ -1389,24 +1417,24 @@ def get_journal_entries():
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    if campaign_id is None:
+    if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
     
     # Find the character associated with the user and the campaign
-    stmt = select(campaign_members.c.character_id).where(
-        campaign_members.c.campaign_id == campaign_id, 
-        campaign_members.c.user_id == user.id
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
 
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    character_id = result.character_id if result else None
+    characterID = result.characterID if result else None
 
-    entries = Journal.query.filter_by(character_id=character_id).order_by(Journal.date_created.desc()).all()
+    entries = Journal.query.filter_by(characterID=characterID).order_by(Journal.date_created.desc()).all()
     return jsonify({'entries': [{
         'id': entry.id,
         'title': entry.title,
@@ -1425,23 +1453,23 @@ def update_journal_entry(entry_id):
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    if campaign_id is None:
+    if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
     
     # Find the character associated with the user and the campaign
-    stmt = select(campaign_members.c.character_id).where(
-        campaign_members.c.campaign_id == campaign_id, 
-        campaign_members.c.user_id == user.id
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
 
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    character_id = result.character_id if result else None
-    entry = Journal.query.filter_by(id=entry_id, character_id=character_id).first()
+    characterID = result.characterID if result else None
+    entry = Journal.query.filter_by(id=entry_id, characterID=characterID).first()
 
     if entry is None:
         return jsonify({'message': 'Journal entry not found'}), 404
@@ -1464,24 +1492,24 @@ def delete_journal_entry(entry_id):
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    if campaign_id is None:
+    if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
     
     # Find the character associated with the user and the campaign
-    stmt = select(campaign_members.c.character_id).where(
-        campaign_members.c.campaign_id == campaign_id, 
-        campaign_members.c.user_id == user.id
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
 
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    character_id = result.character_id if result else None
+    characterID = result.characterID if result else None
 
-    entry = Journal.query.filter_by(id=entry_id, character_id=character_id).first()
+    entry = Journal.query.filter_by(id=entry_id, characterID=characterID).first()
 
     if entry is None:
         return jsonify({'message': 'Journal entry not found'}), 404
@@ -1527,18 +1555,18 @@ def get_file(filename):
 def get_chat_history():
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
-    campaign_id = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('Campaign-ID')
 
-    stmt = select(campaign_members.c.character_id).where(
-        campaign_members.c.campaign_id == campaign_id, 
-        campaign_members.c.user_id == user.id
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
     )
 
     result = db.session.execute(stmt).first()
 
-    character_id = result.character_id if result else None
+    characterID = result.characterID if result else None
 
-    if character_id is None:
+    if characterID is None:
         return jsonify({'message': 'Character not found'}), 404
 
     def message_to_client_format(message):
@@ -1562,8 +1590,8 @@ def get_chat_history():
         }
 
     # Fetch the messages sent by the character and received by the character
-    sent_messages = Message.query.filter_by(sender_id=character_id).all()
-    received_messages = Message.query.filter(Message.recipient_ids.contains(str(character_id))).all()
+    sent_messages = Message.query.filter_by(sender_id=characterID).all()
+    received_messages = Message.query.filter(Message.recipient_ids.contains(str(characterID))).all()
 
     # Combine, sort by timestamp, and convert to JSON-friendly format
     messages = sorted(sent_messages + received_messages, key=lambda msg: msg.timestamp)
@@ -1588,12 +1616,12 @@ def create_loot_box():
     db.session.commit()
 
     for item in items:
-        item_id = item['id']
+        itemID = item['id']
         quantity = item['quantity']
-        # itemDB = Item.query.get(item_id)
-        itemDB = Item.query.filter_by(id=item_id).first()
+        # itemDB = Item.query.get(itemID)
+        itemDB = Item.query.filter_by(id=itemID).first()
         if itemDB:
-            association = loot_box_items.insert().values(loot_box_id=loot_box.id, item_id=itemDB.id, quantity=quantity)
+            association = loot_box_items.insert().values(loot_box_id=loot_box.id, itemID=itemDB.id, quantity=quantity)
             db.session.execute(association)
             db.session.commit()  # Commit after each iteration
 
@@ -1604,6 +1632,7 @@ def create_loot_box():
 def update_loot_box(box_id):
     data = request.get_json()
     print("data:", data)
+    app.logger.info("data: %s", data)
     loot_box_name = data['name']
     items = data['items']
 
@@ -1624,12 +1653,12 @@ def update_loot_box(box_id):
 
     # Add the new items
     for item in items:
-        item_id = item['id']
+        itemID = item['id']
         quantity = item['quantity']
-        # itemDB = Item.query.get(item_id)
-        itemDB = Item.query.filter_by(id=item_id).first()
+        # itemDB = Item.query.get(itemID)
+        itemDB = Item.query.filter_by(id=itemID).first()
         if itemDB:
-            association = loot_box_items.insert().values(loot_box_id=loot_box.id, item_id=itemDB.id, quantity=quantity)
+            association = loot_box_items.insert().values(loot_box_id=loot_box.id, itemID=itemDB.id, quantity=quantity)
             db.session.execute(association)
             db.session.commit()  # Commit after each iteration
 
@@ -1656,7 +1685,7 @@ def get_loot_box(box_id):
         # Use the association table to get the items in this loot box along with their quantities
         items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
             loot_box_items.c.loot_box_id == loot_box.id,
-            loot_box_items.c.item_id == Item.id
+            loot_box_items.c.itemID == Item.id
         ).all()
         return jsonify({'items': [{'id': item.id, 'name': item.name, 'quantity': quantity} for item, quantity in items_with_quantities]})
     else:
@@ -1680,16 +1709,16 @@ def issue_loot_box(box_id):
     # Use the association table to get the items in this loot box along with their quantities
     items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
         loot_box_items.c.loot_box_id == box_id,
-        loot_box_items.c.item_id == Item.id
+        loot_box_items.c.itemID == Item.id
     ).all()
 
     for item, quantity in items_with_quantities:
         # Update recipient's inventory
-        recipient_inventory_item = InventoryItem.query.filter_by(user_id=recipient_user.id, item_id=item.id).first()
+        recipient_inventory_item = InventoryItem.query.filter_by(userID=recipient_user.id, itemID=item.id).first()
         if recipient_inventory_item:
             recipient_inventory_item.quantity += quantity
         else:
-            new_inventory_item = InventoryItem(user_id=recipient_user.id, item_id=item.id, name=item.name, quantity=quantity)
+            new_inventory_item = InventoryItem(userID=recipient_user.id, itemID=item.id, name=item.name, quantity=quantity)
             db.session.add(new_inventory_item)
 
     db.session.commit()
@@ -1714,23 +1743,23 @@ def issue_loot_box(box_id):
 @jwt_required()
 def get_spellbook():
     ## Get a player's spellbook
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
     if not character:
         return jsonify({"error": "Character not found"}), 404
 
-    spellbook_items = Spellbook.query.filter_by(character_id=character.id).all()
+    spellbook_items = Spellbook.query.filter_by(characterID=character.id).all()
     return jsonify({"spellbook": [item.to_dict() for item in spellbook_items]})
 
 @app.route('/api/spells', methods=['GET'])
 @jwt_required()
 def get_all_spells():
     ## Get all the defined spells for the DM
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
     if character.account_type != 'DM':
         return jsonify({"error": "Unauthorized"}), 403
@@ -1742,23 +1771,23 @@ def get_all_spells():
 @jwt_required()
 def get_prepared_spells():
     try:
-        campaign_id = request.headers.get('Campaign-ID')
+        campaignID = request.headers.get('Campaign-ID')
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
 
-        user_id = request.headers.get('User-ID')
+        userID = request.headers.get('User-ID')
 
-        stmt = select(campaign_members.c.character_id).where(
-            campaign_members.c.campaign_id == campaign_id, 
-            campaign_members.c.user_id == user.id
+        stmt = select(campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID, 
+            campaign_members.c.userID == user.id
         )
 
         result = db.session.execute(stmt).first()
 
-        character_id = result.character_id if result else None
+        characterID = result.characterID if result else None
 
 
-        preparedSpells = Spellbook.query.filter_by(character_id=character_id, equipped=True).all()
+        preparedSpells = Spellbook.query.filter_by(characterID=characterID, equipped=True).all()
 
         # Convert the SQLAlchemy objects to dictionaries
         preparedSpells = [spell.to_dict() for spell in preparedSpells]
@@ -1774,9 +1803,9 @@ def get_prepared_spells():
 @jwt_required()
 def create_spell():
     # Create a new spell
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
     if character.account_type != 'DM':
         return jsonify({"error": "Unauthorized"}), 403
@@ -1791,9 +1820,11 @@ def create_spell():
     if 'components' in data:
         data['components'] = ",".join(data['components'])
         print('components:', data['components'])
+        app.logger.info('components: %s', data['components'])
     if 'Classes' in data:
         data['Classes'] = ",".join(data['Classes'])
         print('Classes:', data['Classes'])
+        app.logger.info('Classes: %s', data['Classes'])
 
     new_spell = Spell(
         name=data['name'],
@@ -1816,36 +1847,36 @@ def create_spell():
 @jwt_required()
 def save_spells_to_spellbook():
     # Saves to Spellbook
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
     data = request.json
     spells = data['spells']
     for spell_data in spells:
         spellbook_item = Spellbook(
-            user_id=user_id,
-            spell_id=spell_data['spell_id'],
+            userID=userID,
+            spellID=spell_data['spellID'],
             quantity=spell_data.get('quantity', 1)  # Defaults to 1 if not provided
         )
         db.session.add(spellbook_item)
     db.session.commit()
     return jsonify({"message": "Spells saved successfully"}), 201
 
-@app.route('/api/spellbook/<int:spell_id>', methods=['DELETE'])
+@app.route('/api/spellbook/<int:spellID>', methods=['DELETE'])
 @jwt_required()
-def drop_spell_from_spellbook(spell_id):
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+def drop_spell_from_spellbook(spellID):
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
-    spellbook_item = Spellbook.query.filter_by(user_id=user_id).first()
-    if not spellbook_item or spellbook_item.user_id != user_id:
+    spellbook_item = Spellbook.query.filter_by(userID=userID).first()
+    if not spellbook_item or spellbook_item.userID != userID:
         return jsonify({"error": "Spellbook item not found or unauthorized"}), 404
 
     data = request.json
     quantity_to_remove = data.get('quantity', 1)  # Defaults to removing 1 if not provided
-    spellbook_item = Spellbook.query.get(spell_id)
+    spellbook_item = Spellbook.query.get(spellID)
     if not spellbook_item:
         return jsonify({"error": "Spellbook item not found"}), 404
     if spellbook_item.quantity <= quantity_to_remove:
@@ -1855,35 +1886,35 @@ def drop_spell_from_spellbook(spell_id):
     db.session.commit()
     return jsonify({"message": "Spell removed successfully"})
 
-@app.route('/api/spells/<int:spell_id>', methods=['DELETE'])
+@app.route('/api/spells/<int:spellID>', methods=['DELETE'])
 @jwt_required()
-def delete_spell(spell_id):
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+def delete_spell(spellID):
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
     if character.account_type != 'DM':
         return jsonify({"error": "Unauthorized"}), 403
 
-    spell = Spell.query.get(spell_id)
+    spell = Spell.query.get(spellID)
     if not spell:
         return jsonify({"error": "Spell not found"}), 404
     db.session.delete(spell)
     db.session.commit()
     return jsonify({"message": "Spell deleted successfully"})
 
-@app.route('/api/spells/<int:spell_id>', methods=['PUT'])
+@app.route('/api/spells/<int:spellID>', methods=['PUT'])
 @jwt_required()
-def update_spell(spell_id):
+def update_spell(spellID):
     ## Used for the DM to update a spell's details
-    campaign_id = request.headers.get('Campaign-ID')
-    user_id = request.headers.get('User-ID')
-    character = campaign_members.query.filter_by(campaign_id=campaign_id, user_id=user_id).first().character
+    campaignID = request.headers.get('Campaign-ID')
+    userID = request.headers.get('User-ID')
+    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
     if character.account_type != 'DM':
         return jsonify({"error": "Unauthorized"}), 403
 
-    spell = Spell.query.get(spell_id)
+    spell = Spell.query.get(spellID)
     if not spell:
         return jsonify({"error": "Spell not found"}), 404
     data = request.json
@@ -1904,15 +1935,15 @@ def update_spell(spell_id):
     return jsonify(spell.to_dict())
 
 
-@app.route('/api/spellbook/<int:spell_id>', methods=['PUT'])
+@app.route('/api/spellbook/<int:spellID>', methods=['PUT'])
 @jwt_required()
-def update_spellbook_item(spell_id):
+def update_spellbook_item(spellID):
     ## Isn't this so the DM can give spells to a player? Or is this for updating spells?
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
 
-    spellbook_item = Spellbook.query.filter_by(user_id=user.id).first()
-    if not spellbook_item or spellbook_item.user_id != user.id:
+    spellbook_item = Spellbook.query.filter_by(userID=user.id).first()
+    if not spellbook_item or spellbook_item.userID != user.id:
         return jsonify({"error": "Spellbook item not found or unauthorized"}), 404
 
     data = request.json
@@ -1948,11 +1979,14 @@ def index(campaign_name):
 @app.route('/<campaign_name>/<page_title>', methods=['GET'])
 def wiki_page(campaign_name, page_title):
     print("campaign_name:", campaign_name)
+    app.logger.info("campaign_name: %s", campaign_name)
     print("page_title:", page_title)
+    app.logger.info("page_title: %s", page_title)
 
     ## Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
     print("campaign:", campaign)
+    app.logger.info("campaign: %s", campaign)
 
     ## Get the page using the Campaign ID and the page title
     page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
@@ -2028,13 +2062,13 @@ def connected():
 
 @socketio.on('user_connected')
 def handle_user_connected(data):
-    # ## app.logger.info("HANDLE CONNETION- user_connected- data: %s", data)
-    ## app.logger.info('HANDLE CONNETION- User connected: %s', data['username'])
+    app.logger.info("HANDLE CONNETION- user_connected- data: %s", data)
+    # app.logger.info('HANDLE CONNETION- User connected: %s', data['username'])
     print('HANDLE CONNETION- User connected:', data['username'])
     # You can now associate the username with the current socket connection
     user = User.query.filter_by(username=data['username']).first()
     if user:
-        ## app.logger.info("HANDLE CONNETION- user status: %s", user.is_online)
+        app.logger.info("HANDLE CONNETION- user status: %s", user.is_online)
         print("HANDLE CONNETION- user status:", user.is_online)
         if not user.is_online:
             user.is_online = True
@@ -2131,7 +2165,7 @@ def handle_item_transfer(messageObj, recipient_users, senderID):
         return jsonify({'message': 'Item not found'}), 404
 
     # Update recipient's inventory
-    recipient_inventory_item = InventoryItem.query.filter_by(user_id=recipient_user.id, item_id=db_item.id).first()
+    recipient_inventory_item = InventoryItem.query.filter_by(userID=recipient_user.id, itemID=db_item.id).first()
     print("MESSAGE- recipient_inventory_item:", recipient_inventory_item)
 
     if recipient_inventory_item:
@@ -2140,7 +2174,7 @@ def handle_item_transfer(messageObj, recipient_users, senderID):
         print("MESSAGE- new quantity:", recipient_inventory_item.quantity)
 
     else:
-        new_inventory_item = InventoryItem(user_id=recipient_user.id, item_id=db_item.id, name=db_item.name, quantity=int(quantity))
+        new_inventory_item = InventoryItem(userID=recipient_user.id, itemID=db_item.id, name=db_item.name, quantity=int(quantity))
         print("new_inventory_item:", new_inventory_item)
         db.session.add(new_inventory_item)
 
@@ -2160,7 +2194,7 @@ def handle_item_transfer(messageObj, recipient_users, senderID):
 
     # Update sender's inventory only if the sender is not a DM
     if senderID.account_type != 'DM':
-        sender_inventory_item = InventoryItem.query.filter_by(user_id=senderID.id, item_id=db_item.id).first()
+        sender_inventory_item = InventoryItem.query.filter_by(userID=senderID.id, itemID=db_item.id).first()
         if sender_inventory_item and sender_inventory_item.quantity > int(quantity):
             sender_inventory_item.quantity -= int(quantity)
         elif sender_inventory_item.quantity == int(quantity):
@@ -2203,10 +2237,10 @@ def handle_spell_transfer(messageObj, recipient_users, senderID):
     spell = messageObj['spell']
 
     # Update recipient's spellbook
-    recipient_spellbook_item = Spellbook.query.filter_by(user_id=recipient_user.id, spell_id=spell['id']).first()
+    recipient_spellbook_item = Spellbook.query.filter_by(userID=recipient_user.id, spellID=spell['id']).first()
 
     if not recipient_spellbook_item:
-        new_spellbook_item = Spellbook(user_id=recipient_user.id, spell_id=spell['id'], quantity=1)
+        new_spellbook_item = Spellbook(userID=recipient_user.id, spellID=spell['id'], quantity=1)
         db.session.add(new_spellbook_item)
     else:
         # Assuming that spell details like name, etc. are not modified during transfer
