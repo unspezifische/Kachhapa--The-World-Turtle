@@ -109,12 +109,12 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
 
   return (
     <>
-      <Container style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <Container style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', paddingBottom: '50px' }}>
         <Row>
           <h1>Account Profile</h1>
         </Row>
-        <Row style={{ flex: '1 1 auto', overflow: 'hidden', height: '0' }}>
-          <Carousel style={{ width: '100%', height: '100%' }}>
+        <Row style={{ flex: '1 1 auto', justifyContent: 'center', alignItems: 'center' }}>
+          <Carousel style={{ width: '70vh'}}>
             {campaigns.map((campaign, index) => (
               <Carousel.Item key={campaign.id}>
                 <Carousel.Caption>
@@ -143,10 +143,11 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
             ))}
           </Carousel>
         </Row>
+        <Row style={{ flex: 'none', height: '10px' }}></Row>
         <Row style={{ flex: 'none' }}>
           {campaigns.map((campaign) => (
             <Col sm={4} key={campaign.id}>
-              <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={() => handleCampaignSelection(campaign)}>
+              <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={() => handleCampaignSelection(campaign)}>
                 <Row>
                   <Col xs={4}>
                     <Card.Img variant="top" src={campaign.icon || campaignIcon} />
@@ -163,7 +164,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
             </Col>
           ))}
           <Col sm={4}>
-            <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={handleCreateCampaign}>
+            <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={handleCreateCampaign}>
               <Row>
                 <Col xs={4}>
                   <Card.Img variant="top" src={campaignIcon} />
@@ -181,7 +182,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
           {characters.map((character) => (
             console.log("character:", character),
             <Col sm={4} key={character.id}>
-              <Card style={{ width: '18rem', marginBottom: '1rem' }}>
+                <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}>
                 <Row>
                   <Col xs={4}>
                     <Card.Img variant="top" src={process.env.PUBLIC_URL + '/avatars/' +  character.icon || campaignIcon} />
@@ -198,7 +199,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
             </Col>
           ))}
           <Col sm={4}>
-            <Card style={{ width: '18rem', marginBottom: '1rem' }} onClick={handleCreateCharacter}>
+            <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={handleCreateCharacter}>
               <Row>
                 <Col xs={4}>
                   <Card.Img variant="top" src={campaignIcon} />

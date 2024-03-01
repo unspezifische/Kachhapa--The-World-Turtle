@@ -38,8 +38,7 @@ app.config['UPLOAD_FOLDER'] = '/home/ijohnson/Downloads/Library'
 app.config['MAP_FOLDER'] = '/home/ijohnson/Downloads/Maps'
 app.config['BATTLE_MAP_FOLDER'] = '/home/ijohnson/Downloads/battleMaps'
 app.config['SECRET_KEY'] = 'secret-key'
-# app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///db.sqlite'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@localhost/db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@127.0.0.1/db'
 
 ## Token stuff
 app.config['JWT_SECRET_KEY'] = 'jwt-secret-key'
@@ -771,6 +770,30 @@ def get_race_info(race_name):
         return jsonify(game_element.data)
     else:
         abort(404, description="Resource not found")
+
+@app.route('/api/backgrounds', methods=['GET'])
+def get_background_listing():
+    # Determine the System in use
+    campaignID = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaignID).first()
+    system = campaign.system if campaign else 'D&D 5e'
+    
+    backgrounds = GameElement.query.filter_by(element_type='character_background', system=system).all()
+    return jsonify([b.to_dict() for b in backgrounds])
+
+@app.route('/api/backgrounds/<background_name>', methods=['GET'])
+def get_background_info(background_name):
+    # Determine the System in use
+    campaignID = request.headers.get('Campaign-ID')
+    campaign = Campaign.query.filter_by(id=campaignID).first()
+    system = campaign.system if campaign else 'D&D 5e'
+    
+    game_element = GameElement.query.filter_by(name=background_name, element_type='character_background', system=system).first()
+    if game_element:
+        return jsonify(game_element.data)
+    else:
+        abort(404, description="Resource not found")
+
 
 ## GET Character Profile
 @app.route('/api/character', methods=['GET'])

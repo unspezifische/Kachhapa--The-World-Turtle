@@ -4,6 +4,8 @@ import { Modal, Button, Form, Pagination, Accordion, Card } from 'react-bootstra
 
 const CreateCharacterModal = ({ show, onHide, headers }) => {
     const [step, setStep] = useState(1);
+    const stepNames = ['Race', 'Class', 'Abilities', 'Description', 'Equipment', 'Review'];
+
 
     // Declare a new state variable to store the character data
     const [character, setCharacter] = useState({
@@ -79,9 +81,12 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
         Feats: [''],  // mostly determined by class? also race?
     });
 
-    const [selectedRace, setSelectedRace] = useState(null);
+    const [selectedRace, setSelectedRace] = useState('');
+    const [selectedClass, setSelectedClass] = useState('');
+    const [selectedBackground, setSelectedBackground] = useState('');
     const [races, setRaces] = useState([]);
     const [classes, setClasses] = useState([]);
+    const [backgrounds, setBackgrounds] = useState([]);
 
     // Add a new state variable for the selected method of ability score generation
     const [method, setMethod] = useState('Choose');
@@ -157,6 +162,10 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
         console.log('Character updated:', character);
     }, [character]);
 
+    useEffect(() => {
+        console.log('Race updated:', selectedRace);
+    }, [selectedRace]);
+
     // Get the list of playable races and classes from the server
     useEffect(() => {
         axios.get('http://127.0.0.1:5001/api/races')
@@ -176,6 +185,18 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
                 console.log("Classes-", response.data);
                 const sortedClasses = response.data.sort((a, b) => a.name.localeCompare(b.name));
                 setClasses(sortedClasses);
+            })
+            .catch((error) => {
+                console.error(error);
+            });
+    }, []);
+
+    useEffect(() => {
+        axios.get('http://127.0.0.1:5001/api/backgrounds')
+            .then((response) => {
+                console.log("Backgrounds-", response.data);
+                const sortedBackgrounds = response.data.sort((a, b) => a.name.localeCompare(b.name));
+                setBackgrounds(sortedBackgrounds);
             })
             .catch((error) => {
                 console.error(error);
@@ -219,68 +240,85 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
 
     return (
         <>
-            <Modal show={show} onHide={onHide} style={{ maxHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'auto'}}>
+            <Modal
+                show={show}
+                onHide={onHide}
+                style={{ maxHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'auto'}}
+                size="lg"
+                backdrop="static"
+                keyboard={false}
+            >
                 <Modal.Header closeButton>
                     <Modal.Title>Create New Character</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
                     <Form>
                         {step === 1 && (
-                            <>
+                            <div style={{ height: 'calc(100vh - 250px)'}}>
                                 <h2>Race</h2>
                                 <Form.Group controlId="characterRace">
-                                    <Form.Label>Race</Form.Label>
-                                    <Accordion style={{ maxHeight: 'calc(100vh - 300px)', overflow: 'auto' }}>
+                                    <Form.Select 
+                                        aria-label="Race selection" 
+                                        value={selectedRace} 
+                                        onChange={(e) => { console.log(e.target.value); setSelectedRace(e.target.value) }}
+                                    >
+                                        <option>--Choose A Race--</option>
                                         {races.map((elem, index) => (
-                                            <Accordion.Item eventKey={index.toString()} key={`race-${index}`} >
-                                                <Accordion.Header onClick={() => setSelectedRace(elem.name)}>{elem.name}</Accordion.Header>
-                                                <Accordion.Body>
-                                                    {Object.entries(elem.data).map(([key, value]) => (
-                                                        <p key={key}>
-                                                            <strong>{key}:</strong>
-                                                            {Array.isArray(value) ? value.join(', ') :
-                                                                (typeof value === 'object' && value !== null) ?
-                                                                    Object.entries(value).map(([subKey, subValue]) => (
-                                                                        <span key={subKey}>{`${subKey}: ${subValue}`}</span>
-                                                                    )) : value}
-                                                        </p>
-                                                    ))}
-                                                </Accordion.Body>
-                                            </Accordion.Item>
+                                            <option key={`race-${index}`} value={elem.name}>{elem.name}</option>
                                         ))}
-                                    </Accordion>
+                                    </Form.Select>
                                 </Form.Group>
-                            </>
+                                <div style={{ height: '10px' }}></div>
+                                {selectedRace && (
+                                    <div style={{overflow: 'auto', maxHeight: '63vh' }}>
+                                        {Object.entries(races.find(race => race.name === selectedRace)?.data || {}).map(([key, value]) => (
+                                            <p key={key}>
+                                                <strong>{key}:</strong>
+                                                {Array.isArray(value) ? value.join(', ') :
+                                                    (typeof value === 'object' && value !== null) ?
+                                                        Object.entries(value).map(([subKey, subValue]) => (
+                                                            <span key={subKey}>{`${subKey}: ${subValue}`}</span>
+                                                        )) : value}
+                                            </p>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         )}
                         {step === 2 && (
-                            <>
-                                <h2>Selected Race: {selectedRace}</h2>
-                                <Form.Group controlId="characterRace">
-                                    <Form.Label>Class</Form.Label>
-                                    <Accordion style={{ maxHeight: 'calc(100vh - 300px)', overflow: 'auto' }}>
+                            <div style={{ height: 'calc(100vh - 250px)', overflow: 'auto' }}>
+                                <h2>Class</h2>
+                                <Form.Group controlId="characterClass" style={{ maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+                                    <Form.Select 
+                                        aria-label="Class selection" 
+                                        value={selectedClass} 
+                                        onChange={(e) => { console.log(e.target.value); setSelectedClass(e.target.value) }}
+                                    >
+                                        <option>--Choose A Class--</option>
                                         {classes.map((elem, index) => (
-                                            <Accordion.Item eventKey={index.toString()} key={`class-${index}`}>
-                                                <Accordion.Header>{elem.name}</Accordion.Header>
-                                                <Accordion.Body>
-                                                    {Object.entries(elem.data).map(([key, value]) => (
-                                                        <p key={key}>
-                                                            <strong>{key}:</strong>
-                                                            {Array.isArray(value) ? value.join(', ') :
-                                                                (typeof value === 'object' && value !== null) ?
-                                                                    Object.entries(value).map(([subKey, subValue]) => (
-                                                                        <span key={subKey}>{`${subKey}: ${subValue}`}</span>
-                                                                    )) : value}
-                                                        </p>
-                                                    ))}
-                                                </Accordion.Body>
-                                            </Accordion.Item>
+                                            <option key={`class-${index}`} value={elem.name}>{elem.name}</option>
                                         ))}
-                                    </Accordion>
+                                    </Form.Select>
                                 </Form.Group>
-                            </>
+                                <div style={{ height: '10px' }}></div>
+                                {selectedClass && (
+                                    <div style={{ overflow: 'auto', maxHeight: '63vh' }}>
+                                        {Object.entries(classes.find(cls => cls.name === selectedClass)?.data || {}).map(([key, value]) => (
+                                            <p key={key}>
+                                                <strong>{key}:</strong>
+                                                {Array.isArray(value) ? value.join(', ') :
+                                                    (typeof value === 'object' && value !== null) ?
+                                                        Object.entries(value).map(([subKey, subValue]) => (
+                                                            <span key={subKey}>{`${subKey}: ${subValue}`}</span>
+                                                        )) : value}
+                                            </p>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         )}
                         {step === 3 && (
-                            <>
+                            <div style={{ height: 'calc(100vh - 250px)'}}>
                                 <h2>Ability Scores</h2>
                                 <Form.Group controlId="generationMethod">
                                     <Form.Control as="select" value={method} onChange={handleMethodChange}>
@@ -315,10 +353,10 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
                                         )}
                                     </Form.Group>
                                 ))}
-                            </>
+                            </div>
                         )}
                         {step === 4 && (
-                            <>
+                            <div style={{ height: 'calc(100vh - 250px)'}}>
                                 <h2>Character Details</h2>
                                 <Form.Group controlId="characterName">
                                     <Form.Label>Name</Form.Label>
@@ -326,62 +364,73 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
                                 </Form.Group>
                                 <Form.Group controlId="characterBackground">
                                     <Form.Label>Background</Form.Label>
-                                    <Form.Control as="select" name="background" value={character.background} onChange={handleInputChange} required>
+                                    <Form.Control as="select" name="background" value={selectedBackground} onChange={(e) => setSelectedBackground(e.target.value)} required>
                                         <option>--Choose--</option>
-                                        <option>Acolyte</option>
-                                        <option>Charlatan</option>
-                                        <option>City Watch</option>
-                                        <option>Clan Crafter</option>
-                                        <option>Cloistered Scholar</option>
-                                        <option>Courtier</option>
-                                        <option>Criminal</option>
-                                        <option>Entertainer</option>
-                                        <option>Faction Agent</option>
-                                        <option>Far Traveler</option>
-                                        <option>Folk Hero</option>
-                                        <option>Guild Artisan</option>
-                                        <option>Hermit</option>
-                                        <option>Inheritor</option>
-                                        <option>Knight of the Order</option>
-                                        <option>Mercenary Veteran</option>
-                                        <option>Noble</option>
-                                        <option>Outlander</option>
-                                        <option>Sage</option>
-                                        <option>Sailor</option>
-                                        <option>Soldier</option>
-                                        <option>Urchin</option>
-                                        <option>Urban Bounty Hunter</option>
-                                        <option>Uthgardt Tribe Member</option>
+                                        {backgrounds.map((elem, index) => (
+                                            <option key={`background-${index}`} value={elem.name}>{elem.name}</option>
+                                        ))}
                                     </Form.Control>
                                 </Form.Group>
-                            </>
+                                <div style={{ height: '10px' }}></div> {/* This div will create some space */}
+                                {selectedBackground && (
+                                    <div style={{overflow: 'auto', maxHeight: '50vh' }}>
+                                        {Object.entries(backgrounds.find(bg => bg.name === selectedBackground)?.data || {}).map(([key, value]) => (
+                                            <p key={key}>
+                                                <strong>{key}:</strong>
+                                                {Array.isArray(value) ? value.join(', ') :
+                                                    (typeof value === 'object' && value !== null) ?
+                                                        Object.entries(value).map(([subKey, subValue]) => (
+                                                            <span key={subKey}>{`${subKey}: ${subValue}`}</span>
+                                                        )) : value}
+                                            </p>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         )}
                         {step === 5 && (
-                            <>
+                            <div style={{ height: 'calc(100vh - 250px)'}}>
+                                <h2>Character Equipment</h2>
                                 {/* Pick Character Equipment */}
-                            </>
+                            </div>
                         )}
                         {step === 6 && (
-                            <>
+                            <div style={{ height: 'calc(100vh - 250px)'}}>
+                                <h2>Character Summary</h2>
+                                <div style={{overflow: 'auto', maxHeight: '63vh' }}>
+                                    {Object.entries(character).map(([key, value]) => (
+                                        <p key={key}>
+                                            <strong>{key}:</strong>
+                                            {Array.isArray(value) ? value.join(', ') :
+                                                (typeof value === 'object' && value !== null) ?
+                                                    Object.entries(value).map(([subKey, subValue]) => (
+                                                        <span key={subKey}>{`${subKey}: ${subValue}`}</span>
+                                                    )) : value}
+                                        </p>
+                                    ))}
+                                </div>
+                                <Button variant="primary" onClick={handleCreateCharacter}>
+                                    Create Character
+                                </Button>
                                 {/* Show all character details in a condensed form for verification */}
-                            </>
+                            </div>
                         )}
                     </Form>
                 </Modal.Body>
-                <Modal.Footer>
+                <Modal.Footer className="d-flex justify-content-center">
                     <Pagination>
                         <Pagination.Prev onClick={handlePrevious} disabled={step === 1} />
-                        <Pagination.Item active>{step}</Pagination.Item>
-                        <Pagination.Next onClick={handleNext} disabled={step === 6} />
-                    </Pagination>
-                    <Button variant="secondary" onClick={onHide}>
-                        Close
-                    </Button>
-                    {step === 6 && (
-                        <Button variant="primary" onClick={handleCreateCharacter}>
-                            Create Character
-                        </Button>
-                    )}
+                        {stepNames.map((stepName, index) => (
+                            <Pagination.Item 
+                                key={index} 
+                                active={step === index + 1} 
+                                onClick={() => setStep(index + 1)}
+                            >
+                                {stepName}
+                            </Pagination.Item>
+                        ))}
+                        <Pagination.Next onClick={handleNext} disabled={step === stepNames.length} />
+                    </Pagination>                    
                 </Modal.Footer>
             </Modal>
         </>
