@@ -48,3 +48,17 @@
     transform: rotate(360deg);
   }
 }
+
+@font-face {
+  font-family: 'Elvish';
+  src: url('../fonts/OldeEspruar.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Dwavish';
+  src: url('../fonts/Dethek.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+}
