@@ -257,7 +257,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
       </Modal>
 
       {/* Character Creation Modal */}
-      <CreateCharacterModal show={showModalCharacter} onHide={handleCloseModalCharacter} headers={headers} />
+      <CreateCharacterModal show={showModalCharacter} setShow={setShowModalCharacter} onHide={handleCloseModalCharacter} headers={headers} />
     </>
   );
 };
