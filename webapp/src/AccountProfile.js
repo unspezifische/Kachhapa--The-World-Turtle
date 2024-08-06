@@ -5,15 +5,18 @@ import { Card, Button, Modal, Navbar, Container, Row, Col, Form, Carousel } from
 import campaignIcon from './campaign.webp';
 
 import CreateCharacterModal from './CreateCharacterModal';
+import { set } from 'jodit/esm/core/helpers';
 
-const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType }) => {
+const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType, setCharacterID }) => {
   const navigate = useNavigate();
 
   const [campaigns, setCampaigns] = useState([]);
   const [characters, setCharacters] = useState([]);
+  const [unaffiliatedCharacters, setUnaffiliatedCharacters] = useState([]);
 
   const [showModalCampaign, setShowModalCampaign] = useState(false);
   const [showModalCharacter, setShowModalCharacter] = useState(false);
+  const [showModalSelectCharacter, setShowModalSelectCharacter] = useState(false);
 
   const handleCloseModalCampaign = () => setShowModalCampaign(false);
   const handleCreateCampaign = () => setShowModalCampaign(true);
@@ -21,9 +24,20 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
   const handleCloseModalCharacter = () => setShowModalCharacter(false);
   const handleCreateCharacter = () => setShowModalCharacter(true);
 
+  const handleCloseModalSelectCharacter = () => setShowModalSelectCharacter(false);
+  
+  // Modified to accept a character object instead of a list
+  const handleSelectCharacter = (character) => {
+    console.log("AccountProfile- selected character:", character);
+    setCharacterName(character.name); // Set the character name
+    setCharacterID(character.id); // Set the character ID
+    setShowModalSelectCharacter(true);
+  }
+
+  // Get campaigns for user
   useEffect(() => {
     const fetchData = async () => {
-      axios.get('http://127.0.0.1:5001/api/campaigns', { headers })
+      axios.get('/api/campaigns', { headers })
         .then(response => {
           setCampaigns(response.data)
         })
@@ -34,9 +48,9 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
     fetchData();
   }, [headers]);
 
+  // Get user's characters
   useEffect(() => {
-    // Fetch characters
-    axios.get('http://127.0.0.1:5001/api/characters', { headers })
+    axios.get('/api/characters', { headers })
       .then(response => {
         setCharacters(response.data)
       })
@@ -45,33 +59,62 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
       });
   }, [headers]);
 
+
   const handleCampaignSelection = (campaign) => {
+    console.log("header- AccountProfile", headers);
     // Add the Campaign-ID to the headers
     headers['Campaign-ID'] = campaign.id;
-      setSelectedCampaign({
-        id: campaign.id,
-        name: campaign.name,
-        dmId: campaign.dm_id,
-        ownerId: campaign.owner_id
-      });
-    if (campaign.dm_id === headers.userID || campaign.owner_id === headers.userID) {
-      setAccountType('DM') 
+    setSelectedCampaign({
+      id: campaign.id,
+      name: campaign.name,
+      dmId: campaign.dm_id,
+      ownerId: campaign.owner_id
+    });
+    if (campaign.dm_id === headers.userID) {
+      axios.get('/api/characters', { headers })
+        .then(response => {
+          console.log("AccountProfile- api/characters:", response.data);
+        })
+      setAccountType('DM');
+      setCharacterName('DM');
+      navigate('/dmTools');
+    } 
+    else if (campaign.owner_id === headers.userID) {
+      axios.get('/api/characters', { headers })
+        .then(response => {
+          console.log("AccountProfile- api/characters:", response.data);
+        })
+      setAccountType('DM');
+      setCharacterName('Admin');
       navigate('/dmTools');
     } else {
-      setAccountType('Player') 
-      axios.get('http://127.0.0.1:5001/api/profile', { headers })
+      setAccountType('Player');
+      axios.get('/api/characters', { headers })
         .then(response => {
-          if (response.data.character) {
-            setCharacterName(response.data.character.name);
+          // console.log("AccountProfile- api/characters:", response.data);
+          // Filter the user's characters for those that are affiliated with the selected campaign
+          const affiliatedCharacters = response.data.filter(character => character.campaignID === campaign.id);
+          console.log("affiliatedCharacters:", affiliatedCharacters);
+          if (affiliatedCharacters.length > 0) {
+            console.log("Selected Character-", affiliatedCharacters[0]);
+            console.log("Selected Character ID-", affiliatedCharacters[0].id);
+            console.log("Selected Character Name-", affiliatedCharacters[0].name);
+            setCharacterName(affiliatedCharacters[0].name);
+            // setCharacterID(affiliatedCharacters[0].id);
             navigate('/characterSheet');
           } else {
-            handleCreateCharacter(); // Show the CreateCharacterModal
+            // If no such characters exist, proceed with the existing logic to handle unaffiliated characters
+            setUnaffiliatedCharacters = response.data.characters.filter(character => !character.campaignID && character.system === campaign.system);
+            if (unaffiliatedCharacters.length > 0) {
+              handleSelectCharacter(unaffiliatedCharacters);
+            } else {
+              handleCreateCharacter();
+            }
           }
         })
         .catch(error => {
-          console.error('Error fetching profile:', error)
+          console.error('Error fetching profile:', error);
         });
-      navigate('/characterSheet');
     }
   };
 
@@ -97,7 +140,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
 
   const handleFormSubmit = (event) => {
     event.preventDefault();
-    axios.post('http://127.0.0.1:5001/api/campaigns', newCampaign, { headers })
+    axios.post('/api/campaigns', newCampaign, { headers })
       .then(response => {
         setCampaigns([...campaigns, response.data]);
         handleCloseModalCampaign();
@@ -180,7 +223,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
         </Row>
         <Row style={{ flex: 'none' }}>
           {characters.map((character) => (
-            console.log("character:", character),
+            console.log("AccountProfile: characters-", character),
             <Col sm={4} key={character.id}>
                 <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}>
                 <Row>
@@ -214,6 +257,27 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
           </Col>
         </Row>
       </Container>
+
+      {/* Select Character Modal */}
+      <Modal show={showModalSelectCharacter} onHide={handleCloseModalSelectCharacter}>
+        <Modal.Header closeButton>
+          <Modal.Title>Select Character</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form>
+            <Form.Group controlId="characterSelect">
+              <Form.Label>Character</Form.Label>
+              <Form.Control as="select" name="character" onChange={handleInputChange} required>
+                <option value="">Select a character</option>
+                {unaffiliatedCharacters.map((character) => (
+                  <option key={character.id} value={character.id}>{character.name}</option>
+                ))}
+              </Form.Control>
+            </Form.Group>
+            <Button variant="primary" type="submit">Select Character</Button>
+          </Form>
+        </Modal.Body>
+      </Modal>
 
       {/* Campaign Creation Modal */}
       <Modal show={showModalCampaign} onHide={handleCloseModalCampaign}>

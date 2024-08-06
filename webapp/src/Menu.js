@@ -34,9 +34,10 @@ function Menu({ accountType, selectedCampaign, setSelectedCampaign }) {
   function openWiki() {
     if (selectedCampaign && selectedCampaign.name) {
       console.log("selectedCampaign: ", selectedCampaign)
-      var encodedName = encodeURIComponent(selectedCampaign.name);
-      window.open('http://localhost:5001/' + encodedName, '_blank');
-      console.log("Opening wiki: localhost:5001/" + encodedName);
+      var encodedName = encodeURIComponent(selectedCampaign.name + "/Main Page");
+      var destination = 'http://raspberrypi.local/' + encodedName;
+      window.open(destination, '_blank');
+      console.log("Opening wiki: " + destination);
     } else {
       console.log("No selected campaign or campaign name");
     }

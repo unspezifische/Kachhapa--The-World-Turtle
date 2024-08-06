@@ -3,9 +3,9 @@
 # Define the destination (replace with your Raspberry Pi's IP address and destination directory)
 DESTINATION="ijohnson@raspberrypi.local"
 
-# Remove "http://127.0.0.1:5001" from all "/api/*" occurrences in .js files in the src directory
-find ./webapp/src -name "*.js" -exec sed -i '' 's|http://127.0.0.1:5001||g' {} \;
-echo "Finished removing 'http://127.0.0.1:5001' from .js files in the src directory"
+# # Remove "http://127.0.0.1:5001" from all "/api/*" occurrences in .js files in the src directory
+# find ./webapp/src -name "*.js" -exec sed -i '' 's|http://127.0.0.1:5001||g' {} \;
+# echo "Finished removing 'http://127.0.0.1:5001' from .js files in the src directory"
 
 # Copy the Flask app
 rsync -avz app.py $DESTINATION:/home/ijohnson/myapp/backend
@@ -56,5 +56,5 @@ rsync -avz webapp/public/ $DESTINATION:/home/ijohnson/my-app/public/
 echo "Finished copying the public directory"
 
 # Switch everything back over to the development version of the files
-find ./webapp/src -name "*.js" -exec sed -i '' 's|/api/|http://127.0.0.1:5001/api/|g' {} \;
-echo "Finished switching back to the development version of the files"
+# find ./webapp/src -name "*.js" -exec sed -i '' 's|/api/|http://127.0.0.1:5001/api/|g' {} \;
+# echo "Finished switching back to the development version of the files"

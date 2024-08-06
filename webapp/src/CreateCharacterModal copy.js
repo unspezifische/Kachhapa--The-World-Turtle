@@ -61,7 +61,7 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
 
     // Retreieve the CharacterSheet data from the server
     useEffect(() => {
-        axios.get('http://127.0.0.1:5001/api/characterSheet', { headers })
+        axios.get('/api/characterSheet', { headers })
         .then((response) => {
             console.log("CharacterSheet-", response.data[0]);
             setCharacterSheet(response.data[0]);
@@ -74,7 +74,7 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
 
     // Get the list of playable races and classes from the server
     useEffect(() => {
-        axios.get('http://127.0.0.1:5001/api/races')
+        axios.get('/api/races')
             .then((response) => {
                 console.log("Races-", response.data)
                 const sortedRaces = response.data.sort((a, b) => a.name.localeCompare(b.name));
@@ -86,7 +86,7 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
     }, []);
 
     useEffect(() => {
-        axios.get('http://127.0.0.1:5001/api/classes')
+        axios.get('/api/classes')
             .then((response) => {
                 console.log("Classes-", response.data);
                 const sortedClasses = response.data.sort((a, b) => a.name.localeCompare(b.name));
@@ -99,7 +99,7 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
 
     const handleCreateCharacter = () => {
         // Send the character data to the server
-        axios.put('http://127.0.0.1:5001/api/character', { headers, character })
+        axios.put('/api/character', { headers, character })
         .then((response) => {
             console.log(response);
             onHide();

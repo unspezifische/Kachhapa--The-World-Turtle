@@ -89,7 +89,8 @@ function CharacterSheet({ headers, characterName }) {
 
   // Fetch the list of player classes & races from the server when the component mounts
   useEffect(() => {
-    axios.get(`http://127.0.0.1:5001/api/classes`)
+    console.log("CharacterSheet- characterName:", characterName);
+    axios.get(`/api/classes`)
       .then(response => {
         // console.log("Classes from Flask- response.data:", response.data);
         setPlayerClasses(response.data);
@@ -98,7 +99,7 @@ function CharacterSheet({ headers, characterName }) {
         // error case
         console.error(error);
       });
-    axios.get(`http://127.0.0.1:5001/api/races`)
+    axios.get(`/api/races`)
     .then(response => {
       // console.log("Races from Flask- response.data:", response.data);
       setPlayerRaces(response.data);
@@ -201,12 +202,12 @@ function CharacterSheet({ headers, characterName }) {
     Feats: [''],  // mostly determined by class? also race?
   });
 
-  useEffect(() => {
-    setCharacter(prevCharacter => ({
-      ...prevCharacter,
-      Name: characterName
-    }));
-  }, [characterName]);
+  // useEffect(() => {
+  //   setCharacter(prevCharacter => ({
+  //     ...prevCharacter,
+  //     Name: characterName
+  //   }));
+  // }, [characterName]);
 
   const [addAmount, setAddAmount] = useState(0);
   const [spendAmount, setSpendAmount] = useState(0);
@@ -239,7 +240,7 @@ function CharacterSheet({ headers, characterName }) {
 
   // Get Equipped item from Inventory
   useEffect(() => {
-    axios.get('http://127.0.0.1:5001/api/equipment', { headers })
+    axios.get('/api/equipment', { headers })
     .then(response => {
       console.log("Equipped items from Flask- response.data:", response.data);
       setCharacter(prevState => ({
@@ -253,7 +254,7 @@ function CharacterSheet({ headers, characterName }) {
       // setEquipment(); // use defaults
     });
 
-    axios.get('http://127.0.0.1:5001/api/prepared_spells', { headers })
+    axios.get('/api/prepared_spells', { headers })
     .then(response => {
         console.log("Prepared spells from Flask- response.data:", response.data);
         setCharacter(prevState => ({
@@ -268,8 +269,8 @@ function CharacterSheet({ headers, characterName }) {
 
   // Fetch the character data from the server when the component mounts
   useEffect(() => {
-    // console.log("character.Name:", character.Name);
-    axios.get(`http://127.0.0.1:5001/api/character`, { headers: headers })
+    console.log("character.Name:", character.Name);
+    axios.get(`/api/character`, { headers: headers })
     .then(response => {
       console.log('Fetched character data:', response.data);
       // Update the character state with the data
@@ -319,7 +320,7 @@ function CharacterSheet({ headers, characterName }) {
       // error case
       console.error(error);
     });
-  }, [character.Name])
+  }, [])
 
   useEffect(() => {
     console.log("Character:", character);
@@ -343,7 +344,7 @@ function CharacterSheet({ headers, characterName }) {
   };
 
   const saveCharacter = () => {
-    axios.put(`http://127.0.0.1:5001/api/character`, character, { headers: headers })
+    axios.put(`/api/character`, character, { headers: headers })
     .then(response => {
       console.log('Character saved successfully', response.status);
     })
@@ -444,7 +445,7 @@ function CharacterSheet({ headers, characterName }) {
     let tempProficiencies = [];
 
     if (character.Class) {
-      axios.get(`http://127.0.0.1:5001/api/classes/${character.Class}`)
+      axios.get(`/api/classes/${character.Class}`)
         .then(response => {
           // console.log('Class info from Flask- response.data:', response.data);
           setHitPoints( response.data.hit_points );
@@ -461,7 +462,7 @@ function CharacterSheet({ headers, characterName }) {
           tempProficiencies = [...tempProficiencies, ...response.data.armor_proficiencies, ...response.data.weapon_proficiencies];
 
           if (character.Race) {
-            axios.get(`http://127.0.0.1:5001/api/races/${character.Race}`)
+            axios.get(`/api/races/${character.Race}`)
               .then(response => {
                 // console.log('Race info from Flask- response.data:', response.data);
                 tempProficiencies = [...tempProficiencies, ...Object.values(response.data.traits)];

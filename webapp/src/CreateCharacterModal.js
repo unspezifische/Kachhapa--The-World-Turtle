@@ -27,6 +27,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     // Declare a new state variable to store the character data
     const [character, setCharacter] = useState({
         Name: null,
+        system: 'D&D 5e',
         Class: null,
         Level: null,
         Background: null,
@@ -179,7 +180,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
 
     // Get the list of playable races and classes from the server
     useEffect(() => {
-        axios.get('http://127.0.0.1:5001/api/races')
+        axios.get('/api/races')
             .then((response) => {
                 console.log("Races-", response.data)
                 const sortedRaces = response.data.sort((a, b) => a.name.localeCompare(b.name));
@@ -191,7 +192,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     }, []);
 
     useEffect(() => {
-        axios.get('http://127.0.0.1:5001/api/classes')
+        axios.get('/api/classes')
             .then((response) => {
                 console.log("Classes-", response.data);
                 const sortedClasses = response.data.sort((a, b) => a.name.localeCompare(b.name));
@@ -203,9 +204,9 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     }, []);
 
     useEffect(() => {
-        axios.get('http://127.0.0.1:5001/api/backgrounds')
+        axios.get('/api/backgrounds')
             .then((response) => {
-                // console.log("Backgrounds-", response.data);
+                console.log("Backgrounds-", response.data);
                 const sortedBackgrounds = response.data.sort((a, b) => a.name.localeCompare(b.name));
                 setBackgrounds(sortedBackgrounds);
             })
@@ -216,14 +217,14 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
 
     useEffect(() => {
         backgrounds.forEach((background) => {
-            console.log("Background Data-", background.data);
+            // console.log("Background Data-", background.data);
         });
     }, [backgrounds]);
 
     // Save the completed character
     const handleCreateCharacter = () => {
         // Send the character data to the server
-        axios.put('http://127.0.0.1:5001/api/character', { headers, character })
+        axios.put('/api/character', { headers, character })
             .then((response) => {
                 console.log(response);
                 onHide();
