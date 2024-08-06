@@ -5,11 +5,11 @@
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       var editor = new Jodit('#editor', {
-        "buttons": "bold,strikethrough,underline,italic,|,ul,ol,|,outdent,indent,|,font,fontsize,brush,paragraph,|,image,video,table,link,|,align,undo,redo,\n,hr,symbol,fullsize,print,about",
+        "buttons": "bold,strikethrough,underline,italic,|,ul,ol,|,outdent,indent,|,font,fontsize,brush,paragraph,|,image,table,link,|,align,undo,redo,\n,hr,fullsize,print,about",
         "extraButtons": [
           {
             name: 'elvish',
-            iconURL: '/path/to/elvish-icon.png',  // replace with the path to your icon
+            iconURL: './elvish-icon.png',
             exec: function (editor) {
               var selectedText = editor.s.sel.toString();
               editor.s.insertHTML('<span class="elvish-text">' + selectedText + '</span>');

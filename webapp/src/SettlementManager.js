@@ -66,7 +66,7 @@ function SettlementManager({ headers, socket }) {
   // Get the list of existing settlements
   useEffect(() => {
     const fetchSettelements = async () => {
-      const response = await axios.get('http://127.0.0.1:5001/api/settlements', { headers: headers });
+      const response = await axios.get('/api/settlements', { headers: headers });
       console.log("Settlements- response.data:", response.data);
       setSettlements(response.data);
     }
@@ -137,22 +137,22 @@ function SettlementManager({ headers, socket }) {
     setShowModal(false);
 
     // Load the water features
-    axios.get(`http://127.0.0.1:5001/api/feature/water/${settlement.name}`)
+    axios.get(`/api/feature/water/${settlement.name}`)
       .then(response => setWaterFeatures(response.data))
       .catch(error => console.error(`Error loading water features:`, error));
 
     // Load the tree features
-    axios.get(`http://127.0.0.1:5001/api/feature/trees/${settlement.name}`)
+    axios.get(`/api/feature/trees/${settlement.name}`)
       .then(response => setTreeFeatures(response.data))
       .catch(error => console.error(`Error loading tree features:`, error));
 
     // Load the districts
-    axios.get(`http://127.0.0.1:5001/api/feature/districts/${settlement.name}`)
+    axios.get(`/api/feature/districts/${settlement.name}`)
       .then(response => setDistricts(response.data))
       .catch(error => console.error(`Error loading districts:`, error));
 
     // Load the city limits
-    axios.get(`http://127.0.0.1:5001/api/feature/cityLimits/${settlement.name}`)
+    axios.get(`/api/feature/cityLimits/${settlement.name}`)
       .then(response => setCityLimits(response.data))
       .catch(error => console.error(`Error loading city limits:`, error));
   };
@@ -190,7 +190,7 @@ function SettlementManager({ headers, socket }) {
         file: response.data.file.name
       };
       // TODO: Update the server with the new settlement info?
-      // axios.post('http://127.0.0.1:5001/api/settlements', newSettlement, { headers })
+      // axios.post('/api/settlements', newSettlement, { headers })
       // .then(response => {
       //   setSelectedSettlement(newSettlement);
       //   console.log("Successfully saved the new settlement information to the server");
@@ -216,7 +216,7 @@ function SettlementManager({ headers, socket }) {
     if (selectedLayer === layerName) {
       layer.pm.enable();
       layer.on('pm:edit', () => {
-        axios.post(`http://127.0.0.1:5001/api/feature/${layerName}/${selectedSettlement.name}`, { data: data })
+        axios.post(`/api/feature/${layerName}/${selectedSettlement.name}`, { data: data })
           .then(response => setData(response.data))  // update the layer data with the server's response
           .catch(error => console.error(`Error saving ${layerName}:`, error));
       });

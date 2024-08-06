@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import io from 'socket.io-client';
+
 import { Table, Container, Row, Col, Alert, Button } from 'react-bootstrap';
 import { Spinner } from 'react-bootstrap';
 
@@ -27,14 +28,17 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 
 
 function App() {
-  const [username, setUsername] = useState(null);
+  const SOCKET_URL = 'ws://app.raspberrypi.local';
 
-  const [token, setToken] = useState(null);
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+
+  const [username, setUsername] = useState('');
   const [userID, setUserID] = useState(null);
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token}`,
-    'User-ID': userID
-  }), [token, userID]);
+    'userID': userID,
+    'username': username
+  }), [token, userID, username]);
 
   // Socket Stuff
   const [socket, setSocket] = useState(null);
@@ -45,65 +49,25 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
   const [characterName, setCharacterName] = useState('');
+  const [characterID, setCharacterID] = useState(null);
   const [accountType, setAccountType] = useState('');
 
   useEffect(() => {
     console.log('headers:', headers);
   }, [headers]);
 
-  const [inCombat, setInCombat] = useState(false);
-
-  function authenticateUserWithToken(token) {
-    console.log("Authenticating with token:", token);
-    setIsLoading(true); // Set loading to true when starting authentication
-    axios.post('http://127.0.0.1:5001/api/verify', { token: token })
-      .then(response => {
-        console.log("Response from verify:", response.data);
-        if (response.data.success) {
-          console.log("Token is valid");
-          setIsLoggedIn(true);
-          // Store the token in local storage
-          localStorage.setItem('token', token);
-          setToken(token);
-          // Fetch user data here
-          axios.get('http://127.0.0.1:5001/api/profile', { headers: { Authorization: `Bearer ${token}` } })
-            .then(response => {
-              console.log("User data:", response.data);
-              setUsername(response.data.username);
-              setUserID(response.data.id); // Set the userID
-              setIsLoading(false); // Set loading to false when user data has been fetched
-            })
-            .catch(error => {
-              console.error(error);
-              setIsLoading(false); // Set loading to false if there was an error fetching user data
-            });
-        }
-        setIsLoading(false); // Set loading to false if the token was invalid
-      })
-      .catch(error => {
-        console.error(error);
-        localStorage.removeItem('token'); // Remove invalid token
-        if (error.response && error.response.status === 401) {
-          console.log("Unauthorized request");
-        }
-        setIsLoading(false); // Set loading to false if the request fails
-      });
-  }
-
-
-  // Authenticate
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      authenticateUserWithToken(token);
-    }
-  }, []);
+    console.log('characterName:', characterName);
+  }, [characterName]);
+
+  const [inCombat, setInCombat] = useState(false);
   
 
   // Emit user_connected after user is authenticated and socket is established
   useEffect(() => {
     if (isLoggedIn && socket) {
         socket.emit('user_connected', { username });
+        console.log("Emitting user_connected");
     }
   }, [isLoggedIn, socket, username]);
 
@@ -113,15 +77,44 @@ function App() {
     if (!token) return;
 
     setSocketLoading(true);
-    const newSocket = io('/', { query: { token } });
+    const newSocket = io(SOCKET_URL, {
+       path: '/socket.io',
+       query: { token },
+      reconnectionAttempts: 5, // Number of reconnection attempts
+      reconnectionDelay: 2000  // Delay between reconnection attempts
+    });
     setSocket(newSocket);
     setSocketLoading(false);
+
+    newSocket.on('connect', () => {
+        console.log("Socket Connected");
+    });
 
     newSocket.on('connect_error', (error) => {
         console.error("Socket Connection Error:", error);
     });
 
-    return () => newSocket.close();
+    newSocket.on('token_expired', () => {
+      console.log("Token Expired");
+      localStorage.removeItem('token');
+      setToken('');
+      setIsLoggedIn(false);
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      console.warn("Socket Disconnected:", reason);
+      if (reason === 'io server disconnect') {
+        // The server disconnected the socket, try to reconnect
+        newSocket.connect();
+      }
+    });
+
+    // Clean up the socket connection when the component unmounts
+    return () => {
+      if (newSocket) {
+        newSocket.disconnect();
+      }
+    }
   }, [token]);
 
 
@@ -201,8 +194,6 @@ function App() {
   };
 
   return (
-    // In your return statement, modify the spinner condition like this:
-    
     <UserContext.Provider value={{ characterName, accountType, headers, setIsLoggedIn, socket }}>
       <Router>
         {/* Show the spinner while the token is authenticating */}
@@ -242,7 +233,7 @@ function App() {
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socket} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socket} />} />
-                  <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} />} />
+                  <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID}/>} />
                 </Routes>
               </Col>
               <Col md={3} className="chat-column">
@@ -291,8 +282,9 @@ function App() {
                 element={
                   <Login setIsLoggedIn={setIsLoggedIn}
                     setToken={setToken}
-                    setUsername={setUsername}
                     setUserID={setUserID}
+                    setIsLoading={setIsLoading}
+                    setAppUsername={setUsername}
                 />}
               />
               <Route
@@ -300,7 +292,7 @@ function App() {
                 element={
                   <Register setIsLoggedIn={setIsLoggedIn}
                     setToken={setToken}
-                    setUsername={setUsername}
+                    setAppUsername={setUsername}
                     setUserID={setUserID}
                   />}
                 />

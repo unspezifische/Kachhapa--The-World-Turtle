@@ -1,0 +1,8 @@
+[program:myapp]
+command=/home/ijohnson/.local/bin/gunicorn -k eventlet -w 4 -b :5000 app:app
+directory=/home/ijohnson/myapp/backend/
+user=ijohnson
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=/var/log/myapp.log

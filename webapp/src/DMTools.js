@@ -25,7 +25,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
   const fetchPlayers = useCallback(async () => {
     console.log('fetchPlayers called');
     try {
-      const response = await axios.get('http://127.0.0.1:5001/api/players', { headers: headers });
+      const response = await axios.get('/api/players', { headers: headers });
       console.log('DM TOOLS- players:', response.data.players);
       setPlayers(response.data.players);
     } catch (error) {
@@ -36,15 +36,15 @@ function DMTools({ headers, socket, characterName, accountType }) {
   // Define a function to fetch loot boxes
   const fetchLootBoxes = useCallback(async () => {
     try {
-      const response = await axios.get('http://127.0.0.1:5001/api/lootboxes', { headers: headers });
-      console.log('DM TOOLS- loot boxes:', response.data.lootBoxes);
+      const response = await axios.get('/api/lootboxes', { headers: headers });
+      // console.log('DM TOOLS- loot boxes:', response.data.lootBoxes);
       setLootBoxes(response.data.lootBoxes);
     } catch (error) {
       console.error('Failed to fetch loot boxes:', error.response.data);
     }
   }, [headers]);
 
-  // Fetch players when the component mounts
+  // Fetch lootboxes when the component mounts
   useEffect(() => {
     fetchLootBoxes();
   }, [fetchLootBoxes]);
@@ -69,7 +69,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
   // Loot Box Functions
   const handleCreateLootBoxs = () => {
     axios
-      .get('http://127.0.0.1:5001/api/items', { headers: headers })
+      .get('/api/items', { headers: headers })
       .then(response => {
         console.log('Items from API:', response.data.items);
         setItems(response.data.items);
@@ -113,7 +113,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
     if (editingLootBoxId === null) {
       // If we are not currently editing a loot box, create a new one
       axios
-        .post('http://127.0.0.1:5001/api/lootboxes', { name: lootBoxName, items: items }, { headers: headers })
+        .post('/api/lootboxes', { name: lootBoxName, items: items }, { headers: headers })
         .then(response => {
           console.log(response.data.message);
           setLootBoxModalOpen(false);
@@ -125,7 +125,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
     } else {
       // If we are editing a loot box, update it
       axios
-        .put(`http://127.0.0.1:5001/api/lootboxes/${editingLootBoxId}`, { name: lootBoxName, items: items }, { headers: headers })
+        .put(`/api/lootboxes/${editingLootBoxId}`, { name: lootBoxName, items: items }, { headers: headers })
         .then(response => {
           console.log(response.data.message);
           setLootBoxModalOpen(false);
@@ -141,7 +141,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
   const viewLootBox = lootBox => {
     fetchPlayers();
     axios
-      .get(`http://127.0.0.1:5001/api/lootboxes/${lootBox.id}`, { headers: headers })
+      .get(`/api/lootboxes/${lootBox.id}`, { headers: headers })
       .then(response => {
         console.log('Opening LootBox:', response.data.items);
         const items = response.data.items;
@@ -160,8 +160,8 @@ function DMTools({ headers, socket, characterName, accountType }) {
   };
 
   const deleteLootBox = lootBox => {
-    // axios.delete(`http://127.0.0.1:5001/api/lootboxes/${lootBox.id}`, { headers: headers })
-    axios.delete(`http://127.0.0.1:5001/api/lootboxes/${lootBox.id}`)
+    // axios.delete(`/api/lootboxes/${lootBox.id}`, { headers: headers })
+    axios.delete(`/api/lootboxes/${lootBox.id}`)
     .then(response => {
       console.log(response.data.message);
       fetchLootBoxes(); // Fetch the updated list of loot boxes
@@ -170,10 +170,10 @@ function DMTools({ headers, socket, characterName, accountType }) {
     .finally(setViewLootBoxModal(false));
   }
 
-  const issueItemToPlayer = lootBox => {
-    // Issue items via API call to http://127.0.0.1:5001/api/lootboxes/<int:box_id>
-    // axios.post(`http://127.0.0.1:5001/api/lootboxes/${lootBox.id}`, { player: selectedPlayer }, { headers: headers })
-    axios.post(`http://127.0.0.1:5001/api/lootboxes/${lootBox.id}`, { player: selectedPlayer })
+  const issueLootToPlayer = lootBox => {
+    // Issue items via API call to /api/lootboxes/<int:box_id>
+    // axios.post(`/api/lootboxes/${lootBox.id}`, { player: selectedPlayer }, { headers: headers })
+    axios.post(`/api/lootboxes/${lootBox.id}`, { player: selectedPlayer })
     .then(response => {
       console.log(response.data.message);
       setSelectedPlayer(null); // Clear the selected player
@@ -196,9 +196,11 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
   const viewPlayerInventory = player => {
     // API call to get player's inventory
-    axios.get('http://127.0.0.1:5001/api/inventory', {
+    axios.get('/api/inventory', {
       headers: {
-        'Character-Name': player.character_name // Include the character name in the request headers
+        ...headers,
+        'Character-Name': player.character_name, // Include the character name in the request headers
+        'Character-ID': player.id
       }})
       .then(response => {
         console.log("Getting inventory for " + player.character_name);
@@ -349,7 +351,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {players.map((player, i) => (
+                    {players.filter(player => player.id !== null).map((player, i) => (
                       <tr key={i}>
                         <td>{player.character_name}</td>
                         <td>
@@ -532,7 +534,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
               <option key={index} value={player.username}>{player.character_name}</option>
             ))}
           </Form.Control>
-          <Button variant="primary" onClick={() => issueItemToPlayer(selectedLootBox)}>
+          <Button variant="primary" onClick={() => issueLootToPlayer(selectedLootBox)}>
             Issue to Player
           </Button>
         </Modal.Footer>

@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios'; // Import axios
 
-function Register({ setIsLoggedIn, setToken, setUsername: setAppUsername, setUserID }) {
+function Register({ setIsLoggedIn, setToken, setAppUsername, setUserID }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -19,7 +19,7 @@ function Register({ setIsLoggedIn, setToken, setUsername: setAppUsername, setUse
       return;
     }
 
-    axios.post('http://127.0.0.1:5001/api/register', {
+    axios.post('/api/register', {
       username: username,
       password: password
     }).then(response => {

@@ -83,7 +83,7 @@ export default function InventoryView({ username, characterName, accountType, he
 
   // Define a function to fetch players
   const fetchPlayers = () => {
-    axios.get('http://127.0.0.1:5001/api/players', { headers: headers })
+    axios.get('/api/players', { headers: headers })
     .then(response => {
       console.log("INVENTORY VIEW- players:", response.data.players)
       setPlayers(response.data.players.filter(player => player.character_name !== characterName));
@@ -113,7 +113,7 @@ export default function InventoryView({ username, characterName, accountType, he
     console.log("**** Fetching Inventory ****");
     console.log("accountType:", accountType);
     if (accountType === 'Player') {
-      axios.get('http://127.0.0.1:5001/api/inventory', { headers })
+      axios.get('/api/inventory', { headers })
       .then(response => {
         console.log("INVENTORY- response:", response.data);
         setInventory(response.data.inventory); // Save all inventory items in state
@@ -122,7 +122,7 @@ export default function InventoryView({ username, characterName, accountType, he
         console.error('Error loading inventory:', error.response.data);
       });
     } else if (accountType === "DM") {
-      axios.get('http://127.0.0.1:5001/api/items', { headers })
+      axios.get('/api/items', { headers })
       .then(response => {
         console.log("INVENTORY- DM response:", response);
         setInventory(response.data.items); // Save all inventory items in state
@@ -178,6 +178,7 @@ export default function InventoryView({ username, characterName, accountType, he
     setSortConfig({ key, direction });
   };
 
+  // Sort the inventory
   useEffect(() => {
     // console.log("Sorting inventory by key", sortConfig.key);
 
@@ -238,7 +239,7 @@ export default function InventoryView({ username, characterName, accountType, he
   useEffect(() => {
     const fetchData = () => {
       if (accountType === 'Player') {
-        axios.get('http://127.0.0.1:5001/api/inventory', {
+        axios.get('/api/inventory', {
           headers: {
             'Character-Name': characterName
           }})
@@ -253,7 +254,7 @@ export default function InventoryView({ username, characterName, accountType, he
           });
 
       } else if (accountType === 'DM') {
-        axios.get('http://127.0.0.1:5001/api/items', { headers })
+        axios.get('/api/items', { headers })
           .then(response => {
             setInventory(response.data.items);
           })
@@ -279,7 +280,7 @@ export default function InventoryView({ username, characterName, accountType, he
         // console.log('Inventory update:', data);
         // console.log("Does " + data.character_name + " match " + characterName + "?", data.character_name === characterName);
         // Request the server to get the latest inventory
-        const response = await axios.get('http://127.0.0.1:5001/api/inventory', {
+        const response = await axios.get('/api/inventory', {
           headers: {
             'Character-Name': characterName // Include the character name in the request headers
           }})
@@ -505,7 +506,7 @@ export default function InventoryView({ username, characterName, accountType, he
       itemsToSave.pop();
     }
 
-    axios.post('http://127.0.0.1:5001/api/save_items', { items: itemsToSave })
+    axios.post('/api/save_items', { items: itemsToSave })
       .then(response => {
         // Handle the response
         // console.log("response:", response);
@@ -561,7 +562,7 @@ export default function InventoryView({ username, characterName, accountType, he
       let response;
       if (newItemType === 'Weapon') {
         console.log("** Creating weapon **");
-        response = await axios.post('http://127.0.0.1:5001/api/items', {
+        response = await axios.post('/api/items', {
           name: newItemName,
           type: newItemType,
           weight: newItemWeight,
@@ -576,7 +577,7 @@ export default function InventoryView({ username, characterName, accountType, he
         console.log("Creating weapon:", response);
       } else if (newItemType === 'Armor') {
         console.log("** Creating armor **");
-        response = await axios.post('http://127.0.0.1:5001/api/items', {
+        response = await axios.post('/api/items', {
           name: newItemName,
           type: newItemType,
           weight: newItemWeight,
@@ -591,7 +592,7 @@ export default function InventoryView({ username, characterName, accountType, he
         console.log("Creating armor:", response);
       } else if (newItemType === 'MountVehicle') {
         console.log("** Creating MountVehicle **");
-        response = await axios.post('http://127.0.0.1:5001/api/items', {
+        response = await axios.post('/api/items', {
           name: newItemName,
           type: newItemType,
           weight: newItemWeight,
@@ -605,7 +606,7 @@ export default function InventoryView({ username, characterName, accountType, he
         console.log("Creating Mount or Vehicle:", response);
       } else if (newItemType === 'Ring' || newItemType === 'Wand' || newItemType === 'Scroll') {
         console.log("** Creating Scroll/Ring/Wand **");
-        response = await axios.post('http://127.0.0.1:5001/api/items', {
+        response = await axios.post('/api/items', {
           name: newItemName,
           type: newItemType,
           weight: newItemWeight,
@@ -618,7 +619,7 @@ export default function InventoryView({ username, characterName, accountType, he
         console.log("Creating spell item:", response);
       } else {
         console.log("** Creating generic item **");
-        response = await axios.post('http://127.0.0.1:5001/api/items', {
+        response = await axios.post('/api/items', {
           name: newItemName,
           type: newItemType,
           weight: newItemWeight,
@@ -746,7 +747,7 @@ export default function InventoryView({ username, characterName, accountType, he
 
     const messageObj = {
       type: 'item_transfer',
-      sender: username,
+      sender: headers['username'],
       text: `${characterName} gave you ${quantity} ${selectedItem.name}`,
       recipients: [selectedPlayer],
       item: { ...selectedItem, quantity: quantity },
@@ -761,7 +762,7 @@ export default function InventoryView({ username, characterName, accountType, he
     // console.log("INVENTORY- Dropping item ID:", item.id)
     if (item && item.id) { // Check if item and its id exist.
       try {
-        await axios.delete(`http://127.0.0.1:5001/api/inventory/${item.id}`, {
+        await axios.delete(`/api/inventory/${item.id}`, {
           headers,
           data: {
             quantity: quantity
@@ -789,17 +790,21 @@ export default function InventoryView({ username, characterName, accountType, he
 
   /********* Functions for DM ************/
   const issueItemToPlayer = () => {
-    console.log("INVENTORY- selectedPlayer:", selectedPlayer);
-    // console.log("INVENTORY- selectedItem:", selectedItem);
+    console.log("issueItemToPlayer- selectedPlayer:", selectedPlayer);
+    console.log("issueItemToPlayer- selectedItem:", selectedItem);
+    // console.log("issueItemToPlayer- Campaign ID:", headers['Campaign-ID']);
 
     // Issue an item via messageObj
     const messageObj = {
       type: 'item_transfer',
-      sender: username,
+      sender: headers['username'],
       text: `You received ${quantity} ${selectedItem.name}`,
       recipients: [selectedPlayer],
+      campaignID: headers['Campaign-ID'],
       item: { ...selectedItem, quantity: parseInt(quantity) },
     };
+
+    console.log("Sending messageObj:", messageObj);
 
     socket.emit('sendMessage', messageObj);
 
@@ -811,7 +816,7 @@ export default function InventoryView({ username, characterName, accountType, he
   const deleteItem = async (itemId) => {
     console.log("Deleting Item:", itemId);
     try {
-      await axios.delete(`http://127.0.0.1:5001/api/items/${itemId}`, { headers: headers });
+      await axios.delete(`/api/items/${itemId}`, { headers: headers });
       setInventory(inventory.filter(item => item.id !== itemId));
       setShowEditItemDetails(false);
     } catch (error) {
@@ -824,7 +829,7 @@ export default function InventoryView({ username, characterName, accountType, he
   const handleCloseItemDetails = async () => {
     if (accountType === 'DM') {
       try {
-        await axios.put(`http://127.0.0.1:5001/api/items/${selectedItem.id}`, selectedItem, { headers: headers });
+        await axios.put(`/api/items/${selectedItem.id}`, selectedItem, { headers: headers });
         setInventory(inventory.map(item => item.id === selectedItem.id ? selectedItem : item));
       } catch (error) {
         console.error('Error updating item:', error.response.data);
@@ -832,7 +837,7 @@ export default function InventoryView({ username, characterName, accountType, he
     } else if (accountType === 'Player') {
       // console.log("Player is updating item")
       try {
-        await axios.put(`http://127.0.0.1:5001/api/inventory/${selectedItem.id}`, {
+        await axios.put(`/api/inventory/${selectedItem.id}`, {
           name: selectedItem.name,
           equipped: selectedItem.equipped
         }, { headers: headers });
@@ -844,14 +849,6 @@ export default function InventoryView({ username, characterName, accountType, he
     setShowViewItemDetails(false);
     setShowEditItemDetails(false);
   };
-
-  // if (isLoading) {
-  //   return (
-  //     <div className="spinner">
-  //       <div className="circle"></div>
-  //     </div>
-  //   );
-  // }
 
   return (
     <Container>
