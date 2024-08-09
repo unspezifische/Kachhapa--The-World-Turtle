@@ -32,8 +32,34 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
           setUserID(response.data.id); // Set the userID
           setIsLoading(false); // Set loading to false when user data has been fetched
           setIsLoggedIn(true); // Set logged in to true
+
+          // Check for a redirect URL
+          console.log("Checking for redirect URL");
+          console.log("Window Location:", window.location);
+          console.log("Current URL:", window.location.href);
+          const urlParams = new URLSearchParams(window.location.search);
+          console.log("URL Params:", urlParams);
+
+          const redirectUrl = urlParams.get('redirect');
+          console.log("Redirect URL:", redirectUrl);
+
+          if (redirectUrl) {
+            // Decode the redirect URL
+            const decodedRedirectUrl = decodeURIComponent(redirectUrl);
+            console.log("Decoded Redirect URL:", decodedRedirectUrl);
+
+            // Redirect to the intended URL using navigate
+            try {
+              navigate(decodedRedirectUrl, { replace: true });
+            } catch (error) {
+              console.warn("Navigate failed, falling back to window.location.href", error);
+              // Fallback to window.location.href if navigate fails
+              window.location.href = decodedRedirectUrl;
+            }
+          }
+        } else {
+          setIsLoading(false); // Set loading to false if the token was invalid
         }
-        setIsLoading(false); // Set loading to false if the token was invalid
       })
       .catch(error => {
         console.error(error);
@@ -45,14 +71,34 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
       });
   }
 
-
   // Authenticate
   useEffect(() => {
     const token = localStorage.getItem('token');
+  
     if (token) {
       authenticateUserWithToken(token);
     }
   }, []);
+
+  // useEffect(() => {
+  //   console.log("Checking for redirect URL- NAVIGATE");
+  //   console.log("Window Location:", window.location);
+  //   console.log("Current URL:", window.location.href);
+  //   const urlParams = new URLSearchParams(window.location.search);
+  //   console.log("URL Params:", urlParams);
+
+  //   const redirectUrl = urlParams.get('redirect');
+  //   console.log("Redirect URL:", redirectUrl);
+
+  //   if (redirectUrl) {
+  //     // Decode the redirect URL
+  //     const decodedRedirectUrl = decodeURIComponent(redirectUrl);
+  //     console.log("Decoded Redirect URL:", decodedRedirectUrl);
+
+  //     // Redirect to the intended URL
+  //     navigate(decodedRedirectUrl);
+  //   }
+  // }, []);
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -74,6 +120,7 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
       
       setIsLoggedIn(true);
       navigate("/accountProfile");
+      console.log("Navigating to accountProfile");
     })
       .catch(error => {
         console.log('Error logging in-', error);
