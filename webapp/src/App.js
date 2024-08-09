@@ -234,6 +234,13 @@ function App() {
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socket} />} />
                   <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID}/>} />
+                  
+                  {/* Catch-all route for wiki pages */}
+                  <Route path="/:campaign_name/:page_title" render={({ match }) => {
+                    const { campaign_name, page_title } = match.params;
+                    window.location.href = `/${campaign_name}/${page_title}`;
+                    return null;
+                  }} />
                 </Routes>
               </Col>
               <Col md={3} className="chat-column">

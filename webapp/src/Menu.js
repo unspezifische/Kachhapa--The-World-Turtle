@@ -31,16 +31,29 @@ function Menu({ accountType, selectedCampaign, setSelectedCampaign }) {
     window.open(url, '_blank');
   }
 
-  function openWiki() {
-    if (selectedCampaign && selectedCampaign.name) {
-      console.log("selectedCampaign: ", selectedCampaign)
-      var encodedName = encodeURIComponent(selectedCampaign.name + "/Main Page");
-      var destination = 'http://raspberrypi.local/' + encodedName;
-      window.open(destination, '_blank');
-      console.log("Opening wiki: " + destination);
-    } else {
-      console.log("No selected campaign or campaign name");
-    }
+    function openWiki() {
+      if (selectedCampaign && selectedCampaign.name) {
+          console.log("selectedCampaign: ", selectedCampaign);
+          
+          // Construct the destination URL without encoding
+          var destinationURL = 'http://raspberrypi.local/' + encodeURIComponent(selectedCampaign.name) + "/Main Page";
+          var destinationPage = encodeURIComponent(selectedCampaign.name) + "/Main Page";
+          console.log("Destination URL: " + destinationURL);
+          console.log("Destination Page: " + destinationPage);
+          
+          // Encode the entire destination URL
+        var encodedDestination = encodeURIComponent(destinationPage);
+          console.log("Encoded URL: " + encodedDestination);
+          
+          // Include the encoded destination URL as a query parameter in the login URL
+          var loginUrl = 'http://raspberrypi.local/login?redirect=/wiki/' + encodedDestination;
+          console.log("URL with Redirect: " + loginUrl);
+          
+          // Open the login URL in a new window
+          window.open(loginUrl, '_blank');
+      } else {
+          console.log("No selected campaign or campaign name");
+      }
   }
 
   return (

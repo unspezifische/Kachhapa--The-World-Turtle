@@ -8,15 +8,15 @@ DESTINATION="ijohnson@raspberrypi.local"
 # echo "Finished removing 'http://127.0.0.1:5001' from .js files in the src directory"
 
 # Copy the Flask app
-rsync -avz app.py $DESTINATION:/home/ijohnson/myapp/backend
+rsync -avz app.py $DESTINATION:/home/ijohnson/myapp/backend/
 echo "Finished copying app.py"
 
-# Copy the templates directory
-rsync -avz templates/ $DESTINATION:/home/ijohnson/myapp/backend/templates
+# Copy the templates directory for wiki pages
+rsync -avz templates $DESTINATION:/home/ijohnson/myapp/backend/templates/
 echo "Finished copying the templates directory"
 
-# Copy the static directory
-rsync -avz static/ $DESTINATION:/home/ijohnson/myapp/backend/static
+# Copy the static directory for the server
+rsync -avz static $DESTINATION:/home/ijohnson/myapp/backend/static/
 echo "Finished copying the static directory"
 
 # # Copy the PostgreSQL database
@@ -32,7 +32,7 @@ echo "Finished copying the static directory"
 # Restart Flask on the Pi
 ssh $DESTINATION "sudo supervisorctl restart myapp"
 
-# Push updated Nginx configuration to the Pi
+# Push updated Nginx configuration to the Pi & restart Nginx
 scp nginx.conf $DESTINATION:/etc/nginx
 echo "Finished updating Nginx configuration"
 
@@ -43,16 +43,16 @@ echo "Finished restarting Nginx"
 cd webapp && npm run build && cd ..
 echo "Finished running npm build"
 
-# Copy the built web app
-rsync -avz webapp/build/ $DESTINATION:/home/ijohnson/my-app/build/
+# Copy the built web app to the Pi
+rsync -avz webapp/build $DESTINATION:/home/ijohnson/my-app/build/
 echo "Finished copying the built web app"
 
 # Copy the src directory
-rsync -avz webapp/src/ $DESTINATION:/home/ijohnson/my-app/src/
+rsync -avz webapp/src $DESTINATION:/home/ijohnson/my-app/src/
 echo "Finished copying the src directory"
 
 # Copy the public directory
-rsync -avz webapp/public/ $DESTINATION:/home/ijohnson/my-app/public/
+rsync -avz webapp/public $DESTINATION:/home/ijohnson/my-app/public/
 echo "Finished copying the public directory"
 
 # Switch everything back over to the development version of the files

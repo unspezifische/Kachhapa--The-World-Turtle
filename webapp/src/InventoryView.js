@@ -604,7 +604,7 @@ export default function InventoryView({ username, characterName, accountType, he
           capacity: newItemCapacity
         }, { headers: headers });
         console.log("Creating Mount or Vehicle:", response);
-      } else if (newItemType === 'Ring' || newItemType === 'Wand' || newItemType === 'Scroll') {
+      } else if (newItemType === 'Wand' || newItemType === 'Scroll') {
         console.log("** Creating Scroll/Ring/Wand **");
         response = await axios.post('/api/items', {
           name: newItemName,

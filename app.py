@@ -11,7 +11,6 @@ from flask_migrate import Migrate
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
-# from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, decode_token
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, decode_token, get_jwt, unset_jwt_cookies
 
 from jwt import InvalidTokenError, ExpiredSignatureError
@@ -19,10 +18,10 @@ from flask_socketio import SocketIO, send, emit, disconnect
 
 from threading import Thread
 from datetime import datetime, timedelta, timezone
-# import datetime
 import os
 import csv  ## For importing items from CSV
 import json ## For sending JSON data
+
 
 import logging ## For debug logging
 import traceback
@@ -66,6 +65,49 @@ active_connections = {}
 socketio.init_app(app)
 
 db.init_app(app)
+
+
+## Use Textual for a Server-control TUI
+dashboard = None
+import asyncio
+from textual.app import App
+from textual.widgets import Header, Footer, Static
+from textual.containers import ScrollableContainer
+from textual.reactive import Reactive
+from textual import events
+
+# Ensure an event loop is created and set in the main thread
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+class LogViewer(Static):
+    logs: Reactive[str] = Reactive("")
+
+    def append_log(self, log: str) -> None:
+        self.logs += log + "\n"
+        self.refresh()
+
+    def render(self) -> str:
+        return self.logs
+
+class Dashboard(App):
+    async def on_mount(self) -> None:
+        self.log_viewer = LogViewer()
+        await self.view.dock(Header(), edge="top")
+        await self.view.dock(Footer(), edge="bottom")
+        await self.view.dock(ScrollableContainer(self.log_viewer), edge="center")
+
+    async def handle_new_log(self, log: str) -> None:
+        self.log_viewer.append_log(log)
+
+dashboard = None
+
+def add_log(log):
+    global dashboard
+    if dashboard:
+        dashboard.call_from_thread(dashboard.handle_new_log, log)
 
 # Association table
 campaign_members = db.Table('campaign_members',
@@ -525,6 +567,19 @@ migrate = Migrate(app, db)
 @app.route('/')
 def index():
     return "Flask Websocket Server"
+
+@app.before_request
+def log_request_info():
+    log = f"Request: {request.method} {request.url} - {request.data}"
+    # app.logger.info(log)
+    add_log(log)
+
+@app.after_request
+def log_response_info(response):
+    log = f"Response: {response.status} - {response.data}"
+    # app.logger.info(log)
+    add_log(log)
+    return response
 
 @app.after_request
 def refresh_expiring_jwts(response):
@@ -2106,15 +2161,15 @@ def preprocess_content(content):
 
 @app.route('/<campaign_name>/<page_title>', methods=['GET'])
 def wiki_page(campaign_name, page_title):
-    print("campaign_name:", campaign_name)
+    # print("campaign_name:", campaign_name)
     app.logger.info("campaign_name: %s", campaign_name)
-    print("page_title:", page_title)
+    # print("page_title:", page_title)
     app.logger.info("page_title: %s", page_title)
 
     ## Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
-    print("campaign:", campaign)
-    app.logger.info("campaign: %s", campaign)
+    # print("campaign:", campaign)
+    app.logger.info("campaign ID: %s", campaign)
 
     ## Get the page using the Campaign ID and the page title
     page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
@@ -2489,4 +2544,6 @@ def handle_disconnect():
 
 
 if __name__ == '__main__':
+    dashboard = Dashboard()
+    dashboard.run()
     socketio.run(app, host='0.0.0.0', port=5001)
