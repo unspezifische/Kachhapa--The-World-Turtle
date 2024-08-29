@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block content %}
+<button class="btn btn-primary float-right" onclick="window.location.href = window.location.pathname + '/edit'">
+  Edit
+</button>
+<button class="btn btn-secondary float-right" onclick="toggleSpoilers()">Toggle Spoilers</button>
+
+<div style="clear:both;"></div>
+
+<!-- Main content -->
+<div>{{ content|safe }}</div>
+
+<!-- Spoilers -->
+<div id="spoilers-container">
+  {% for spoiler in spoilers %}
+  <div class="spoiler-section" id="{{ spoiler.id }}">
+    <h3>{{ spoiler.title }}</h3>
+    <div class="spoiler-content" style="display: none;">
+      {{ spoiler.content|safe }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+  function toggleSpoilers() {
+    var spoilers = document.querySelectorAll('.spoiler-content');
+    spoilers.forEach(function (spoiler) {
+      spoiler.style.display = spoiler.style.display === 'none' ? 'block' : 'none';
+    });
+  }
+</script>
+{% endblock %}

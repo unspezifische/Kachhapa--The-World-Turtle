@@ -36,6 +36,9 @@ function Library({ headers, socket }) {
     };
   }, [headers, socket]);
 
+  useEffect(() => {
+    console.log("Library file:", files);
+  }, [files])
 
   const handleFileChange = (event) => {
     setSelectedFile(event.target.files[0]);

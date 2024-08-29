@@ -1,6 +1,6 @@
 Library/
 node_modules/
-static
+static/
 avatars/
 instance/
 items/

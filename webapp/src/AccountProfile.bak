@@ -234,13 +234,23 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
 
   return (
     <>
-      <Container>
+      <Container fluid style={{ 
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden' }}>
         <Row>
           <h1>Account Profile</h1>
         </Row>
         {/* Carousel */}
-        <Row className='d-flex flex-column align-items-center'>
-          <Carousel>
+        <Row style={{
+          flex: '1',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          overflow: 'auto' }}>
+          <Carousel style={{ width: '100vh'}}>
             {campaigns.map((campaign, index) => (
               <Carousel.Item key={campaign.id}>
                 <Carousel.Caption>
@@ -248,8 +258,8 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
                   <p style={{ mixBlendMode: 'difference', color: 'red' }}>{campaign.system}</p>
                 </Carousel.Caption>
                 <img
-                  className="d-flex justify-content-center align-items-center"
-                  style={{height: '40vh', margin: '0 auto' }}
+                  className="d-block w-100"
+                  style={{ height: '70vh', objectFit: 'cover' }}
                   src={campaign.icon || campaignIcon}
                   alt={`Campaign ${index}`}
                 />
@@ -263,8 +273,8 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
                   <p style={{ mixBlendMode: 'difference', color: 'red' }}>{character.campaign}</p>
                 </Carousel.Caption>
                 <img
-                  className="d-flex justify-content-center align-items-center"
-                  style={{height: '40vh', margin: '0 auto' }}
+                  className="d-block w-100"
+                  style={{ height: '70vh', objectFit: 'cover' }}
                   src={process.env.PUBLIC_URL + '/avatars/' + character.icon || campaignIcon}
                   alt={`Character ${index}`}
                 />
@@ -273,9 +283,15 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
           </Carousel>
         </Row>
 
-        <Row>
+        <Row style={{
+          flex: '1',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          overflow: 'auto'
+        }}>
           <Accordion defaultActiveKey="0">
-            {/* Campaigns */}
             <Accordion.Item eventKey="0">
               <Accordion.Header>
                 <h3>My Campaigns</h3>
@@ -327,7 +343,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
                     <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}>
                       <Row>
                         <Col xs={4}>
-                          <Card.Img fluid src={process.env.PUBLIC_URL + '/avatars/' + character.icon || campaignIcon} />
+                          <Card.Img variant="top" src={process.env.PUBLIC_URL + '/avatars/' + character.icon || campaignIcon} />
                         </Col>
                         <Col xs={8}>
                           <Card.Body>
@@ -344,7 +360,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
                   <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={handleCreateCharacter}>
                     <Row>
                       <Col xs={4}>
-                        <Card.Img fluid src={campaignIcon} />
+                        <Card.Img variant="top" src={campaignIcon} />
                       </Col>
                       <Col xs={8}>
                         <Card.Body>

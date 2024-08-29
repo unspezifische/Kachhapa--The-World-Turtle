@@ -522,6 +522,7 @@ function CharacterSheet({ headers, characterName }) {
   }, [character.abilityScores, character.proficiencyBonus, character.Proficiencies]);
 
   // Calculate Armor Class
+  // TODO- Add logic for shields and other items that can affect AC
   const calculateArmorClass = (equipment, dexterity) => {
     const hasArmor = equipment.some(item => item.type === 'Armor');
     const dexMod = getModifier(dexterity);
@@ -864,7 +865,7 @@ function CharacterSheet({ headers, characterName }) {
               className="tile"
             >
               <div className="edit-icon">
-                <EditIcon onClick={(event) => handleEdit(event, tile.id)} />
+                <EditIcon onClick={(event) => handleEdit(event, tile.i)} />
               </div>
               {generateTileContent(tile.i)}
             </div>

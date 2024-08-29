@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+  <textarea id="editor">{{ content }}</textarea>
+  <button id="saveButton" class="btn btn-primary mt-2">Save</button>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+        var editor = Jodit.make('#editor', {
+          "autofocus": true,
+          "spellcheck": true,
+          "showCharsCounter": false,
+          "buttons": "bold,italic,underline,strikethrough,paragraph,|,ul,ol,|,indent,outdent,|,font,fontsize,|,lineHeight,table,link,image,spellcheck,|,cut,copy,paste,selectall,copyformat,|,hr,|,align,undo,redo,find,|,source,fullsize",
+          "extraButtons": [
+            {
+              name: 'elvish',
+              iconURL: '/static/elvish-icon-large.png',
+              exec: function (editor) {
+                var selectedText = editor.s.sel.toString();
+                if (selectedText) {
+                  var parentNode = editor.s.current().parentNode;
+                  if (parentNode && parentNode.classList.contains('elvish-text')) {
+                    parentNode.outerHTML = parentNode.innerHTML; // Remove the elvish-text span
+                  } else {
+                    editor.s.insertHTML('<span class="elvish-text">' + selectedText + '</span>');
+                  }
+                }
+              },
+              tooltip: 'Elvish'
+            },
+            {
+              name: 'dwarvish',
+              iconURL: '/static/dwarvish-icon-large.png',
+              exec: function (editor) {
+                var selectedText = editor.s.sel.toString();
+                if (selectedText) {
+                  var parentNode = editor.s.current().parentNode;
+                  if (parentNode && parentNode.classList.contains('dwarvish-text')) {
+                    parentNode.outerHTML = parentNode.innerHTML; // Remove the dwarvish-text span
+                  } else {
+                    editor.s.insertHTML('<span class="dwarvish-text">' + selectedText + '</span>');
+                  }
+                }
+              },
+              tooltip: 'Dwarvish'
+            },
+            {
+              name: 'spoiler',
+              iconURL: '/static/spoiler-icon01.png',
+              exec: function (editor) {
+                var selectedText = editor.s.sel.toString();
+                if (selectedText) {
+                  var parentNode = editor.s.current().parentNode;
+                  if (parentNode && parentNode.classList.contains('spoiler')) {
+                    parentNode.outerHTML = parentNode.innerHTML; // Remove the spoiler span
+                  } else {
+                    editor.s.insertHTML('<span class="spoiler">' + selectedText + '</span>');
+                  }
+                }
+              },
+              tooltip: 'Spoiler'
+            }
+          ],"toolbarSticky": true,
+          "toolbarStickyOffset": 60,
+          "toolbarDisableStickyForMobile": true
+        });
+      });
+      
+      // save the updated content when the save button is clicked
+      document.getElementById("saveButton").addEventListener("click", function() {
+        var content = editor.value;
+
+        // Use the global variables from base.html
+        const token = window.authInfo.token;
+        const userID = window.authInfo.userID;
+        const username = window.authInfo.username;
+
+        // console.log("Token:", token);
+        console.log("UserID from window.authInfo:", userID);
+
+        // Ensure the token is available before making the request
+        if (token && userID) {
+          console.log("Saving content:", content);
+          var campaignName = encodeURIComponent('{{ campaign_name }}');
+          var pageTitle = encodeURIComponent('{{ page_title }}');
+          var url = `/wiki/${campaignName}/{{ page_title }}/edit`;
+          console.log("URL:", url);
+          console.log("window.location.href:", window.location.href);
+
+          // Send the content to the server
+          axios.post(`/wiki/${campaignName}/{{ page_title }}`, 'content=' + encodeURIComponent(content), {
+            headers: {
+              'Authorization': token,
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'userID': userID
+            }
+          })
+            .then(response => {
+              console.log('Content saved successfully:', response.data);
+              // Remove '/edit' from the current URL
+              const newUrl = window.location.href.replace('/edit', '');
+              console.log('Redirecting to:', newUrl);
+              window.location.href = newUrl;
+            })
+            .catch(error => {
+              console.error('Error saving content:', error);
+            });
+        } else {
+          console.error('Missing token or userID');
+        }
+      });
+  </script>
+{% endblock %}
