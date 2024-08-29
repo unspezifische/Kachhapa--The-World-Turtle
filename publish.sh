@@ -7,16 +7,32 @@ DESTINATION="ijohnson@raspberrypi.local"
 # find ./webapp/src -name "*.js" -exec sed -i '' 's|http://127.0.0.1:5001||g' {} \;
 # echo "Finished removing 'http://127.0.0.1:5001' from .js files in the src directory"
 
+# Create `requirements.txt` file
+pip freeze > requirements.txt
+echo "Finished creating requirements.txt"
+
+# Copy the requirements.txt file
+rsync -avz requirements.txt $DESTINATION:/home/ijohnson/Kachhapa/Flask/
+echo "Finished copying requirements.txt"
+
+# Install Python dependencies on the Raspberry Pi
+ssh $DESTINATION "pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
+echo "Finished installing Python dependencies"
+
 # Copy the Flask app
-rsync -avz app.py $DESTINATION:/home/ijohnson/myapp/backend/
+rsync -avz app.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying app.py"
 
+# Restart Flask
+ssh $DESTINATION "sudo systemctl restart myapp"
+echo "Finished restarting Flask"
+
 # Copy the templates directory for wiki pages
-rsync -avz templates $DESTINATION:/home/ijohnson/myapp/backend/templates/
+rsync -avz templates/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/templates
 echo "Finished copying the templates directory"
 
 # Copy the static directory for the server
-rsync -avz static $DESTINATION:/home/ijohnson/myapp/backend/static/
+rsync -avz static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static
 echo "Finished copying the static directory"
 
 # # Copy the PostgreSQL database
@@ -30,12 +46,16 @@ echo "Finished copying the static directory"
 # echo "Finished restoring the database on the Raspberry Pi"
 
 # Restart Flask on the Pi
-ssh $DESTINATION "sudo supervisorctl restart myapp"
+scp myapp.service $DESTINATION:/home/ijohnson/Kachhapa/Flask
+# ssh $DESTINATION "sudo supervisorctl restart myapp"
+# ssh $DESTINATION "sudo systemctl daemon-reload"
 
 # Push updated Nginx configuration to the Pi & restart Nginx
 scp nginx.conf $DESTINATION:/etc/nginx
-echo "Finished updating Nginx configuration"
+ssh $DESTINATION "sudo nginx -t"
+# echo "Finished updating Nginx configuration"
 
+ssh $DESTINATION "sudo systemctl reload nginx"
 ssh $DESTINATION "sudo systemctl restart nginx"
 echo "Finished restarting Nginx"
 
@@ -44,15 +64,15 @@ cd webapp && npm run build && cd ..
 echo "Finished running npm build"
 
 # Copy the built web app to the Pi
-rsync -avz webapp/build $DESTINATION:/home/ijohnson/my-app/build/
+rsync -avz webapp/build/ $DESTINATION:/home/ijohnson/Kachhapa/webapp/build
 echo "Finished copying the built web app"
 
 # Copy the src directory
-rsync -avz webapp/src $DESTINATION:/home/ijohnson/my-app/src/
+rsync -avz webapp/src/ $DESTINATION:/home/ijohnson/Kachhapa/webapp/src
 echo "Finished copying the src directory"
 
 # Copy the public directory
-rsync -avz webapp/public $DESTINATION:/home/ijohnson/my-app/public/
+rsync -avz webapp/public/ $DESTINATION:/home/ijohnson/Kachhapa/webapp/public
 echo "Finished copying the public directory"
 
 # Switch everything back over to the development version of the files

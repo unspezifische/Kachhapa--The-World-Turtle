@@ -3,6 +3,10 @@ import axios from 'axios';  // Makes API calls
 import Papa from 'papaparse'; // parses CSV file
 import { Container, Row, Col, Table, Button, ButtonGroup, Modal, ModalDialog, Form } from 'react-bootstrap';
 
+// Mainly used for displaying error messages from the server
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+
 // For making the table adjustable
 import { DndProvider, useDrag, useDrop } from 'react-dnd'
 import { HTML5Backend } from 'react-dnd-html5-backend'
@@ -12,7 +16,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 
 import 'bootstrap/dist/css/bootstrap.min.css';
-// import './InventoryView.css';
+import './InventoryView.css';
 
 export default function InventoryView({ username, characterName, accountType, headers, socket, isLoading, setIsLoading }) {
   const [inventory, setInventory] = useState([]);
@@ -80,6 +84,12 @@ export default function InventoryView({ username, characterName, accountType, he
   const [selectedPlayer, setSelectedPlayer] = useState('');
   const [quantity, setQuantity] = useState(1);  // For giving items or dropping
 
+  // Define a function to display errors
+  const handleError = (customMessage, error) => {
+    const errorMessage = error.response?.data?.message || 'An unexpected error occurred';
+    toast.error(`${customMessage}: ${errorMessage}`);
+    console.error(`${customMessage}: ${errorMessage}`);
+  };
 
   // Define a function to fetch players
   const fetchPlayers = () => {
@@ -613,7 +623,7 @@ export default function InventoryView({ username, characterName, accountType, he
           cost: newItemCost,
           currency: newItemCurrency,
           description: newItemDescription,
-          spell: newItemSpell,
+          // spell: newItemSpell,
           charges: newItemCharges
         }, { headers: headers });
         console.log("Creating spell item:", response);
@@ -653,7 +663,7 @@ export default function InventoryView({ username, characterName, accountType, he
       setCreatingItem(false);
       fetchInventory();
     } catch (error) {
-      console.error('Error creating item:', error.response.data);
+      handleError('Error creating item:', error);
     }
   };
 
@@ -781,7 +791,7 @@ export default function InventoryView({ username, characterName, accountType, he
         });
         setShowViewItemDetails(false);
       } catch (error) {
-        console.error('Error dropping item:', error.response.data);
+        handleError('Error dropping item:', error);
       }
     } else {
       console.error('item or item.id is not defined.');
@@ -820,7 +830,7 @@ export default function InventoryView({ username, characterName, accountType, he
       setInventory(inventory.filter(item => item.id !== itemId));
       setShowEditItemDetails(false);
     } catch (error) {
-      console.error('Error deleting item:', error.response.data);
+      handleError('Error deleting item:', error);
     }
   };
 
@@ -832,7 +842,7 @@ export default function InventoryView({ username, characterName, accountType, he
         await axios.put(`/api/items/${selectedItem.id}`, selectedItem, { headers: headers });
         setInventory(inventory.map(item => item.id === selectedItem.id ? selectedItem : item));
       } catch (error) {
-        console.error('Error updating item:', error.response.data);
+        handleError('Error updating item:', error);
       }
     } else if (accountType === 'Player') {
       // console.log("Player is updating item")
@@ -843,7 +853,7 @@ export default function InventoryView({ username, characterName, accountType, he
         }, { headers: headers });
         setInventory(inventory.map(item => item.id === selectedItem.id ? selectedItem : item));
       } catch (error) {
-        console.error('Error updating item:', error.response.data);
+        handleError('Error updating item:', error);
       }
     }
     setShowViewItemDetails(false);
@@ -853,30 +863,32 @@ export default function InventoryView({ username, characterName, accountType, he
   return (
     <Container>
       <h1>Welcome back, {characterName}!</h1>
-      <div style={{ height: 'calc(100vh - 55px)', overflow: 'auto' }}>
-        <Row>
-          <Col sm={10}>
-            <Form.Control
-              type="search"
-              placeholder="Search"
-              onChange={event => setSearchTerm(event.target.value)}
-            />
-          </Col>
-          <Col sm={2}>
-            <Button variant="primary" onClick={() => setShowModal(true)}>
-              <SortIcon />
-            </Button>
-          </Col>
-        </Row>
-        {accountType === 'DM' && (
-          <ButtonGroup>
-            <Button onClick={() => setCreatingItem(true)}>Create Item</Button>
-            <Button onClick={() => setShowUploadModal(true)}>Add Items</Button>
-          </ButtonGroup>
-        )}
+      <div className="sticky-section-container">
+        <div className="sticky-header">
+          <Row>
+            <Col sm={10}>
+              <Form.Control
+                type="search"
+                placeholder="Search"
+                onChange={event => setSearchTerm(event.target.value)}
+              />
+            </Col>
+            <Col sm={2}>
+              <Button variant="primary" onClick={() => setShowModal(true)}>
+                <SortIcon />
+              </Button>
+            </Col>
+          </Row>
+          {accountType === 'DM' && (
+            <ButtonGroup>
+              <Button onClick={() => setCreatingItem(true)}>Create Item</Button>
+              <Button onClick={() => setShowUploadModal(true)}>Add Items</Button>
+            </ButtonGroup>
+          )}
+        </div>
         <DndProvider backend={HTML5Backend}>
           <Table striped bordered hover>
-            <thead>
+            <thead className="sticky-table-header">
               <tr>
                 {columnOrder.map((column, index) => (
                   <DraggableHeader
@@ -1692,6 +1704,7 @@ export default function InventoryView({ username, characterName, accountType, he
           </Modal.Footer>
         </ModalDialog>
       </Modal>
+      <ToastContainer />
     </Container>
   );
 }

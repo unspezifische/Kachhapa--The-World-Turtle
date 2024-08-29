@@ -48,12 +48,12 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
             const decodedRedirectUrl = decodeURIComponent(redirectUrl);
             console.log("Decoded Redirect URL:", decodedRedirectUrl);
 
-            // Redirect to the intended URL using navigate
+            // Redirect to the intended URL using window.location.assign
             try {
-              navigate(decodedRedirectUrl, { replace: true });
+              window.location.assign(decodedRedirectUrl);
             } catch (error) {
-              console.warn("Navigate failed, falling back to window.location.href", error);
-              // Fallback to window.location.href if navigate fails
+              console.warn("window.location.assign failed", error);
+              // Fallback to window.location.href if window.location.assign fails
               window.location.href = decodedRedirectUrl;
             }
           }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import io from 'socket.io-client';
@@ -34,23 +34,16 @@ function App() {
 
   const [username, setUsername] = useState('');
   const [userID, setUserID] = useState(null);
-  const headers = useMemo(() => ({
-    Authorization: `Bearer ${token}`,
-    'userID': userID,
-    'username': username
-  }), [token, userID, username]);
-
-  // Socket Stuff
-  const [socket, setSocket] = useState(null);
-  const [socketLoading, setSocketLoading] = useState(true);
-
-  // State variables from useAuthHandler
-  const [isLoading, setIsLoading] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
   const [characterName, setCharacterName] = useState('');
   const [characterID, setCharacterID] = useState(null);
   const [accountType, setAccountType] = useState('');
+
+  const headers = useMemo(() => ({
+    Authorization: `Bearer ${token}`,
+    'userID': userID,
+    'username': username,
+    'characterName': characterName,
+  }), [token, userID, username]);
 
   useEffect(() => {
     console.log('headers:', headers);
@@ -60,13 +53,25 @@ function App() {
     console.log('characterName:', characterName);
   }, [characterName]);
 
+  // State variables from useAuthHandler
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
+
+  
+
+  // Socket Stuff
+  const [socket, setSocket] = useState(null);
+  const socketRef = useRef(null);
+  const [socketLoading, setSocketLoading] = useState(true);
+
   const [inCombat, setInCombat] = useState(false);
   
 
   // Emit user_connected after user is authenticated and socket is established
   useEffect(() => {
     if (isLoggedIn && socket) {
-        socket.emit('user_connected', { username });
+        socketRef.current.emit('user_connected', { username });
         console.log("Emitting user_connected");
     }
   }, [isLoggedIn, socket, username]);
@@ -77,49 +82,49 @@ function App() {
     if (!token) return;
 
     setSocketLoading(true);
-    const newSocket = io(SOCKET_URL, {
-       path: '/socket.io',
-       query: { token },
-      reconnectionAttempts: 5, // Number of reconnection attempts
-      reconnectionDelay: 2000  // Delay between reconnection attempts
-    });
-    setSocket(newSocket);
-    setSocketLoading(false);
+    console.log("Creating new socket connection");
 
+    const newSocket = io(SOCKET_URL, {
+      path: '/socket.io/',
+      transports: ['websocket'],
+      query: { token },
+      reconnectionAttempts: 5,
+      reconnectionDelay: 2000
+    });
+    
     newSocket.on('connect', () => {
-        console.log("Socket Connected");
+      console.log("Socket Connected");
+      socketRef.current = newSocket;
+      setSocketLoading(false);
     });
 
     newSocket.on('connect_error', (error) => {
-        console.error("Socket Connection Error:", error);
+      console.error("Socket Connection Error:", error);
     });
 
     newSocket.on('token_expired', () => {
       console.log("Token Expired");
       localStorage.removeItem('token');
-      setToken('');
-      setIsLoggedIn(false);
+      // Handle token expiration
     });
 
     newSocket.on('disconnect', (reason) => {
       console.warn("Socket Disconnected:", reason);
       if (reason === 'io server disconnect') {
-        // The server disconnected the socket, try to reconnect
         newSocket.connect();
       }
     });
 
-    // Clean up the socket connection when the component unmounts
     return () => {
-      if (newSocket) {
-        newSocket.disconnect();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
       }
-    }
+    };
   }, [token]);
 
 
   useEffect(() => {
-    if (!socket) return;
+    if (!socketRef.current) return;
 
     const handleTurnUpdate = ({ current, next }) => {
       setCurrentTurn(current.order)
@@ -150,24 +155,24 @@ function App() {
       console.log("combatants:", combatants);
     };
 
-    socket.on('active_users', (active_users) => {
+    socketRef.current.on('active_users', (active_users) => {
       // console.log('APP- Active users:', active_users);
     });
 
-    socket.on('Roll for initiative!', () => setShow(true));
-    socket.on('combatants', updateCombatants);
-    socket.on('turn update', handleTurnUpdate);
-    socket.on('end of combat', handleEndOfCombat);
+    socketRef.current.on('Roll for initiative!', () => setShow(true));
+    socketRef.current.on('combatants', updateCombatants);
+    socketRef.current.on('turn update', handleTurnUpdate);
+    socketRef.current.on('end of combat', handleEndOfCombat);
 
     return () => {
-      socket.off('token_expired');
-      socket.off('active_users');
-      socket.off('Roll for initiative!');
-      socket.off('combatants', updateCombatants);
-      socket.off('turn update', handleTurnUpdate);
-      socket.off('end of combat', handleEndOfCombat);
+      socketRef.current.off('token_expired');
+      socketRef.current.off('active_users');
+      socketRef.current.off('Roll for initiative!');
+      socketRef.current.off('combatants', updateCombatants);
+      socketRef.current.off('turn update', handleTurnUpdate);
+      socketRef.current.off('end of combat', handleEndOfCombat);
     };
-  }, [socket]);
+  }, [socketRef.current]);
 
 
   /***************************/
@@ -181,7 +186,7 @@ function App() {
 
   const handleInitiativeSubmit = () => {
     // Emit the initiative roll to the server
-    socket.emit('initiative roll', { characterName, roll: initiativeOrder });
+    socketRef.current.emit('initiative roll', { characterName, roll: initiativeOrder });
     setShow(false); // Hide the initiative roll alert after submitting the roll
     setInCombat(true);
   };
@@ -222,19 +227,19 @@ function App() {
             <Container fluid style={{ height: '100vh', width: '100%', overflow: 'auto' }}>
             <Row className="d-none d-md-flex">
               <Col md={2} className="menu-column">
-                  <Menu accountType={accountType} selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} />
+                  <Menu headers={headers} accountType={accountType} selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} />
               </Col>
               <Col md={8} className="content-column">
                 <Routes>
                   <Route path="/" element={<Navigate to="/accountProfile" />} />
                   <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} />} />
-                  <Route path="/dmTools" element={<DMTools headers={headers} socket={socket} />} />
-                  <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socket} isLoading={isLoading} setIsLoading={setIsLoading} />} />
-                  {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socket} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
+                  <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
+                    <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} />
+                  {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} />} />
-                  <Route path="/library" element={<Library headers={headers} socket={socket} />} />
+                    <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
                   <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID}/>} />
-                  
+
                   {/* Catch-all route for wiki pages */}
                   <Route path="/:campaign_name/:page_title" render={({ match }) => {
                     const { campaign_name, page_title } = match.params;
@@ -271,7 +276,7 @@ function App() {
                     </Table>
                   </div>
                 )}
-                {!socketLoading && <Chat headers={headers} socket={socket} characterName={characterName} username={username} />}
+                  {!socketLoading && <Chat headers={headers} socket={socketRef.current} characterName={characterName} username={username} />}
               </Col>
             </Row>
           </Container>

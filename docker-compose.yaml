@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:latest
+    container_name: postgres_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - Kachhapa-network
+
+  flask:
+    build: ./Flask
+    container_name: flask_app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+    depends_on:
+      - db
+    networks:
+      - Kachhapa-network
+    ports:
+      - "5000:5000"
+
+  react:
+    build: ./webapp
+    container_name: react_app
+    networks:
+      - Kachhapa-network
+
+  nginx:
+    build: ./nginx
+    container_name: nginx_proxy
+    ports:
+      - "80:80"
+    depends_on:
+      - react
+      - flask
+    networks:
+      - Kachhapa-network
+
+volumes:
+  postgres_data:
+
+networks:
+  Kachhapa-network:

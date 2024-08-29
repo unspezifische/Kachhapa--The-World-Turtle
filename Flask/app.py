@@ -3,8 +3,9 @@ from flask import render_template ## For rendering wiki pages
 from flask import redirect, url_for
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
+from sqlalchemy import select, Numeric, text, func
 
 from flask_migrate import Migrate
 
@@ -33,7 +34,7 @@ from urllib.parse import unquote
 db = SQLAlchemy()
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = '/home/ijohnson/Downloads/Library'
+app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
 app.config['MAP_FOLDER'] = '/home/ijohnson/Downloads/Maps'
 app.config['BATTLE_MAP_FOLDER'] = '/home/ijohnson/Downloads/battleMaps'
 app.config['SECRET_KEY'] = 'secret-key'
@@ -48,7 +49,7 @@ app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024 # 2Gb Upload size
 app.config['PROPAGATE_EXCEPTIONS'] = True
 
 
-CORS(app, resources={r"/*": {"origins": "*"}})
+# CORS(app, resources={r"/*": {"origins": "*"}})  # This header is added by Nginx
 
 # For INFO level
 app.logger.setLevel(logging.INFO)  # set the desired logging level
@@ -59,12 +60,22 @@ app.logger.addHandler(handler)
 
 
 print("Debugging set to True")
-socketio = SocketIO(app, message_queue='amqp://guest:guest@localhost:5672//', cors_allowed_origins="*", logger=True, engineio_logger=True, ping_timeout=60000)
+socketio = SocketIO(
+    app,
+    message_queue='amqp://guest:guest@localhost:5672//',
+    # cors_allowed_origins="*",
+    logger=True,
+    engineio_logger=True,
+    ping_timeout=60000)
 active_connections = {}
 
 socketio.init_app(app)
 
 db.init_app(app)
+
+
+INTEGER_MIN = -2147483648
+INTEGER_MAX = 2147483647
 
 
 ## Use Textual for a Server-control TUI
@@ -210,6 +221,7 @@ class Campaign(db.Model):
     description = db.Column(db.Text)
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     dm_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    scribes = db.Column(ARRAY(db.Integer), default=[])  # List of user IDs who are scribes
     owner = db.relationship('User', foreign_keys=[owner_id], backref='owned_campaigns')
     dm = db.relationship('User', foreign_keys=[dm_id], backref='dm_campaigns')
 
@@ -224,26 +236,30 @@ class Campaign(db.Model):
             'owner_id': self.owner.id,
             'dm': self.dm.username,
             'dm_id': self.dm.id,
+            'scribes': self.scribes,
         }
-
+    
 class Page(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     title = db.Column(db.String(80), nullable=False)
-    content = db.Column(db.Text, nullable=False)
+    content = db.Column(db.Text, nullable=True)
     wiki_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
     wiki = db.relationship('Campaign', backref=db.backref('pages', lazy=True))
+    tsv = db.Column(TSVECTOR)
 
 class Revisions(db.Model):
     revision_id = db.Column(db.Integer, primary_key=True)
     page_id = db.Column(db.Integer, db.ForeignKey('page.id'), nullable=False)
     content = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, default=db.func.current_timestamp())
-    editor_firebase_id = db.Column(db.Text)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user = db.relationship('User', backref=db.backref('revisions', lazy=True))
+    page = db.relationship('Page', backref='revisions')
 
 # Loot association table
 loot_box_items = db.Table('loot_box_items',
     db.Column('itemID', db.Integer, db.ForeignKey('item.id'), primary_key=True),
-    db.Column('loot_box_id', db.Integer, db.ForeignKey('loot_box.id'), primary_key=True),
+    db.Column('loot_boxID', db.Integer, db.ForeignKey('loot_box.id'), primary_key=True),
     db.Column('quantity', db.Integer)
 )
 
@@ -253,7 +269,7 @@ class Item(db.Model):
     type = db.Column(db.String(80), nullable=False)
     cost = db.Column(db.Integer, nullable=False)
     currency = db.Column(db.String(80), nullable=False)
-    weight = db.Column(db.Integer)
+    weight = db.Column(Numeric(10, 2))  # Changed to Numeric with precision and scale
     description = db.Column(db.Text)
 
     # The relationships
@@ -261,7 +277,7 @@ class Item(db.Model):
     weapon = db.relationship('Weapon', backref='item', cascade='all, delete-orphan')
     spellItem = db.relationship('SpellItem', backref='item', cascade='all, delete-orphan')
     mountVehicle = db.relationship('MountVehicle', backref='item', cascade='all, delete-orphan')
-    loot_boxes = db.relationship('LootBox', secondary=loot_box_items, backref=db.backref('items'))
+    loot_boxes = db.relationship('LootBox', secondary=loot_box_items, backref=db.backref('items'), lazy=True)
 
 
     def to_dict(self):
@@ -338,7 +354,7 @@ class SpellItem(db.Model):
 
     itemID = db.Column(db.Integer, db.ForeignKey('item.id'), primary_key=True)
     charges = db.Column(db.Integer)
-    spellID = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=True)  # Allow spell items without an associated spell
+    spell_id = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=True)  # Allow spell items without an associated spell
 
 
     def to_dict(self):
@@ -406,7 +422,7 @@ class Spellbook(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     characterID = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=False)
-    spellID = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=False)
+    spell_id = db.Column(db.Integer, db.ForeignKey('spells.id'), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     equipped = db.Column(db.Boolean)
 
@@ -417,7 +433,7 @@ class Spellbook(db.Model):
         return {
             'id': self.id,
             'characterID': self.characterID,
-            'SpellID': self.spellID,
+            'SpellID': self.spell_id,
             'Quantity': self.quantity,
             'Name': self.spell.name,
             'Level': self.spell.level,
@@ -564,6 +580,25 @@ with app.app_context():
 
 migrate = Migrate(app, db)
 
+# @event.listens_for(Engine, "connect")
+# def create_full_text_search_trigger(dbapi_connection, connection_record):
+#     cursor = dbapi_connection.cursor()
+#     cursor.execute("""
+#     CREATE OR REPLACE FUNCTION update_page_tsv() RETURNS trigger AS $$
+#     BEGIN
+#         NEW.tsv :=
+#             setweight(to_tsvector('pg_catalog.english', coalesce(NEW.title, '')), 'A') ||
+#             setweight(to_tsvector('pg_catalog.english', coalesce(NEW.content, '')), 'B');
+#         RETURN NEW;
+#     END
+#     $$ LANGUAGE plpgsql;
+
+#     CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE
+#     ON page FOR EACH ROW EXECUTE FUNCTION update_page_tsv();
+#     """)
+#     dbapi_connection.commit()
+#     cursor.close()
+
 @app.route('/')
 def index():
     return "Flask Websocket Server"
@@ -617,14 +652,17 @@ def refresh_expiring_jwts(response):
 ## Verify a user's JWT token
 @app.route('/api/verify', methods=['POST'])
 def verify_token():
+    app.logger.info("/api/verify: %s", request.json)  # ## app.logger.info the incoming request
     data = request.get_json()
+    origin = request.headers.get('Origin')
     token = data.get('token')
-    print("Token:", token)
-    # app.logger.info("Token: %s", token)
+    # print("Token:", token)
+    app.logger.info("Token: %s", token)
+    app.logger.info("Origin: %s", origin)
     try:
         decoded_token = decode_token(token)
-        print("Decoded Token:", decoded_token)
-        # app.logger.info("Decoded Token:", decoded_token)
+        # print("Decoded Token:", decoded_token)
+        app.logger.info("Decoded Token:", decoded_token)
         user = User.query.filter_by(username=decoded_token['sub']).first()
         if user is None:
             print("Invalid user")
@@ -972,26 +1010,19 @@ def get_players():
     # Separate the character IDs and user IDs into two lists
     characterIDs, userIDs = zip(*result)
 
-    # print("Character IDs:", characterIDs)
-    app.logger.info("Character IDs: %s", characterIDs)
-    # print("User IDs:", userIDs)
-    app.logger.info("User IDs: %s", userIDs)
+    # app.logger.info("Character IDs: %s", characterIDs)
+    # app.logger.info("User IDs: %s", userIDs)
 
     # Get the DM's user ID
     dm_id = Campaign.query.filter_by(id=campaignID).first().dm_id
-    # print("DM is", dm_id)
-    app.logger.info("DM is %s", dm_id)
+    # app.logger.info("DM is %s", dm_id)
 
     # Filter out invalid character IDs
     valid_characterIDs = [characterID for characterID in characterIDs if characterID != user.id and characterID != dm_id and characterID is not None]
-    # valid_userIDs = [userID for userID in userIDs if userID != user.id and userID != dm_id and userID is not None]
     # app.logger.info("valid character IDs: %s", valid_characterIDs)
-    # app.logger.info("valid user IDs: %s", valid_userIDs)
 
     # Get the players for the valid character IDs
     players = [User.query.get(userID) for userID in userIDs]
-
-    # app.logger.info("players: %s", len(players))
 
     # Get the character name for each player
     players_info = []
@@ -1003,7 +1034,7 @@ def get_players():
             character_name = character.character_name if character else "DM"
             players_info.append({'username': player.username, 'character_name': character_name, 'id': characterID})
     
-    app.logger.info("player_info: %s", players_info)
+    # app.logger.info("player_info: %s", players_info)
 
     return jsonify({'players': players_info if players_info else []})
 
@@ -1033,10 +1064,10 @@ def items():
                     mountVehicle = MountVehicle.query.filter_by(itemID=item.id).first()
                     if mountVehicle:
                         item_data.update(mountVehicle.to_dict())
-                elif item.type in ['Ring', 'Wand', 'Scroll']:
-                    magic_item = SpellItem.query.filter_by(itemID=item.id).first()
-                    if magic_item:
-                        item_data.update(magic_item.to_dict())
+                # elif item.type in ['Ring', 'Wand', 'Scroll']:
+                #     magic_item = SpellItem.query.filter_by(itemID=item.id).first()
+                #     if magic_item:
+                #         item_data.update(magic_item.to_dict())
 
                 item_data_list.append(item_data)
 
@@ -1057,14 +1088,24 @@ def items():
             for field in required_fields:
                 if field not in data:
                     raise ValueError(f"Missing required field: {field}")
-
+            
             name = data.get('name')
             type = data.get('type')
             cost = data.get('cost')
             currency = data.get('currency')
             weight = data.get('weight')
             description = data.get('description')
-
+            
+            # Define the range for PostgreSQL INTEGER type
+            INTEGER_MIN = -2147483648
+            INTEGER_MAX = 2147483647
+            
+            # Validate cost and weight
+            if not (INTEGER_MIN <= int(cost) <= INTEGER_MAX):
+                raise ValueError(f"Cost value {cost} is out of range for type integer. Must be between {INTEGER_MIN} and {INTEGER_MAX}")
+            if not (INTEGER_MIN <= float(weight) <= INTEGER_MAX):
+                raise ValueError(f"Weight value {weight} is out of range for type integer. Must be between {INTEGER_MIN} and {INTEGER_MAX}")
+            
             item = Item(name=name, type=type, cost=cost, currency=currency, weight=weight, description=description)
             db.session.add(item)
             db.session.commit()
@@ -1145,9 +1186,8 @@ def items():
 @jwt_required()
 def update_item(itemID):
     data = request.get_json()
-    # item = Item.query.get(itemID)
-    item = Item.query.filter_by(id=itemID).first()
-    item = Item.query.filter_by(id=itemID).first()
+    item = Item.query.get(itemID)
+    # item = Item.query.filter_by(id=itemID).first()
     if not item:
         return jsonify({'message': 'Item not found!'}), 404
     item.name = data.get('name', item.name)
@@ -1162,16 +1202,20 @@ def update_item(itemID):
 @app.route('/api/items/<int:itemID>', methods=['DELETE'])
 @jwt_required()
 def delete_item(itemID):
-    print("Deleteing Item:", itemID)
-    app.logger.info("Deleteing Item: %s", itemID)
-    # item = Item.query.get(itemID)
-    item = Item.query.filter_by(id=itemID).first()
+    app.logger.info("Deleting Item: %s", itemID)
+    item = Item.query.get(itemID)
     if not item:
         return jsonify({'message': 'Item not found!'}), 404
-    db.session.delete(item)
-    db.session.commit()
-    return jsonify({'message': 'Item deleted!'})
-
+    
+    try:
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'message': 'Item deleted!'})
+    except Exception as e:
+        app.logger.error(f"Error deleting item: {e}")
+        db.session.rollback()
+        return jsonify({'message': 'Server error: ' + str(e)}), 500
+    
 ## Upload CSV for bulk item creation
 @app.route('/api/upload_csv', methods=['POST'])
 def upload_csv():
@@ -1298,7 +1342,7 @@ def inventory():
                         if spellItem is not None:
                             item_details.update({
                                 'charges': spellItem.charges,
-                                'spellID': spellItem.spellID
+                                'spell_id': spellItem.spell_id
                             })
                     elif item.type == 'MountVehicle':
                         mountVehicle = MountVehicle.query.get(item.id)
@@ -1382,7 +1426,7 @@ def inventory():
                         if spellItem is not None:
                             item_details.update({
                                 'charges': spellItem.charges,
-                                'spellID': spellItem.spellID
+                                'spell_id': spellItem.spell_id
                             })
                     elif item.type == 'MountVehicle':
                         mountVehicle = MountVehicle.query.get(item.id)
@@ -1713,9 +1757,27 @@ def library():
 
 @app.route('/api/library/<filename>')
 def get_file(filename):
-    # Send the requested file
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    try:
+        # Log the request for the file
+        app.logger.info('Getting %s from %s', filename, app.config['UPLOAD_FOLDER'])
 
+        # Construct the full file path
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        app.logger.info('Constructed file path: %s', file_path)
+
+        # Check if the file exists
+        if not os.path.exists(file_path):
+            app.logger.error('File not found: %s', file_path)
+            abort(404, description="File not found")
+
+        # Send the requested file
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    except FileNotFoundError:
+        app.logger.error('File not found: %s', filename)
+        abort(404, description="File not found")
+    except Exception as e:
+        app.logger.error('Error getting file %s: %s', filename, str(e))
+        abort(500, description="Internal Server Error")
 
 
 @app.route('/api/chat_history', methods=['GET'])
@@ -1799,7 +1861,7 @@ def create_loot_box():
 @app.route('/api/lootboxes/<int:box_id>', methods=['PUT'])
 def update_loot_box(box_id):
     data = request.get_json()
-    print("data:", data)
+    # print("data:", data)
     app.logger.info("data: %s", data)
     loot_box_name = data['name']
     items = data['items']
@@ -2026,7 +2088,7 @@ def save_spells_to_spellbook():
     for spell_data in spells:
         spellbook_item = Spellbook(
             userID=userID,
-            spellID=spell_data['spellID'],
+            spell_id=spell_data['spell_id'],
             quantity=spell_data.get('quantity', 1)  # Defaults to 1 if not provided
         )
         db.session.add(spellbook_item)
@@ -2128,10 +2190,20 @@ def update_spellbook_item(spellID):
 ##************************##
 
 @app.route('/<campaign_name>/search', methods=['GET'])
-def search():
+def search(campaign_name):
+    app.logger.info("campaign_name: %s", campaign_name)
+    app.logger.info("request: %r", request)
     query = request.args.get('q')
-    results = Page.query.filter(Page.title.contains(query)).all()
-    return jsonify([page.title for page in results])
+    app.logger.info("search query: %s", query)
+    if not query:
+        app.logger.info("No query provided")
+        return jsonify([])
+
+    search_query = db.session.query(Page).filter(Page.tsv.match(query)).all()
+    results = [{'id': page.id, 'title': page.title} for page in search_query]
+    app.logger.info("search results: %s", results)
+
+    return jsonify(results)   
 
 # @app.route('/<campaign_name>', methods=['GET'])
 # def index(campaign_name):
@@ -2161,27 +2233,65 @@ def preprocess_content(content):
 
 @app.route('/<campaign_name>/<page_title>', methods=['GET'])
 def wiki_page(campaign_name, page_title):
-    # print("campaign_name:", campaign_name)
     app.logger.info("campaign_name: %s", campaign_name)
-    # print("page_title:", page_title)
     app.logger.info("page_title: %s", page_title)
 
-    ## Get the campaign ID from the campaign name
+    # Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
-    # print("campaign:", campaign)
     app.logger.info("campaign ID: %s", campaign)
 
-    ## Get the page using the Campaign ID and the page title
-    page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
+    # Get the page using the Campaign ID and the page title
+    page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title == page_title, Campaign.name == campaign_name).first()
 
     if page is None:
-        return f"No page found for campaign with the ID: {campaign.id} and page title {page_title}", 404
+        app.logger.info("Page %s not found", page_title)
+        # Call the create_page function directly
+        return create_page(campaign_name, page_title)
 
     preprocessed_content = preprocess_content(page.content)
     html_content = markdown.markdown(preprocessed_content)
 
     return render_template('page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
 
+@app.route('/<campaign_name>/<page_title>/create', methods=['GET', 'POST'])
+def create_page(campaign_name, page_title):
+    # Get the campaign ID from the campaign name
+    campaign = Campaign.query.filter_by(name=campaign_name).first()
+
+    # Ensure the sequence is correctly set
+    max_id_result = db.session.execute(text("SELECT MAX(id) FROM page"))
+    max_id = max_id_result.scalar()
+    db.session.execute(text(f"SELECT setval('page_id_seq', {max_id + 1})"))
+    db.session.commit()
+
+    if request.method == 'POST':
+        content = request.form['content']
+
+        try:
+            # Create a new page entry with the provided content
+            new_page = Page(title=page_title, content=content, wiki_id=campaign.id)
+            db.session.add(new_page)
+            db.session.commit()
+
+            # Redirect to the editable version of the new page
+            return redirect(url_for('edit_page', campaign_name=campaign_name, page_title=page_title))
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            return f"An error occurred while creating the page: {str(e)}", 500
+
+    try:
+        # Create a blank page in the database
+        new_page = Page(title=page_title, content='', wiki_id=campaign.id)
+        db.session.add(new_page)
+        db.session.commit()
+
+        # Redirect to the edit page
+        app.logger.info("Redirecting to edit page")
+        return render_template('edit_page.html', campaign_name=campaign_name, content=f"<h1>{page_title}</h1><p><br></p>", page_title=page_title)
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        return f"An error occurred while creating the page: {str(e)}", 500
+    
 @app.route('/<campaign_name>/<page_title>/edit', methods=['GET', 'POST'])
 def edit_page(campaign_name, page_title):
     page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
@@ -2190,9 +2300,29 @@ def edit_page(campaign_name, page_title):
 
     # Handle POST request for saving edits
     if request.method == "POST":
+        app.logger.info("Edit Page POST: %s", request)
         content = request.form.get('content')
+        userID = request.headers.get('userID')
+        app.logger.info("Edit Page- userID: %s", userID)
+
+        # Save the current state of the page to the Revisions table
+        new_revision = Revisions(
+            page_id=page.id,
+            content=page.content,
+            user_id=userID  # Store the user ID
+        )
+        db.session.add(new_revision)
+
+        # Update the page content
         page.content = content
-        db.session.commit()
+
+        try:
+            db.session.commit()
+            app.logger.info(f"Database commit successful for page_id: {page.id}, user_id: {userID}")
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Database commit failed for page_id: {page.id}, user_id: {userID}. Error: {e}")
+            raise
 
         # Send a response with success: true
         return jsonify(success=True)
@@ -2220,6 +2350,7 @@ def emit_active_users():
 @socketio.on("connect")
 def connected():
     """event listener when client connects to the server"""
+    app.logger.info("Socket Connection Triggered")
     try:
         token = request.args.get('token')  # Get the token from the request arguments
         if not token:
@@ -2288,7 +2419,7 @@ def handle_send_message(messageObj):
     message = messageObj['text']
     sender = messageObj['sender']
     recipients = messageObj['recipients']
-    campaignID = messageObj['campaignID']  # Assuming campaignID is part of the messageObj
+    campaignID = messageObj['campaignID']
     app.logger.info("MESSAGE- sender: %s", sender)
     app.logger.info("MESSAGE- recipients: %s", recipients)
 
@@ -2448,10 +2579,10 @@ def handle_spell_transfer(messageObj, recipient_users, sender):
     spell = messageObj['spell']
 
     # Update recipient's spellbook
-    recipient_spellbook_item = Spellbook.query.filter_by(userID=recipient['id'], spellID=spell['id']).first()
+    recipient_spellbook_item = Spellbook.query.filter_by(userID=recipient['id'], spell_id=spell['id']).first()
 
     if not recipient_spellbook_item:
-        new_spellbook_item = Spellbook(userID=recipient['id'], spellID=spell['id'], quantity=1)
+        new_spellbook_item = Spellbook(userID=recipient['id'], spell_id=spell['id'], quantity=1)
         db.session.add(new_spellbook_item)
     else:
         # Assuming that spell details like name, etc. are not modified during transfer

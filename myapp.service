@@ -1,0 +1,12 @@
+[Unit]
+Description=Gunicorn instance to support API and WebSocket operations for Kachhapa
+After=network.target
+
+[Service]
+User=ijohnson
+Group=www-data
+WorkingDirectory=/home/ijohnson/Kachhapa/Flask
+ExecStart=/home/ijohnson/.local/bin/gunicorn -k eventlet -w 4 --bind unix:/home/ijohnson/Kachhapa/Flask/myapp.sock app:app
+
+[Install]
+WantedBy=multi-user.target

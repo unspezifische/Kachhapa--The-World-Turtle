@@ -9,6 +9,27 @@ import { AppBar, Toolbar, IconButton, Typography, Box } from '@mui/material';
 
 import CloseIcon from '@mui/icons-material/Close';
 
+// A mapping of skills to their associated abilities
+const skillAbilities = {
+    'Acrobatics': 'dexterity',
+    'Animal Handling': 'wisdom',
+    'Arcana': 'intelligence',
+    'Athletics': 'strength', 'Deception': 'charisma',
+    'History': 'intelligence',
+    'Insight': 'wisdom',
+    'Intimidation': 'charisma',
+    'Investigation': 'intelligence',
+    'Medicine': 'wisdom',
+    'Nature': 'intelligence',
+    'Perception': 'wisdom',
+    'Performance': 'charisma',
+    'Persuasion': 'charisma',
+    'Religion': 'intelligence',
+    'Sleight of Hand': 'dexterity',
+    'Stealth': 'dexterity',
+    'Survival': 'wisdom'
+};
+
 
 const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     const [activeStep, setActiveStep] = useState(0);
@@ -312,6 +333,65 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
         }
     };
 
+    function getModifier(score) {
+        if (!score) return 0;
+        return Math.floor((score - 10) / 2);
+    }
+
+    function calculateProficiencyBonus(level) {
+        return Math.ceil(level / 4) + 1;
+    }
+
+    function calculateSkillPoints(skill, abilityScores, proficiencyBonus, isProficient) {
+        const ability = skillAbilities[skill];
+
+        // Check that ability score exists
+        if (!abilityScores[ability]) {
+            return 0; // return 0 if no ability score
+        }
+
+        const abilityScore = abilityScores[ability];
+        const abilityModifier = Math.floor((abilityScore - 10) / 2);
+        return abilityModifier + (isProficient ? proficiencyBonus : 0);
+    }
+
+    function calculateSavingThrows(abilityScores, proficiencyBonus, proficiencies) {
+        const savingThrows = {};
+        for (const ability in abilityScores) {
+            const abilityScore = abilityScores[ability];
+            const abilityModifier = Math.floor((abilityScore - 10) / 2);
+            const isProficient = proficiencies.includes(ability);
+            savingThrows[ability.toLowerCase()] = abilityModifier + (isProficient ? proficiencyBonus : 0);
+        }
+        return savingThrows;
+    }
+
+    // Calculate Skill Levels
+    useEffect(() => {
+        const proficiencyBonus = calculateProficiencyBonus(character.Level);
+        const Skills = Object.fromEntries(
+            Object.entries(character.Skills).map(([skill, _]) => {
+                const isProficient = character.Proficiencies.includes(skill);
+                const skillPoints = calculateSkillPoints(skill, character.abilityScores, proficiencyBonus, isProficient);
+                return [skill, skillPoints];
+            })
+        );
+        setCharacter(prevState => ({
+            ...prevState,
+            proficiencyBonus,
+            Skills,
+        }));
+    }, [character.Level, character.abilityScores, character.Proficiencies]);
+
+    // Calcualte Saving Throw values
+    useEffect(() => {
+        const savingThrows = calculateSavingThrows(character.abilityScores, character.proficiencyBonus, character.Proficiencies);
+        setCharacter(prevState => ({
+            ...prevState,
+            SavingThrows: savingThrows,
+        }));
+    }, [character.abilityScores, character.proficiencyBonus, character.Proficiencies]);
+
 
     return (
         <Dialog open={show} maxWidth="md" onClose={handleClose}>
@@ -446,8 +526,8 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                 {activeStep === 3 && (
                     <div style={{ height: 'calc(100vh - 250px)' }}>
                         <Form.Group controlId="characterName">
-                            <Form.Label>Name</Form.Label>
-                            <Form.Control type="text" name="name" value={character.name} onChange={handleInputChange} required />
+                            <Form.Label>Character Name</Form.Label>
+                            <Form.Control type="text" name="Name" value={character.Name} onChange={handleInputChange} required />
                         </Form.Group>
                         <Form.Group controlId="characterBackground">
                             <Form.Label>Background</Form.Label>
@@ -506,6 +586,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                     <div style={{ height: 'calc(100vh - 250px)' }}>
                         <h2>Character Summary</h2>
                         <div style={{ overflow: 'auto', maxHeight: '63vh' }}>
+                            {console.log("Review Character-", character)}
                             {Object.entries(character).map(([key, value]) => (
                                 <p key={key}>
                                     <strong>{key}:</strong>
@@ -517,7 +598,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                                 </p>
                             ))}
                         </div>
-                        {/* Show all character details in a condensed form for verification */}
+                        {/* TODO: Show all character details in a condensed form for verification */}
                     </div>
                 )}
             </DialogContent>
