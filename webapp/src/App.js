@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
-import axios from 'axios';
+// import axios from 'axios';
 import io from 'socket.io-client';
 
 import { Table, Container, Row, Col, Alert, Button } from 'react-bootstrap';
@@ -42,7 +42,8 @@ function App() {
     Authorization: `Bearer ${token}`,
     'userID': userID,
     'username': username,
-    'characterName': characterName,
+    'characterID': characterID,
+    // 'characterName': characterName,  // Not sure this is ever used by Flask
   }), [token, userID, username]);
 
   useEffect(() => {
@@ -61,7 +62,7 @@ function App() {
   
 
   // Socket Stuff
-  const [socket, setSocket] = useState(null);
+  // const [socket, setSocket] = useState(null);
   const socketRef = useRef(null);
   const [socketLoading, setSocketLoading] = useState(true);
 
@@ -70,11 +71,11 @@ function App() {
 
   // Emit user_connected after user is authenticated and socket is established
   useEffect(() => {
-    if (isLoggedIn && socket) {
+    if (isLoggedIn && socketRef.current) {
         socketRef.current.emit('user_connected', { username });
         console.log("Emitting user_connected");
     }
-  }, [isLoggedIn, socket, username]);
+  }, [isLoggedIn, socketRef.current, username]);
 
 
   // Web Socket stuff
@@ -199,7 +200,7 @@ function App() {
   };
 
   return (
-    <UserContext.Provider value={{ characterName, accountType, headers, setIsLoggedIn, socket }}>
+    <UserContext.Provider value={{ characterName, accountType, headers, setIsLoggedIn, socket: socketRef.current }}>
       <Router>
         {/* Show the spinner while the token is authenticating */}
         {isLoading && (
@@ -234,10 +235,10 @@ function App() {
                   <Route path="/" element={<Navigate to="/accountProfile" />} />
                   <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} />} />
                   <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
-                    <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} />
+                  <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} />
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} />} />
-                    <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
+                  <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
                   <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID}/>} />
 
                   {/* Catch-all route for wiki pages */}

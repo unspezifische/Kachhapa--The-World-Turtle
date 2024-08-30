@@ -230,6 +230,8 @@ function DMTools({ headers, socket, characterName, accountType }) {
   };
 
   useEffect(() => {
+    if (socket == null) return;
+    
     // setCombatants([]) // Will this ensure the list is clear when initiative starts?
 
     const handleInitiativeRoll = ({ characterName, roll }) => {
@@ -248,11 +250,15 @@ function DMTools({ headers, socket, characterName, accountType }) {
   }, [socket]);
 
   useEffect(() => {
+    if (socket == null) return;
+
     socket.emit('combatants', combatants);
     console.log("combatants:", combatants);
   }, [combatants])
 
   const handleInitiative = () => {
+    if (socket == null) return;
+
     // 1. Send message to players that they should roll for initiative
     // 2. Listen for responses containing results of rolls
     // 3. Display results in a table. "Next" button in footer.
@@ -265,6 +271,8 @@ function DMTools({ headers, socket, characterName, accountType }) {
   };
 
   const handleNextButtonClick = () => {
+    if (socket == null) return;
+
     const nextTurn = (currentTurn + 1) % combatants.length;
     console.log("nextTurn:", nextTurn);
     setCurrentTurn(nextTurn); // Circular increment
@@ -278,6 +286,8 @@ function DMTools({ headers, socket, characterName, accountType }) {
   };
 
   const handleEndOfCombat = () => {
+    if (socket == null) return;
+    
     setCombatants([]); // Reset the combatants
     setCurrentTurn(0); // Reset the current turn
     setCurrentContent('lootBoxes'); // Or any other content you'd like to display

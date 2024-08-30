@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Container, Row, Col, Form, Button, ToggleButton, ToggleButtonGroup, Modal } from 'react-bootstrap';
 import axios from 'axios';  // Makes API calls
+import UserContext from './UserContext';
 import "./Chat.css"
 
 import SendIcon from '@mui/icons-material/Send';
 import ChatIcon from '@mui/icons-material/Chat';
 
-function Chat({ headers, socket, isLoggedIn, characterName, username }) {
+function Chat({ headers, socket, characterName, username }) {
+  // const { socket } = useContext(UserContext);  // Try using socket as a parameter instead
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [selectedUsers, setSelectedUsers] = useState([]);
@@ -43,6 +45,10 @@ function Chat({ headers, socket, isLoggedIn, characterName, username }) {
 
 
   useEffect(() => {
+    console.log("CHAT- users:", users);
+  }, [users]);
+
+  useEffect(() => {
     const handleMessage = (message) => {
       console.log("Receiving " + message);
       console.log("Checking message from: " + message.sender);
@@ -53,16 +59,20 @@ function Chat({ headers, socket, isLoggedIn, characterName, username }) {
         setMessages(prevMessages => [...prevMessages, message]);
       }
     };
-
+  
     const handleActiveUsers = (active_users) => {
       console.log("CHAT- active_users", active_users);
+      console.log("CHAT- your characterName:", characterName);
       const otherUsers = active_users.filter(user => user.character_name !== characterName);
       setUsers(otherUsers);
     }
-
+  
     socket.on('message', handleMessage);
     socket.on('active_users', handleActiveUsers);
-
+  
+    // Emit an event to request the current list of active users
+    socket.emit('request_active_users');
+  
     return () => {
       socket.off('message', handleMessage);
       socket.off('active_users', handleActiveUsers);
@@ -164,7 +174,7 @@ function Chat({ headers, socket, isLoggedIn, characterName, username }) {
               >
               {users.map((user, i) => (
                 <ToggleButton id={user.username} value={user.username} key={i} variant="outline-primary">
-                  {user.character_name}
+                  {user.character_name === "DM" ? `${user.character_name}- ${user.username}` : user.character_name}
                 </ToggleButton>
               ))}
               </ToggleButtonGroup>
