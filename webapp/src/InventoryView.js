@@ -245,59 +245,61 @@ export default function InventoryView({ username, characterName, accountType, he
   }, [sortConfig, inventory]);
 
 
-  // Only used to populate the inventory table (for player or DM)
-  useEffect(() => {
-    const fetchData = () => {
-      if (accountType === 'Player') {
-        axios.get('/api/inventory', {
-          headers: {
-            'Character-Name': characterName
-          }})
-          .then(response => {
-            setInventory(response.data.inventory);
-          })
-          .catch(error => {
-            console.error(error);
-          })
-          .finally(() => {
-            setIsLoading(false);
-          });
+  // // Only used to populate the inventory table (for player or DM)
+  // // TODO: Is this hook nnecessary? Can we just use the fetchInventory function?
+  // useEffect(() => {
+  //   const fetchData = () => {
+  //     if (accountType === 'Player') {
+  //       axios.get('/api/inventory', { headers })
+  //         .then(response => {
+  //           setInventory(response.data.inventory);
+  //         })
+  //         .catch(error => {
+  //           console.error(error);
+  //         })
+  //         .finally(() => {
+  //           setIsLoading(false);
+  //         });
 
-      } else if (accountType === 'DM') {
-        axios.get('/api/items', { headers })
-          .then(response => {
-            setInventory(response.data.items);
-          })
-          .catch(error => {
-            console.error(error);
-          })
-          .finally(() => {
-            setIsLoading(false);
-          });
-      }
-    }
-    if(!isLoading) {
-      fetchData();
-    }
-  }, [accountType]);
+  //     } else if (accountType === 'DM') {
+  //       axios.get('/api/items', { headers })
+  //         .then(response => {
+  //           setInventory(response.data.items);
+  //         })
+  //         .catch(error => {
+  //           console.error(error);
+  //         })
+  //         .finally(() => {
+  //           setIsLoading(false);
+  //         });
+  //     }
+  //   }
+  //   if(!isLoading) {
+  //     fetchData();
+  //   }
+  // }, [accountType]);
 
 
   // For when a player is given a new item
   useEffect(() => {
     if (socket) {
-      socket.on('inventory_update', async function(data) {
+      socket.on('inventory_update', function(data) {
         // Update the player's inventory
-        // console.log('Inventory update:', data);
-        // console.log("Does " + data.character_name + " match " + characterName + "?", data.character_name === characterName);
+        console.log('Inventory update:', data);
+        console.log("Does " + data.character_name + " match " + characterName + "?", data.character_name === characterName);
+        
         // Request the server to get the latest inventory
-        const response = await axios.get('/api/inventory', {
-          headers: {
-            'Character-Name': characterName // Include the character name in the request headers
-          }})
-        const updatedInventory = response.data.inventory;
-
-        setInventory(updatedInventory);
-        setSortedInventory(updatedInventory);
+        axios.get('/api/inventory', { headers: headers })
+        .then(response => {
+            const updatedInventory = response.data.inventory;
+            setInventory(updatedInventory);
+            setSortedInventory(updatedInventory);
+            // Handle the updated inventory here
+            console.log('Updated Inventory:', updatedInventory);
+        })
+        .catch(error => {
+            console.error('Error fetching inventory:', error);
+        });
       });
 
       return () => {

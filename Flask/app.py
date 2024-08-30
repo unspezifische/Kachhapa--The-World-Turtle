@@ -2,12 +2,18 @@ from flask import Flask, abort, request, jsonify, send_from_directory
 from flask import render_template ## For rendering wiki pages
 from flask import redirect, url_for
 
+## Server Admin Console
+from flask_admin import Admin
+from flask_admin.contrib.sqla import ModelView
+import flask_monitoringdashboard as dashboard
+
+## For database stuff
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
 from sqlalchemy import select, Numeric, text, func
 
-from flask_migrate import Migrate
+from flask_migrate import Migrate   ## For database migrations
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -31,8 +37,6 @@ import markdown
 from urllib.parse import unquote
 
 
-db = SQLAlchemy()
-
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
 app.config['MAP_FOLDER'] = '/home/ijohnson/Downloads/Maps'
@@ -47,6 +51,12 @@ jwt = JWTManager(app)
 
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024 # 2Gb Upload size
 app.config['PROPAGATE_EXCEPTIONS'] = True
+
+## Database stuff
+db = SQLAlchemy()
+
+## Admin Console
+admin = Admin(app, name='Kachhapa Admin', template_mode='bootstrap3')
 
 
 # CORS(app, resources={r"/*": {"origins": "*"}})  # This header is added by Nginx
@@ -63,7 +73,7 @@ print("Debugging set to True")
 socketio = SocketIO(
     app,
     message_queue='amqp://guest:guest@localhost:5672//',
-    # cors_allowed_origins="*",
+    cors_allowed_origins="*",
     logger=True,
     engineio_logger=True,
     ping_timeout=60000)
@@ -78,47 +88,6 @@ INTEGER_MIN = -2147483648
 INTEGER_MAX = 2147483647
 
 
-## Use Textual for a Server-control TUI
-dashboard = None
-import asyncio
-from textual.app import App
-from textual.widgets import Header, Footer, Static
-from textual.containers import ScrollableContainer
-from textual.reactive import Reactive
-from textual import events
-
-# Ensure an event loop is created and set in the main thread
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-class LogViewer(Static):
-    logs: Reactive[str] = Reactive("")
-
-    def append_log(self, log: str) -> None:
-        self.logs += log + "\n"
-        self.refresh()
-
-    def render(self) -> str:
-        return self.logs
-
-class Dashboard(App):
-    async def on_mount(self) -> None:
-        self.log_viewer = LogViewer()
-        await self.view.dock(Header(), edge="top")
-        await self.view.dock(Footer(), edge="bottom")
-        await self.view.dock(ScrollableContainer(self.log_viewer), edge="center")
-
-    async def handle_new_log(self, log: str) -> None:
-        self.log_viewer.append_log(log)
-
-dashboard = None
-
-def add_log(log):
-    global dashboard
-    if dashboard:
-        dashboard.call_from_thread(dashboard.handle_new_log, log)
 
 # Association table
 campaign_members = db.Table('campaign_members',
@@ -529,6 +498,26 @@ class GameElement(db.Model):
         }
 
 
+## Add all the models to the admin console
+admin.add_view(ModelView(User, db.session))
+admin.add_view(ModelView(Character, db.session))
+admin.add_view(ModelView(Campaign, db.session))
+admin.add_view(ModelView(Page, db.session))
+admin.add_view(ModelView(Revisions, db.session))
+admin.add_view(ModelView(Item, db.session))
+admin.add_view(ModelView(InventoryItem, db.session))
+admin.add_view(ModelView(Spell, db.session))
+admin.add_view(ModelView(SpellItem, db.session))
+admin.add_view(ModelView(MountVehicle, db.session))
+admin.add_view(ModelView(Armor, db.session))
+admin.add_view(ModelView(Weapon, db.session))
+admin.add_view(ModelView(Journal, db.session))
+admin.add_view(ModelView(Message, db.session))
+admin.add_view(ModelView(LootBox, db.session))
+admin.add_view(ModelView(NPC, db.session))
+admin.add_view(ModelView(GameElement, db.session))
+
+
 def load_json_files(directory):
     elements = []
     if os.path.exists(directory):
@@ -560,14 +549,11 @@ def insert_elements(system, element_type, directory):
 def set_all_users_offline():
     # insert_elements('D&D 5e', 'class', './classes')
     # insert_elements('D&D 5e', 'race', './races')
-    insert_elements('D&D 5e', 'character_background', './characterBackgrounds')
-    insert_elements('D&D 5e', 'character_sheet', './characterSheets')
+    # insert_elements('D&D 5e', 'character_background', './characterBackgrounds')
+    # insert_elements('D&D 5e', 'character_sheet', './characterSheets')
 
 
     users = User.query.all()
-
-    # Get the campaign with ID 1
-    # campaign = Campaign.query.get(1)    ## Temporary
 
     for user in users:
         user.is_online = False
@@ -603,18 +589,19 @@ migrate = Migrate(app, db)
 def index():
     return "Flask Websocket Server"
 
-@app.before_request
-def log_request_info():
-    log = f"Request: {request.method} {request.url} - {request.data}"
-    # app.logger.info(log)
-    add_log(log)
 
-@app.after_request
-def log_response_info(response):
-    log = f"Response: {response.status} - {response.data}"
-    # app.logger.info(log)
-    add_log(log)
-    return response
+# Global error handler
+@app.errorhandler(Exception)
+def handle_exception(e):
+    app.logger.error(f"An error occurred: {str(e)}")
+    app.logger.error(f"Request data: {request.data}")
+    
+    # Return a JSON response with a generic error message
+    response = {
+        "error": "An unexpected error occurred",
+        "details": str(e)
+    }
+    return jsonify(response), 500
 
 @app.after_request
 def refresh_expiring_jwts(response):
@@ -1298,7 +1285,7 @@ def save_items():
 def inventory():
     if request.method == 'GET':
         app.logger.info("**** Getting Inventory ****")
-        app.logger.info("GET INVENTORY- headers: %s", request.headers)
+        # app.logger.info("GET INVENTORY- headers: %s", request.headers)
 
         if request.headers.get('Character-ID'):
             inventory_items = InventoryItem.query.filter_by(characterID=request.headers.get('Character-ID')).all()
@@ -1364,7 +1351,7 @@ def inventory():
             if user is None:
                 return jsonify({'error': 'User not found.'}), 404
             
-            app.logger.info("GET INVENTORY- user: %s", user.to_dict())
+            app.logger.info("GET INVENTORY- user from JWT: %s", user.to_dict())
 
             campaignID = request.headers.get('Campaign-ID')
 
@@ -1384,6 +1371,8 @@ def inventory():
                 return jsonify({'error': 'Character not found.'}), 404
 
             characterID = result.characterID if result else None
+
+            app.logger.debug("GET INVENTORY- characterID based on JWT: %s", characterID)
 
             inventory_items = InventoryItem.query.filter_by(characterID=characterID).all()
             inventory = []
@@ -2337,13 +2326,13 @@ def edit_page(campaign_name, page_title):
 ## **  SocketIO Stuff  ** ##
 ##************************##
 
+@socketio.on("request_active_users")
 def emit_active_users():
     # print("FLASK- Emitting Active Users")
-    app.logger.info("FLASK- Emitting Active Users")
+    app.logger.debug("FLASK- Emitting Active Users")
     active_users = db.session.query(User, Character).join(Character, User.id == Character.userID).filter(User.is_online == True).all()
     active_user_info = [{'username': user.username, 'character_name': character.character_name} for user, character in active_users]
-    # print("FLASK- active_user_info:", active_user_info)
-    app.logger.info("FLASK- active_user_info: %s", active_user_info)
+    app.logger.debug("FLASK- active_user_info: %s", active_user_info)
     socketio.emit('active_users', active_user_info)
 
 
@@ -2389,12 +2378,13 @@ def connected():
 
 @socketio.on('user_connected')
 def handle_user_connected(data):
-    # app.logger.info("HANDLE CONNETION- user_connected- data: %s", data)
-    app.logger.info('HANDLE CONNETION- User connected: %s', data['username'])
+    # app.logger.debug("HANDLE CONNETION- user_connected- data: %s", data)
+    app.logger.debug('HANDLE CONNETION- User connected: %s', data['username'])
     # You can now associate the username with the current socket connection
     user = User.query.filter_by(username=data['username']).first()
+    app.logger.debug("HANDLE CONNETION- user: %s", user)
     if user:
-        app.logger.info("HANDLE CONNETION- user's initial status: %s", user.is_online)
+        app.logger.debug("HANDLE CONNETION- user's initial status: %s", user.is_online)
         if data['username'] in active_connections:
             app.logger.info(f"Disconnecting duplicate connection for user: {data['username']}")
             socketio.disconnect()
@@ -2675,6 +2665,5 @@ def handle_disconnect():
 
 
 if __name__ == '__main__':
-    dashboard = Dashboard()
-    dashboard.run()
+    dashboard.bind(app)
     socketio.run(app, host='0.0.0.0', port=5001)

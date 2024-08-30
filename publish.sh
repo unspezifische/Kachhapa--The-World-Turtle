@@ -8,11 +8,10 @@ DESTINATION="ijohnson@raspberrypi.local"
 # echo "Finished removing 'http://127.0.0.1:5001' from .js files in the src directory"
 
 # Create `requirements.txt` file
-pip freeze > requirements.txt
-echo "Finished creating requirements.txt"
+# pip freeze > Flask/requirements.txt
 
 # Copy the requirements.txt file
-rsync -avz requirements.txt $DESTINATION:/home/ijohnson/Kachhapa/Flask/
+rsync -avz Flask/requirements.txt $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying requirements.txt"
 
 # Install Python dependencies on the Raspberry Pi
@@ -20,7 +19,7 @@ ssh $DESTINATION "pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
 echo "Finished installing Python dependencies"
 
 # Copy the Flask app
-rsync -avz app.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
+rsync -avz Flask/app.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying app.py"
 
 # Restart Flask
@@ -28,11 +27,11 @@ ssh $DESTINATION "sudo systemctl restart myapp"
 echo "Finished restarting Flask"
 
 # Copy the templates directory for wiki pages
-rsync -avz templates/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/templates
+rsync -avz Flask/templates/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/templates
 echo "Finished copying the templates directory"
 
-# Copy the static directory for the server
-rsync -avz static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static
+# Copy the static directory for the server (libraries for wiki stuff)
+rsync -avz Flask/static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static
 echo "Finished copying the static directory"
 
 # # Copy the PostgreSQL database
@@ -47,11 +46,9 @@ echo "Finished copying the static directory"
 
 # Restart Flask on the Pi
 scp myapp.service $DESTINATION:/home/ijohnson/Kachhapa/Flask
-# ssh $DESTINATION "sudo supervisorctl restart myapp"
-# ssh $DESTINATION "sudo systemctl daemon-reload"
 
 # Push updated Nginx configuration to the Pi & restart Nginx
-scp nginx.conf $DESTINATION:/etc/nginx
+scp nginx/nginx.conf $DESTINATION:/etc/nginx/nginx.conf
 ssh $DESTINATION "sudo nginx -t"
 # echo "Finished updating Nginx configuration"
 
