@@ -120,6 +120,7 @@ function Journal({ headers, characterName }) {
         isDraftJS = true;
       }
     } catch (err) {
+      console.warn('Error parsing entry content:', err);
       // Not a JSON or doesn't have the DraftJS structure
     }
 
@@ -266,13 +267,19 @@ function Journal({ headers, characterName }) {
             value={title}
             onChange={e => setTitle(e.target.value)}
           />
+          <Form.Control
+            as="textarea"
+            rows={10}
+            value={selectedEntry ? selectedEntry.content : ''}
+            onChange={e => editorRef.current.value(e.target.value)}
+            />
         </Form.Group>
       </Row>
-      <div className="editorContainer">
+      {/* <div className="editorContainer">
         <Row>
           <textarea id="editor"></ textarea>
         </Row>
-      </div>
+      </div> */}
       <Row>
         <Button onClick={saveEntry}>Save Entry</Button>
         <Button variant="danger" onClick={clearEntry}>Clear Entry</Button>

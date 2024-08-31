@@ -1,14 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Container, Row, Col, Form, Button, ToggleButton, ToggleButtonGroup, Modal } from 'react-bootstrap';
+import { Stack, Container, Row, Col, Form, Button, ToggleButton, ToggleButtonGroup } from 'react-bootstrap';
 import axios from 'axios';  // Makes API calls
-import UserContext from './UserContext';
 import "./Chat.css"
 
 import SendIcon from '@mui/icons-material/Send';
 import ChatIcon from '@mui/icons-material/Chat';
 
-function Chat({ headers, socket, characterName, username }) {
-  // const { socket } = useContext(UserContext);  // Try using socket as a parameter instead
+function Chat({ headers, socket, characterName, username, campaignID }) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [selectedUsers, setSelectedUsers] = useState([]);
@@ -150,55 +148,80 @@ function Chat({ headers, socket, characterName, username }) {
   return (
     <>
       {/* Show the Chat Widget */}
-      <div className="chat-widget d-none d-md-flex">
-        <Container>
-          <h1>Chat</h1>
+      {/* <div className="chat-widget d-none d-md-flex"> */}
+        <Stack>
+          <Row>
+            <Col>
+              <h1>Chat</h1>
+            </Col>
+          </Row>
+          
           {/* Displays previous messages */}
-          <div className="messageContainer" ref={messageContainerRef}>
-            {messages.slice().map((message, i) => {
-              const isSameGroup = lastGroupId === message.group_id;
-              lastGroupId = message.group_id;  // update the last group ID
-              return renderMessage(message, i, isSameGroup);
-            })}
-          </div>
-          {/* Display active users */}
-          <Row className="usersList">
-            {users.length === 0 ? (
-              <p>Nobody else here!</p>
-            ) : (
+          {/* for Col:  */}
+          <Row>
+            <Col ref={messageContainerRef} className="messageContainer">
+              {messages.slice().map((message, i) => {
+                const isSameGroup = lastGroupId === message.group_id;
+                lastGroupId = message.group_id;  // update the last group ID
+                return renderMessage(message, i, isSameGroup);
+              })}
+            </Col>
+          </Row>
+          
+          {/* Display active users- className="usersList" */}
+          <Row>
+            <Col>
               <ToggleButtonGroup
                 type="checkbox"
                 value={selectedUsers}
                 onChange={handleChange}
                 vertical
               >
-              {users.map((user, i) => (
-                <ToggleButton id={user.username} value={user.username} key={i} variant="outline-primary">
-                  {user.character_name === "DM" ? `${user.character_name}- ${user.username}` : user.character_name}
-                </ToggleButton>
-              ))}
+                {users.length === 0 ? (
+                  <ToggleButton
+                    id="no-users"
+                    value="no-users"
+                    variant="outline-primary"
+                    disabled
+                  >
+                    Nobody else here!
+                  </ToggleButton>
+                ) : (
+                  users.map((user, i) => (
+                    <ToggleButton
+                      id={user.username}
+                      value={user.username}
+                      key={i}
+                      variant="outline-primary"
+                    >
+                      {user.character_name === "DM" ? `${user.character_name}- ${user.username}` : user.character_name}
+                    </ToggleButton>
+                  ))
+                )}
               </ToggleButtonGroup>
-            )}
+            </Col>
           </Row>
-          {/* Message Text Field */}
-          <div className="d-flex send-interface">
-            <Form onSubmit={sendMessage}>
-              <Form.Group>
-                <Form.Control
-                  as="textarea"
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  onKeyPress={(event) => (event.key === 'Enter' ? sendMessage(event) : null)}
-                />
-              </Form.Group>
-              <p className="error-message">{error}</p>
-              <Button variant="primary" type="submit">
-                <SendIcon fontSize="medium" />
-              </Button>
-            </Form>
-          </div>
-        </Container>
-      </div>
+          {/* Message Text Field- className="send-interface" */}
+          <Row>
+            <Col>
+              <Form onSubmit={sendMessage}>
+                <Form.Group>
+                  <Form.Control
+                    as="textarea"
+                    value={message}
+                    onChange={(event) => setMessage(event.target.value)}
+                    onKeyPress={(event) => (event.key === 'Enter' ? sendMessage(event) : null)}
+                  />
+                </Form.Group>
+                <p className="error-message">{error}</p>
+                <Button variant="primary" type="submit">
+                  <SendIcon fontSize="medium" />
+                </Button>
+              </Form>
+            </Col>
+          </Row>
+        </Stack>
+      {/* </div> */}
     </>
   );
 }

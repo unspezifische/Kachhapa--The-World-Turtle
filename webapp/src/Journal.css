@@ -3,8 +3,8 @@
 /* Set the main container to occupy 100% of the viewport height */
 .container {
   height: 100vh;
-  /* overflow: hidden; */
-  /* display: flex; */
+  overflow: hidden;
+  display: flex;
   /* flex-direction: column; */
 }
 
@@ -12,7 +12,6 @@
 .entriesTable {
   height: 30%;
   width: 90%;
-  overflow-y: auto;
   /* margin-bottom: 20px; */
 }
 
@@ -20,7 +19,6 @@
 .editorContainer {
   display: block;
   flex-grow: 1;
-  overflow-y: auto;
   /* border: 1px solid black; */
   /* padding: 10px; */
   height: 50%;
