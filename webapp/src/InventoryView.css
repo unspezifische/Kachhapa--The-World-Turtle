@@ -1,5 +1,6 @@
 .sticky-section-container {
   height: calc(100vh - 55px);
+  overflow: hidden;
 }
 
 .sticky-header {
@@ -14,7 +15,8 @@
 .sticky-table-header {
   position: -webkit-sticky; /* For Safari */
   position: sticky;
-  top: 60px; /* Adjust this value based on the height of the sticky header */
+  top: 0; /* Adjust this value based on the height of the sticky header */
   background-color: white; /* Ensure the background color matches your design */
   z-index: 999; /* Ensure it stays above other content */
+  overflow: auto;
 }

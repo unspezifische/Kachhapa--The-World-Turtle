@@ -721,7 +721,7 @@ def get_profile():
     try:
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
-        campaignID = request.headers.get('Campaign-ID')
+        campaignID = request.headers.get('CampaignID')
         if campaignID:
             character = Character.query.filter_by(userID=user.id, campaignID=campaignID).first()
             if character:
@@ -797,7 +797,7 @@ def get_user_characters():
 @app.route('/api/characterSheet')
 def get_characterSheet():
     # Determine the System in use
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
 
@@ -809,7 +809,7 @@ def get_characterSheet():
 @app.route('/api/classes')
 def get_class_listing():
     # Determine the System in use
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
 
@@ -820,7 +820,7 @@ def get_class_listing():
 @app.route('/api/classes/<class_name>')
 def get_class_info(class_name):
     # Determine the System in use
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
 
@@ -833,7 +833,7 @@ def get_class_info(class_name):
 @app.route('/api/races', methods=['GET'])
 def get_race_listing():
     # Determine the System in use
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
     
@@ -844,7 +844,7 @@ def get_race_listing():
 @app.route('/api/races/<race_name>', methods=['GET'])
 def get_race_info(race_name):
     # Determine the System in use
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
     
@@ -857,7 +857,7 @@ def get_race_info(race_name):
 @app.route('/api/backgrounds', methods=['GET'])
 def get_background_listing():
     # Determine the System in use
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
     
@@ -867,7 +867,7 @@ def get_background_listing():
 @app.route('/api/backgrounds/<background_name>', methods=['GET'])
 def get_background_info(background_name):
     # Determine the System in use
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     campaign = Campaign.query.filter_by(id=campaignID).first()
     system = campaign.system if campaign else 'D&D 5e'
     
@@ -886,7 +886,7 @@ def get_character():
     try:
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
-        campaignID = request.headers.get('Campaign-ID')
+        campaignID = request.headers.get('CampaignID')
 
         stmt = select(campaign_members.c.characterID).where(
             campaign_members.c.campaignID == campaignID, 
@@ -913,7 +913,7 @@ def update_character():
     print("Saving Character Profile:", request.headers)
     app.logger.info("Saving Character Profile: %s", request.headers)
     try:
-        campaignID = request.headers.get('Campaign-ID')
+        campaignID = request.headers.get('CampaignID')
         userID = request.headers.get('userID')
         character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
         if character is None:
@@ -970,7 +970,7 @@ def update_character():
 @app.route('/api/users', methods=['GET'])
 @jwt_required()
 def get_users():
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     users = User.query.join(campaign_members, User.id == campaign_members.userID).filter(campaign_members.campaignID == campaignID).all()
     return jsonify({'users': [user.character_name for user in users]})
 
@@ -983,7 +983,7 @@ def get_players():
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
 
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
@@ -1353,7 +1353,7 @@ def inventory():
             
             app.logger.info("GET INVENTORY- user from JWT: %s", user.to_dict())
 
-            campaignID = request.headers.get('Campaign-ID')
+            campaignID = request.headers.get('CampaignID')
 
             if campaignID is None:
                 return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
@@ -1476,7 +1476,7 @@ def update_inventoryItem(itemID):
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
 
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
@@ -1513,7 +1513,7 @@ def update_inventoryItem(itemID):
 @app.route('/api/inventory/<int:itemID>', methods=['DELETE'])
 @jwt_required()
 def drop_item(itemID):
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     
     # Query the campaign_members table and join with the Character table
@@ -1545,7 +1545,7 @@ def get_equipment():
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
 
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
 
     print('Equipment: campaignID:', campaignID)
     print("Equipment: userID:", user.id)
@@ -1580,7 +1580,7 @@ def create_journal_entry():
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
 
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
@@ -1618,7 +1618,7 @@ def get_journal_entries():
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
 
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
@@ -1654,7 +1654,7 @@ def update_journal_entry(entry_id):
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
 
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
@@ -1693,7 +1693,7 @@ def delete_journal_entry(entry_id):
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
 
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
@@ -1774,7 +1774,8 @@ def get_file(filename):
 def get_chat_history():
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
-    campaignID = request.headers.get('Campaign-ID')
+    app.logger.debug("GET CHAT HISTORY- headers: %s", request.headers)
+    campaignID = request.headers.get('CampaignID')
 
     stmt = select(campaign_members.c.characterID).where(
         campaign_members.c.campaignID == campaignID, 
@@ -1915,7 +1916,7 @@ def get_loot_box(box_id):
 @jwt_required()
 def issue_loot_box(box_id):
     player_username = request.json.get('player')
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     # recipient_user = User.query.filter_by(username=player_username).first()
     recipient_user = User.query.join(campaign_members, User.id == campaign_members.userID).filter(campaign_members.campaignID == campaignID).first()
     if recipient_user is None:
@@ -1964,7 +1965,7 @@ def issue_loot_box(box_id):
 @jwt_required()
 def get_spellbook():
     ## Get a player's spellbook
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
@@ -1978,7 +1979,7 @@ def get_spellbook():
 @jwt_required()
 def get_all_spells():
     ## Get all the defined spells for the DM
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
@@ -1992,7 +1993,7 @@ def get_all_spells():
 @jwt_required()
 def get_prepared_spells():
     try:
-        campaignID = request.headers.get('Campaign-ID')
+        campaignID = request.headers.get('CampaignID')
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
 
@@ -2024,7 +2025,7 @@ def get_prepared_spells():
 @jwt_required()
 def create_spell():
     # Create a new spell
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
@@ -2068,7 +2069,7 @@ def create_spell():
 @jwt_required()
 def save_spells_to_spellbook():
     # Saves to Spellbook
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
@@ -2087,7 +2088,7 @@ def save_spells_to_spellbook():
 @app.route('/api/spellbook/<int:spellID>', methods=['DELETE'])
 @jwt_required()
 def drop_spell_from_spellbook(spellID):
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
@@ -2110,7 +2111,7 @@ def drop_spell_from_spellbook(spellID):
 @app.route('/api/spells/<int:spellID>', methods=['DELETE'])
 @jwt_required()
 def delete_spell(spellID):
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
@@ -2128,7 +2129,7 @@ def delete_spell(spellID):
 @jwt_required()
 def update_spell(spellID):
     ## Used for the DM to update a spell's details
-    campaignID = request.headers.get('Campaign-ID')
+    campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
     character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
 
@@ -2409,7 +2410,7 @@ def handle_send_message(messageObj):
     message = messageObj['text']
     sender = messageObj['sender']
     recipients = messageObj['recipients']
-    campaignID = messageObj['campaignID']
+    campaignID = request.headers.get('campaignID')
     app.logger.info("MESSAGE- sender: %s", sender)
     app.logger.info("MESSAGE- recipients: %s", recipients)
 

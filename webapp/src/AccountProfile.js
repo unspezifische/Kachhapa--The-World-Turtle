@@ -5,7 +5,6 @@ import { Card, Button, Modal, Navbar, Container, Row, Col, Form, Carousel, Accor
 import campaignIcon from './campaign.webp';
 
 import CreateCharacterModal from './CreateCharacterModal';
-import { set } from 'jodit/esm/core/helpers';
 
 const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType, setCharacterID }) => {
   const navigate = useNavigate();
@@ -53,6 +52,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
     axios.get('/api/characters', { headers })
       .then(response => {
         setCharacters(response.data)
+        console.log("AccountProfile- api/characters:", response.data);
       })
       .catch(error => {
         console.error('Error fetching characters:', error)
@@ -232,14 +232,15 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
       });
   };
 
+  // For the Carousel: className='d-flex flex-column align-items-center'
   return (
     <>
-      <Container>
+      <Container fluid>
         <Row>
           <h1>Account Profile</h1>
         </Row>
         {/* Carousel */}
-        <Row className='d-flex flex-column align-items-center'>
+        <Row >
           <Carousel>
             {campaigns.map((campaign, index) => (
               <Carousel.Item key={campaign.id}>
@@ -273,6 +274,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
           </Carousel>
         </Row>
 
+        {/* Campaigns, Characters, and Wikis */}
         <Row>
           <Accordion defaultActiveKey="0">
             {/* Campaigns */}
@@ -322,7 +324,6 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
               </Accordion.Header>
               <Accordion.Body>
                 {characters.map((character) => (
-                  console.log("AccountProfile: characters-", character),
                   <Col sm={4} key={character.id}>
                     <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}>
                       <Row>

@@ -38,18 +38,6 @@ function App() {
   const [characterID, setCharacterID] = useState(null);
   const [accountType, setAccountType] = useState('');
 
-  const headers = useMemo(() => ({
-    Authorization: `Bearer ${token}`,
-    'userID': userID,
-    'username': username,
-    'characterID': characterID,
-    // 'characterName': characterName,  // Not sure this is ever used by Flask
-  }), [token, userID, username]);
-
-  useEffect(() => {
-    console.log('headers:', headers);
-  }, [headers]);
-
   useEffect(() => {
     console.log('characterName:', characterName);
   }, [characterName]);
@@ -59,7 +47,18 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
 
-  
+  const headers = useMemo(() => ({
+    Authorization: `Bearer ${token}`,
+    'userID': userID,
+    'username': username,
+    'characterID': characterID,
+    'campaignID': selectedCampaign.id,
+    // 'characterName': characterName,  // Not sure this is ever used by Flask
+  }), [token, userID, username, selectedCampaign.id, characterID]);
+
+  useEffect(() => {
+    console.log('headers:', headers);
+  }, [headers]);
 
   // Socket Stuff
   // const [socket, setSocket] = useState(null);
@@ -251,7 +250,7 @@ function App() {
               </Col>
               <Col md={3} className="chat-column">
                 {inCombat && accountType !== 'DM' && turnInfo.current.character.characterName && turnInfo.next.character.characterName && (
-                  <div style={{ position: 'fixed', top: 0, right: 0, zIndex: 1000, width: '300px' }}>
+                  // <div style={{ position: 'fixed', top: 0, right: 0, zIndex: 1000, width: '300px' }}>
                     <Table striped bordered>
                       <thead>
                         <tr>
@@ -275,9 +274,13 @@ function App() {
                         </tr>
                       </tbody>
                     </Table>
-                  </div>
+                  // </div>
                 )}
-                  {!socketLoading && <Chat headers={headers} socket={socketRef.current} characterName={characterName} username={username} />}
+                  {!socketLoading && <Chat
+                    headers={headers}
+                    socket={socketRef.current}
+                    characterName={characterName}
+                    username={username} />}
               </Col>
             </Row>
           </Container>
