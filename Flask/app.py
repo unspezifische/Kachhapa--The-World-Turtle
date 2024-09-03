@@ -700,8 +700,8 @@ def login():
 def register():
     ## app.logger.debug("/api/register: %s", request.json)
     data = request.get_json()
-    if 'username' not in data or 'password' not in data or 'character_name' not in data or 'account_type' not in data:
-        return jsonify({'message': 'Username, password, character name, and account type are required!'}), 400
+    if 'username' not in data or 'password' not in data:
+        return jsonify({'message': 'Username and password are required!'}), 400
 
     # Check if a user with the given username already exists
     existing_user = User.query.filter_by(username=data['username'].lower()).first()
@@ -709,11 +709,10 @@ def register():
         return jsonify({'message': 'A user with this username already exists.'}), 400
 
     hashed_password = generate_password_hash(data['password'], method='sha256')
-    new_user = User(username=data['username'].lower(), password=hashed_password, account_type=data['account_type'])
-    new_user.is_online = True
+    new_user = User(username=data['username'].lower(), password=hashed_password)
+    # new_user.is_online = True ## Only set the user online once they select a campaign
     db.session.add(new_user)
     db.session.commit()
-    # emit_active_users()()
     ## app.logger.debug(new_user.is_online)
     access_token = create_access_token(identity=new_user.username)
     return jsonify({
