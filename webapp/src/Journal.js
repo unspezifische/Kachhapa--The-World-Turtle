@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import EasyMDE from 'easymde';
-import { Container, Button, ButtonGroup, Row, Form, Table } from 'react-bootstrap';
+import { Stack, Container, Button, ButtonGroup, Row, Form, Table } from 'react-bootstrap';
 import axios from 'axios';
 import DeleteIcon from '@mui/icons-material/Delete';
 
@@ -257,71 +257,66 @@ function Journal({ headers, characterName }) {
 
   // className="container"
   return (
-    <Container>
+    <Stack>
       <h1>{characterName}'s Journal</h1>
-      <Row>
-        <Form.Group>
+      <Form.Group>
+        <Form.Control
+          type="text"
+          placeholder="Entry Title"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+        />
+        <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
           <Form.Control
-            type="text"
-            placeholder="Entry Title"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-          />
-          <Form.Control
+            id="editor"
             as="textarea"
             rows={10}
             value={selectedEntry ? selectedEntry.content : ''}
-            onChange={e => editorRef.current.value(e.target.value)}
-            />
-        </Form.Group>
-      </Row>
-      {/* <div className="editorContainer">
-        <Row>
-          <textarea id="editor"></ textarea>
-        </Row>
-      </div> */}
-      <Row>
+            onChange={e => editorRef.current.value(e.target.value)}>
+          </Form.Control>
+        </div>
+      </Form.Group>
+      
+      <Stack direction="horizontal" gap={3}>
         <Button onClick={saveEntry}>Save Entry</Button>
         <Button variant="danger" onClick={clearEntry}>Clear Entry</Button>
-      </Row>
-      <div className="entriesTable">
-        <Row>
-          <Table striped bordered hover>
-            <colgroup>
-              <col style={{ width: '40%' }}/>
-              <col style={{ width: '25%' }}/>
-              <col style={{ width: '25%' }}/>
-              <col style={{ width: '10%' }}/>
-            </colgroup>
-            <thead>
+      </Stack>
+      <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
+        <Table striped bordered hover>
+          <colgroup>
+            <col style={{ width: '40%' }}/>
+            <col style={{ width: '25%' }}/>
+            <col style={{ width: '25%' }}/>
+            <col style={{ width: '10%' }}/>
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Date Created</th>
+              <th>Date Modified</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 ? (
               <tr>
-                <th>Title</th>
-                <th>Date Created</th>
-                <th>Date Modified</th>
+                <td colSpan="3">You haven't created any journal entries yet!</ td>
               </tr>
-            </thead>
-            <tbody>
-              {entries.length === 0 ? (
-                <tr>
-                  <td colSpan="3">You haven't created any journal entries yet!</ td>
+            ) : (
+              entries.map((entry, index) => (
+                <tr key={index} onClick={() => handleEntrySelection(entry)}>
+                  <td>{entry.title}</td>
+                  <td>{new Date(entry.date_created).toLocaleDateString()}</td>
+                  <td>{new Date(entry.date_modified).toLocaleDateString()}</td>
+                  <td><Button variant="danger" onClick={(event) => deleteEntry(event, entry.id)}>
+                    <DeleteIcon />
+                  </Button></td>
                 </tr>
-              ) : (
-               entries.map((entry, index) => (
-                  <tr key={index} onClick={() => handleEntrySelection(entry)}>
-                    <td>{entry.title}</td>
-                    <td>{new Date(entry.date_created).toLocaleDateString()}</td>
-                    <td>{new Date(entry.date_modified).toLocaleDateString()}</td>
-                    <td><Button variant="danger" onClick={(event) => deleteEntry(event, entry.id)}>
-                      <DeleteIcon />
-                    </Button></td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </Table>
-        </Row>
+              ))
+            )}
+          </tbody>
+        </Table>
       </div>
-    </Container>
+    </Stack>
   );
 }
 

@@ -38,6 +38,8 @@ from urllib.parse import unquote
 
 
 app = Flask(__name__)
+dashboard.bind(app)
+
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
 app.config['MAP_FOLDER'] = '/home/ijohnson/Downloads/Maps'
 app.config['BATTLE_MAP_FOLDER'] = '/home/ijohnson/Downloads/battleMaps'
@@ -56,20 +58,27 @@ app.config['PROPAGATE_EXCEPTIONS'] = True
 db = SQLAlchemy()
 
 ## Admin Console
-admin = Admin(app, name='Kachhapa Admin', template_mode='bootstrap3')
+admin = Admin(app, name='Kachhapa Admin')
 
 
 # CORS(app, resources={r"/*": {"origins": "*"}})  # This header is added by Nginx
 
-# For INFO level
-app.logger.setLevel(logging.INFO)  # set the desired logging level
+# # For INFO level
+# app.logger.setLevel(logging.INFO)  # set the desired logging level
+# handler = logging.StreamHandler()
+# handler.setLevel(logging.INFO)  # set the desired logging level
+# app.logger.addHandler(handler)
+# app.debug = True
+
+# For DEBUG level
+app.logger.setLevel(logging.DEBUG)  # set the desired logging level to DEBUG
 handler = logging.StreamHandler()
-handler.setLevel(logging.INFO)  # set the desired logging level
+handler.setLevel(logging.DEBUG)  # set the desired logging level to DEBUG
 app.logger.addHandler(handler)
-# app.debug = False  # optional, it sets the level to WARNING
+app.debug = True
 
+app.logger.debug("Debugging set to True")
 
-print("Debugging set to True")
 socketio = SocketIO(
     app,
     message_queue='amqp://guest:guest@localhost:5672//',
@@ -100,8 +109,8 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True)
     password = db.Column(db.String(100))
-    is_online = db.Column(db.Boolean, default=False) ## Tracks if a user is signed in currently or not
-    sid = db.Column(db.String(100), nullable=True)  ## Stores the web socket a user is connected from
+    is_online = db.Column(db.Boolean, default=False) ## Tracks if a user is currently signed in or not
+    sid = db.Column(db.String(100), nullable=True)  ## Stores the web socket ID a user is connected from
     campaigns = db.relationship('Campaign', secondary=campaign_members, backref=db.backref('members', lazy='dynamic'))
 
     def to_dict(self):
@@ -118,6 +127,7 @@ class Character(db.Model):
     icon = db.Column(db.String(120))  # icon filepath or name
     system = db.Column(db.String(50))  # e.g., 'D&D 5e', 'pathfinder'
     userID = db.Column(db.Integer, db.ForeignKey('user.id'))  # link to the User table
+    user = db.relationship('User', backref='characters')  # relationship to the User model
     campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'))  # link to the Campaign table
     campaign = db.relationship('Campaign', backref='party_members')  # relationship to the Campaign model
     character_name = db.Column(db.String(50), nullable=True) # character's name
@@ -639,17 +649,16 @@ def refresh_expiring_jwts(response):
 ## Verify a user's JWT token
 @app.route('/api/verify', methods=['POST'])
 def verify_token():
-    app.logger.info("/api/verify: %s", request.json)  # ## app.logger.info the incoming request
+    app.logger.debug("/api/verify: %s", request.json)
     data = request.get_json()
     origin = request.headers.get('Origin')
     token = data.get('token')
-    # print("Token:", token)
-    app.logger.info("Token: %s", token)
-    app.logger.info("Origin: %s", origin)
+    app.logger.debug("Token: %s", token)
+    app.logger.debug("Origin: %s", origin)
     try:
         decoded_token = decode_token(token)
-        # print("Decoded Token:", decoded_token)
-        app.logger.info("Decoded Token:", decoded_token)
+        app.logger.debug("Decoded Token:", decoded_token)
+
         user = User.query.filter_by(username=decoded_token['sub']).first()
         if user is None:
             print("Invalid user")
@@ -689,8 +698,7 @@ def login():
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    ## app.logger.info("/api/register: %s", request.json)  # ## app.logger.info the incoming request
-    print("/api/register:", request.json)
+    ## app.logger.debug("/api/register: %s", request.json)
     data = request.get_json()
     if 'username' not in data or 'password' not in data or 'character_name' not in data or 'account_type' not in data:
         return jsonify({'message': 'Username, password, character name, and account type are required!'}), 400
@@ -706,7 +714,7 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     # emit_active_users()()
-    ## app.logger.info(new_user.is_online)   ## For test purposes
+    ## app.logger.debug(new_user.is_online)
     access_token = create_access_token(identity=new_user.username)
     return jsonify({
         'message': 'Login successful!', 
@@ -741,25 +749,23 @@ def campaigns():
     if request.method == 'GET':
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
-        # print("CAMPAIGNS- user:", user.to_dict())
         campaigns = user.campaigns
         campaign_list = [campaign.to_dict() for campaign in campaigns]
-        print("CAMPAIGNS- campaigns:", campaign_list)
-        app.logger.info("CAMPAIGNS- campaigns: %s", campaign_list)
+        app.logger.debug("CAMPAIGNS- campaigns: %s", campaign_list)
         return jsonify(campaign_list)
     
     elif request.method == 'POST':
         data = request.get_json()
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
-        print("CAMPAIGN- username:", username)
-        app.logger.info("CAMPAIGN- username: %s", username)
-        print("CAMPAIGN- user:", user.to_dict())
-        app.logger.info("CAMPAIGN- user: %s", user.to_dict())
+        # print("CAMPAIGN- username:", username)
+        app.logger.debug("CAMPAIGN- username: %s", username)
+        # print("CAMPAIGN- user:", user.to_dict())
+        app.logger.debug("CAMPAIGN- user: %s", user.to_dict())
         campaign = Campaign(name=data['name'], system=data['system'], owner_id=user.id, dm_id=user.id)
         db.session.add(campaign)
-        print("CAMPAIGN- campaign:", campaign.to_dict())
-        app.logger.info("CAMPAIGN- campaign: %s", campaign.to_dict())
+        # print("CAMPAIGN- campaign:", campaign.to_dict())
+        app.logger.debug("CAMPAIGN- campaign: %s", campaign.to_dict())
 
         # Check if the user wants to use a module
         if 'module' in data and data['module']:
@@ -778,8 +784,8 @@ def campaigns():
             db.session.execute(campaign_members.insert().values(userID=other_user.id, campaignID=campaign.id))
 
         db.session.commit()
-        print("CAMPAIGN- campaign:", campaign.to_dict())
-        app.logger.info("CAMPAIGN- campaign: %s", campaign.to_dict())
+        # print("CAMPAIGN- campaign:", campaign.to_dict())
+        app.logger.debug("CAMPAIGN- campaign: %s", campaign.to_dict())
         return jsonify(campaign.to_dict()), 201
 
 @app.route('/api/characters', methods=['GET'])
@@ -802,8 +808,8 @@ def get_characterSheet():
     system = campaign.system if campaign else 'D&D 5e'
 
     characterSheet = GameElement.query.filter_by(element_type='character_sheet', system=system).first()
-    print("CharacterSheet-", [c.data for c in characterSheet])
-    app.logger.info("CharacterSheet- %s", [c.data for c in characterSheet])
+    # print("CharacterSheet-", [c.data for c in characterSheet])
+    app.logger.debug("CharacterSheet- %s", [c.data for c in characterSheet])
     return jsonify([c.data for c in characterSheet])
 
 @app.route('/api/classes')
@@ -910,21 +916,30 @@ def get_character():
 @app.route('/api/character', methods=['PUT'])
 @jwt_required()
 def update_character():
-    print("Saving Character Profile:", request.headers)
-    app.logger.info("Saving Character Profile: %s", request.headers)
     try:
-        campaignID = request.headers.get('CampaignID')
         userID = request.headers.get('userID')
-        character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
-        if character is None:
-            print("Making a new Character entry")
-            # app.logger.info("Making a new Character entry")
-            # Create a new character if it doesn't exist
-            character = Character(userID=userID)
-            db.session.add(character)
+        campaignID = request.headers.get('CampaignID')
+
+        app.logger.debug("UPDATE CHARACTER- userID: %s", userID)
+        app.logger.debug("UPDATE CHARACTER- campaignID: %s", campaignID)
+
+        stmt = select(campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID, 
+            campaign_members.c.userID == userID
+        )
+
+        result = db.session.execute(stmt).first()
+
+        characterID = result.characterID if result else None
+
+        character = Character.query.filter_by(id=characterID).first()
+
+        # app.logger.debug("Character from database- %s", character.to_dict())
+
         data = request.json
-        print("Character- data:", data)
-        # app.logger.info("Character- data: %s", data)
+        # app.logger.debug("Character JSON for Updating:")
+        # for key, value in data.items():
+        #     app.logger.debug("%s: %s", key, value)
 
         # Hardcode the mapping
         character.system = data.get('system')
@@ -957,8 +972,7 @@ def update_character():
         character.Feats = json.dumps(data.get('Feats', []))
 
         db.session.commit()
-        # print("Updated character:", character.to_dict())
-        app.logger.info("Updated character: %s", character.to_dict())
+        # app.logger.debug("Updated character: %s", character.to_dict())
         return jsonify(character.to_dict()), 200
 
     except InvalidTokenError:
@@ -997,16 +1011,16 @@ def get_players():
     # Separate the character IDs and user IDs into two lists
     characterIDs, userIDs = zip(*result)
 
-    # app.logger.info("Character IDs: %s", characterIDs)
-    # app.logger.info("User IDs: %s", userIDs)
+    # app.logger.debug("Character IDs: %s", characterIDs)
+    # app.logger.debug("User IDs: %s", userIDs)
 
     # Get the DM's user ID
     dm_id = Campaign.query.filter_by(id=campaignID).first().dm_id
-    # app.logger.info("DM is %s", dm_id)
+    # app.logger.debug("DM is %s", dm_id)
 
     # Filter out invalid character IDs
     valid_characterIDs = [characterID for characterID in characterIDs if characterID != user.id and characterID != dm_id and characterID is not None]
-    # app.logger.info("valid character IDs: %s", valid_characterIDs)
+    # app.logger.debug("valid character IDs: %s", valid_characterIDs)
 
     # Get the players for the valid character IDs
     players = [User.query.get(userID) for userID in userIDs]
@@ -1016,8 +1030,8 @@ def get_players():
     for i, characterID in enumerate(characterIDs):
         player = players[i]
         if player is not None:
-            # app.logger.info("player: %s", player.to_dict())
-            character = Character.query.get(characterID)
+            # app.logger.debug("player: %s", player.to_dict())
+            character = Character.query.filter_by(id=characterID).first()
             character_name = character.character_name if character else "DM"
             players_info.append({'username': player.username, 'character_name': character_name, 'id': characterID})
     
@@ -1433,8 +1447,7 @@ def inventory():
     elif request.method == 'POST':
         print("**** Giving Item to Player ****")
         data = request.get_json()
-        print("POST INVENTORY- data:", data)
-        app.logger.info("POST INVENTORY- data: %s", data)
+        app.logger.debug("POST INVENTORY- data: %s", data)
 
         current_user = User.query.filter_by(username=get_jwt_identity()).first()
 
@@ -1442,8 +1455,8 @@ def inventory():
             return jsonify({'message': 'Only DMs can issue items to other players!'}), 403
         characterID = data['characterID']
 
-        character = Character.query.get(characterID)
-        print("FLASK- character:", character.character_name)
+        character = Character.query.filter_by(id=characterID).first()
+        app.logger.debug("POST ITEM to Player- character:", character.character_name)
         if character is None:
             return jsonify({'message': 'Character not found'}), 404
 
@@ -1515,12 +1528,15 @@ def update_inventoryItem(itemID):
 def drop_item(itemID):
     campaignID = request.headers.get('CampaignID')
     userID = request.headers.get('userID')
+    characterID = request.headers.get('CharacterID')
     
     # Query the campaign_members table and join with the Character table
-    character = db.session.query(Character).join(campaign_members, campaign_members.c.characterID == Character.id).filter(
-        campaign_members.c.campaignID == campaignID,
-        campaign_members.c.userID == userID
-    ).first()
+    # character = db.session.query(Character).join(campaign_members, campaign_members.c.characterID == Character.id).filter(
+    #     campaign_members.c.campaignID == campaignID,
+    #     campaign_members.c.userID == userID
+    # ).first()
+
+    character = Character.query.filter_by(id=characterID).first()
     
     if not character:
         return jsonify({'message': 'Character not found!'}), 404
@@ -1539,6 +1555,7 @@ def drop_item(itemID):
     
     db.session.commit()
     return jsonify({'message': 'Item dropped!'})
+
 @app.route('/api/equipment', methods=['GET'])
 @jwt_required()
 def get_equipment():
@@ -1748,11 +1765,11 @@ def library():
 def get_file(filename):
     try:
         # Log the request for the file
-        app.logger.info('Getting %s from %s', filename, app.config['UPLOAD_FOLDER'])
+        app.logger.debug('Getting %s from %s', filename, app.config['UPLOAD_FOLDER'])
 
         # Construct the full file path
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        app.logger.info('Constructed file path: %s', file_path)
+        app.logger.debug('Constructed file path: %s', file_path)
 
         # Check if the file exists
         if not os.path.exists(file_path):
@@ -1774,7 +1791,7 @@ def get_file(filename):
 def get_chat_history():
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
-    app.logger.debug("GET CHAT HISTORY- headers: %s", request.headers)
+    # app.logger.debug("GET CHAT HISTORY- headers: %s", request.headers)
     campaignID = request.headers.get('CampaignID')
 
     stmt = select(campaign_members.c.characterID).where(
@@ -2181,17 +2198,17 @@ def update_spellbook_item(spellID):
 
 @app.route('/<campaign_name>/search', methods=['GET'])
 def search(campaign_name):
-    app.logger.info("campaign_name: %s", campaign_name)
-    app.logger.info("request: %r", request)
+    app.logger.debug("campaign_name: %s", campaign_name)
+    app.logger.debug("request: %r", request)
     query = request.args.get('q')
-    app.logger.info("search query: %s", query)
+    app.logger.debug("search query: %s", query)
     if not query:
-        app.logger.info("No query provided")
+        app.logger.warning("No query provided")
         return jsonify([])
 
     search_query = db.session.query(Page).filter(Page.tsv.match(query)).all()
     results = [{'id': page.id, 'title': page.title} for page in search_query]
-    app.logger.info("search results: %s", results)
+    app.logger.debug("search results: %s", results)
 
     return jsonify(results)   
 
@@ -2223,12 +2240,12 @@ def preprocess_content(content):
 
 @app.route('/<campaign_name>/<page_title>', methods=['GET'])
 def wiki_page(campaign_name, page_title):
-    app.logger.info("campaign_name: %s", campaign_name)
-    app.logger.info("page_title: %s", page_title)
+    app.logger.debug("campaign_name: %s", campaign_name)
+    app.logger.debug("page_title: %s", page_title)
 
     # Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
-    app.logger.info("campaign ID: %s", campaign)
+    app.logger.debug("campaign ID: %s", campaign)
 
     # Get the page using the Campaign ID and the page title
     page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title == page_title, Campaign.name == campaign_name).first()
@@ -2329,7 +2346,6 @@ def edit_page(campaign_name, page_title):
 
 @socketio.on("request_active_users")
 def emit_active_users():
-    # print("FLASK- Emitting Active Users")
     app.logger.debug("FLASK- Emitting Active Users")
     active_users = db.session.query(User, Character).join(Character, User.id == Character.userID).filter(User.is_online == True).all()
     active_user_info = [{'username': user.username, 'character_name': character.character_name} for user, character in active_users]
@@ -2406,13 +2422,15 @@ def handle_user_connected(data):
 
 @socketio.on('sendMessage')
 def handle_send_message(messageObj):
-    app.logger.info("MESSAGE- messageObj: %s", messageObj)
+    app.logger.debug("MESSAGE- messageObj: %s", messageObj)
     message = messageObj['text']
     sender = messageObj['sender']
     recipients = messageObj['recipients']
-    campaignID = request.headers.get('campaignID')
-    app.logger.info("MESSAGE- sender: %s", sender)
-    app.logger.info("MESSAGE- recipients: %s", recipients)
+    campaignID = messageObj['campaignID']
+    # app.logger.debug("request.header- %s", request.headers)
+    # campaignID = request.headers.get('campaignID')
+    app.logger.debug("MESSAGE- recipients: %s", recipients)
+    app.logger.debug("MESSAGE- campaignID: %s", campaignID)
 
     recipient_characters = []
 
@@ -2422,19 +2440,55 @@ def handle_send_message(messageObj):
 
     for recipient in recipients:
         try:
-            app.logger.info("MESSAGE- Trying: %s", recipient["username"])
+            app.logger.debug("MESSAGE- Trying: %s", recipient["username"])
             recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.username == recipient["username"], campaign_members.c.campaignID == campaignID).first()
         except:
-            app.logger.info("MESSAGE- Using: %s", recipient)
+            app.logger.debug("MESSAGE- Using: %s", recipient)
             recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.username == recipient, campaign_members.c.campaignID == campaignID).first()
         if recipient_character:
             recipient_characters.append(recipient_character)
     
-    app.logger.info("MESSAGE- sender: %s", sender)
-    sender_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.username == sender.lower(), campaign_members.c.campaignID == campaignID).first()
-    app.logger.info("MESSAGE- sender_character: %s", sender_character.to_dict())
+    app.logger.debug("MESSAGE- sender: %s", sender)
+    
+    # Step 1: Get the userID from the User table using the sender's username
+    user = User.query.filter_by(username=sender.lower()).first()
+    if not user:
+        app.logger.error("MESSAGE- sender user not found")
+        return jsonify({'message': 'Sender user not found'}), 404
+    
+    app.logger.debug("MESSAGE- Sending user found in database: %s", user.to_dict())
+    
+    # Step 2: Get the characterID from the campaign_members table using userID and campaignID
+    app.logger.debug("User ID- %s", user.id)
+    app.logger.debug("campaignID- %s", campaignID)
+    campaign_member = db.session.query(campaign_members).filter_by(userID=user.id, campaignID=campaignID).first()
+    if not campaign_member:
+        app.logger.error("MESSAGE- sender character not found in campaign")
+        return jsonify({'message': 'Sender character not found in campaign'}), 404
+    
+    # Step 3: Get the Character entry using the characterID
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
+    )
+
+    result = db.session.execute(stmt).first()
+
+    characterID = result.characterID if result else None
+
+    app.logger.debug("CharacterID- %s", characterID)
+    
+    sender_character = Character.query.filter_by(id=characterID).first()
+    if not sender_character:
+        app.logger.error("MESSAGE- sender character not found")
+        return jsonify({'message': 'Sender character not found'}), 404
+    
+    app.logger.debug("MESSAGE- sender_character: %s", sender_character.to_dict())
+    
+
     sender_user = User.query.filter_by(id=sender_character.userID).first()
-    app.logger.info("MESSAGE- sender_user: %s", sender_user.to_dict())
+    app.logger.debug("MESSAGE- sender_user: %s", sender_user.to_dict())
+
 
     # Update the messageObj with character names before emitting
     recipient_character_names = [character.character_name for character in recipient_characters]
@@ -2666,5 +2720,4 @@ def handle_disconnect():
 
 
 if __name__ == '__main__':
-    dashboard.bind(app)
     socketio.run(app, host='0.0.0.0', port=5001)

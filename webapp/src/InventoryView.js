@@ -885,13 +885,13 @@ export default function InventoryView({ username, characterName, accountType, he
             </Col>
           </Row>
           {accountType === 'DM' && (
-            <ButtonGroup>
+            <Stack direction="horizontal" gap={3}>
               <Button onClick={() => setCreatingItem(true)}>Create Item</Button>
               <Button onClick={() => setShowUploadModal(true)}>Add Items</Button>
-            </ButtonGroup>
+            </Stack>
           )}
         </Stack>
-        <div style={{ maxHeight: '700px', overflowY: 'auto' }}>
+        <div style={{ maxHeight: '700px', overflowY: 'auto', minHeight: '50vh' }}>
           <DndProvider backend={HTML5Backend}>
             <Table striped bordered hover>
               <thead className="sticky-table-header">
@@ -1399,7 +1399,11 @@ export default function InventoryView({ username, characterName, accountType, he
                 <Form.Check
                   key={'equip-checkbox'}
                   type="checkbox"
-                  label={<span style={{fontSize: '1rem'}}>Equip?</span>}
+                  label={
+                    <span style={{ fontSize: '1rem', color: selectedItem?.equipped ? 'green' : 'red' }}>
+                      {selectedItem?.equipped ? 'Equipped!' : 'Equip?'}
+                    </span>
+                  }
                   checked={selectedItem?.equipped}
                   onChange={e => setSelectedItem({ ...selectedItem, equipped: !selectedItem?.equipped })}
                 />

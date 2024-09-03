@@ -12,6 +12,7 @@
 .entriesTable {
   height: 30%;
   width: 90%;
+  overflow-y: auto;
   /* margin-bottom: 20px; */
 }
 

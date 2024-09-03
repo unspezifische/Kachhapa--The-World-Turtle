@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Responsive, WidthProvider } from 'react-grid-layout';
-import { Row, Col, Button, ButtonGroup, Modal, ModalDialog, Form, Table } from 'react-bootstrap';
-
+import { Row, Col, Button, ButtonGroup, Modal, ModalDialog, Form, Table, Placeholder } from 'react-bootstrap';
+import { Paper } from '@mui/material';
 
 import axios from 'axios';  // Makes API calls
 
@@ -34,35 +34,68 @@ const skillAbilities = {
   'Survival': 'wisdom'
 };
 
+// Default Layout for Character Sheet Tiles
+// const tiles = [
+//   { i: 'Name', x: 0, y: 0, w: 2, h: 4 },
+//   { i: 'Class', x: 2, y: 0, w: 1, h: 3 },
+//   { i: 'Race', x: 2, y: 3, w: 1, h: 3 },
+//   { i: 'Alignment', x: 3, y: 0, w: 1, h: 4 },
+//   { i: 'Ability Scores', x: 0, y: 3, w: 1, h: 20 },
+//   { i: 'Proficiency Bonus', x: 1, y: 3, w: 1, h: 3 },
+//   { i: 'Saving Throws', x: 1, y: 6, w: 1, h: 12 },
+//   { i: 'Skills', x: 3, y: 14, w: 2, h: 19 },
+//   { i: 'PersonalityTraits', x: 5, y: 30, w: 2, h: 4 },
+//   { i: 'Ideals', x: 0, y: 31, w: 2, h: 4 },
+//   { i: 'Bonds', x: 0, y: 35, w: 2, h: 4 },
+//   { i: 'Flaws', x: 3, y: 33, w: 2, h: 5 },
+//   { i: 'Feats', x: 5, y: 0, w: 2, h: 9 },
+//   { i: 'Attacks', x: 5, y: 9, w: 2, h: 7 },
+//   { i: 'Actions', x: 3, y: 28, w: 2, h: 5 },
+//   { i: 'Spells', x: 5, y: 23, w: 2, h: 7 },
+//   { i: 'Equipment', x: 5, y: 16, w: 2, h: 7 },
+//   { i: 'Proficiencies', x: 1, y: 19, w: 2, h: 12 },
+//   { i: 'Wealth', x: 2, y: 12, w: 1, h: 7 },
+//   { i: 'Initiative', x: 3, y: 6, w: 1, h: 3 },
+//   { i: 'Speed', x: 4, y: 3, w: 1, h: 3 },
+//   { i: 'Armor Class', x: 2, y: 6, w: 1, h: 3 },
+//   { i: 'Background', x: 3, y: 4, w: 1, h: 3 },
+//   { i: 'ExperiencePoints', x: 4, y: 0, w: 1, h: 4 },
+//   { i: 'PassivePerception', x: 3, y: 12, w: 2, h: 2 },
+//   { i: 'HitPointMax', x: 2, y: 9, w: 1, h: 3 },
+//   { i: 'CurrentHitPoints', x: 3, y: 9, w: 1, h: 3 },
+//   { i: 'TemporaryHitPoints', x: 4, y: 9, w: 1, h: 3 }
+// ];
+
 const tiles = [
-  { i: 'Name', x: 0, y: 0, w: 2, h: 4 },
-  { i: 'Class', x: 2, y: 0, w: 1, h: 3 },
-  { i: 'Race', x: 2, y: 3, w: 1, h: 3 },
-  { i: 'Alignment', x: 3, y: 0, w: 1, h: 4 },
-  { i: 'Ability Scores', x: 0, y: 3, w: 1, h: 20 },
-  { i: 'Proficiency Bonus', x: 1, y: 3, w: 1, h: 3 },
-  { i: 'Saving Throws', x: 1, y: 6, w: 1, h: 12 },
-  { i: 'Skills', x: 3, y: 14, w: 2, h: 19 },
-  { i: 'PersonalityTraits', x: 5, y: 30, w: 2, h: 4 },
-  { i: 'Ideals', x: 0, y: 31, w: 2, h: 4 },
-  { i: 'Bonds', x: 0, y: 35, w: 2, h: 4 },
-  { i: 'Flaws', x: 3, y: 33, w: 2, h: 5 },
-  { i: 'Feats', x: 5, y: 0, w: 2, h: 9 },
-  { i: 'Attacks', x: 5, y: 9, w: 2, h: 7 },
-  { i: 'Spells', x: 5, y: 23, w: 2, h: 7 },
-  { i: 'Equipment', x: 5, y: 16, w: 2, h: 7 },
-  { i: 'Proficiencies', x: 1, y: 19, w: 2, h: 12 },
-  { i: 'Wealth', x: 2, y: 12, w: 1, h: 7 },
-  { i: 'Initiative', x: 3, y: 6, w: 1, h: 3 },
-  { i: 'Speed', x: 4, y: 3, w: 1, h: 3 },
-  { i: 'Armor Class', x: 2, y: 6, w: 1, h: 3 },
-  { i: 'Background', x: 3, y: 4, w: 1, h: 3 },
-  { i: 'ExperiencePoints', x: 4, y: 0, w: 1, h: 4 },
-  { i: 'PassivePerception', x: 3, y: 12, w: 2, h: 2 },
-  { i: 'HitPointMax', x: 2, y: 9, w: 1, h: 3 },
-  { i: 'CurrentHitPoints', x: 3, y: 9, w: 1, h: 3 },
-  { i: 'TemporaryHitPoints', x: 4, y: 9, w: 1, h: 3 }
-];
+  { "w": 2, "h": 4, "x": 0, "y": 0, "i": "Name"},
+  { "w": 1, "h": 3, "x": 2, "y": 0, "i": "Class"},
+  { "w": 1, "h": 3, "x": 2, "y": 3, "i": "Race"},
+  { "w": 1, "h": 4, "x": 3, "y": 0, "i": "Alignment"},
+  { "w": 1, "h": 20, "x": 0, "y": 4, "i": "Ability Scores"},
+  { "w": 1, "h": 3, "x": 1, "y": 4, "i": "Proficiency Bonus"},
+  { "w": 1, "h": 12, "x": 1, "y": 7, "i": "Saving Throws"},
+  { "w": 2, "h": 19, "x": 3, "y": 15, "i": "Skills"},
+  { "w": 2, "h": 4, "x": 5, "y": 23, "i": "PersonalityTraits"},
+  { "w": 2, "h": 4, "x": 0, "y": 31, "i": "Ideals"},
+  { "w": 2, "h": 4, "x": 0, "y": 35, "i": "Bonds"},
+  { "w": 2, "h": 5, "x": 3, "y": 34, "i": "Flaws"},
+  { "w": 2, "h": 9, "x": 5, "y": 0, "i": "Feats"},
+  { "w": 1, "h": 1, "x": 0, "y": 39, "i": "Attacks"},
+  { "w": 1, "h": 1, "x": 0, "y": 40, "i": "Actions"},
+  { "w": 2, "h": 7, "x": 5, "y": 16, "i": "Spells"},
+  { "w": 2, "h": 7, "x": 5, "y": 9, "i": "Equipment"},
+  { "w": 2, "h": 12, "x": 1, "y": 19, "i": "Proficiencies"},
+  { "w": 1, "h": 7, "x": 2, "y": 12, "i": "Wealth"},
+  { "w": 1, "h": 3, "x": 3, "y": 7, "i": "Initiative"},
+  { "w": 1, "h": 3, "x": 4, "y": 4, "i": "Speed"},
+  { "w": 1, "h": 3, "x": 2, "y": 6, "i": "Armor Class"},
+  { "w": 1, "h": 3, "x": 3, "y": 4, "i": "Background"},
+  { "w": 1, "h": 4, "x": 4, "y": 0, "i": "ExperiencePoints"},
+  { "w": 2, "h": 2, "x": 3, "y": 13, "i": "PassivePerception"},
+  { "w": 1, "h": 3, "x": 2, "y": 9, "i": "HitPointMax"},
+  { "w": 1, "h": 3, "x": 3, "y": 10, "i": "CurrentHitPoints"},
+  { "w": 1, "h": 3, "x": 4, "y": 7, "i": "TemporaryHitPoints"}
+]
 
 const defaultLayout = {
   lg: tiles,
@@ -73,6 +106,7 @@ const defaultLayout = {
 };
 
 function CharacterSheet({ headers, characterName }) {
+  const [loading, setLoading] = useState(true);
   const [editingTileId, setEditingTileId] = useState(null);
   const [isModalShown, setIsModalShown] = useState(false);
   // const [layout, setLayout] = useState(null);
@@ -85,30 +119,28 @@ function CharacterSheet({ headers, characterName }) {
   const [hitPoints, setHitPoints] = useState({ base: 0, level_increment: 0 });
 
   const [selectedEquipment, setSelectedEquipment] = useState(null);
+  const [weapons, setWeapons] = useState([]);
   const [preparedSpells, setPreparedSpells] = useState([]);
 
-  // Fetch the list of player classes & races from the server when the component mounts
-  useEffect(() => {
-    console.log("CharacterSheet- characterName:", characterName);
+  const fetchPlayerClasses = () => {
     axios.get(`/api/classes`)
       .then(response => {
-        // console.log("Classes from Flask- response.data:", response.data);
         setPlayerClasses(response.data);
       })
       .catch(error => {
-        // error case
         console.error(error);
       });
+  };
+
+  const fetchPlayerRaces = () => {
     axios.get(`/api/races`)
-    .then(response => {
-      // console.log("Races from Flask- response.data:", response.data);
-      setPlayerRaces(response.data);
-    })
-    .catch(error => {
-      // error case
-      console.error(error);
-    });
-  }, [headers]);
+      .then(response => {
+        setPlayerRaces(response.data);
+      })
+      .catch(error => {
+        console.error(error);
+      });
+  };
 
   const getLayouts = () => {
     const savedLayout = localStorage.getItem('tileLayout');
@@ -132,7 +164,7 @@ function CharacterSheet({ headers, characterName }) {
   const [character, setCharacter] = useState({
     Name: characterName,
     Class: null,
-    Level: null,
+    Level: 1,
     Background: null,
     Race: null,
     Alignment: null,
@@ -175,7 +207,7 @@ function CharacterSheet({ headers, characterName }) {
       Stealth: 0,
       Survival: 0
     },          // Calculated by proficiencies & modifiers
-    PassivePerception: null, // wisdom
+    PassivePerception: 0, // wisdom modifier + proficiency bonus
     Proficiencies: [''],   // Determined by class and race
 
     ArmorClass: 10, // 10 + Dex Mod, if unarmored. Otherwise use equipment list
@@ -184,7 +216,7 @@ function CharacterSheet({ headers, characterName }) {
     HitPointMax: 0,  // Determined by Con mod & class
     CurrentHitPoints: 0,
     TemporaryHitPoints: 0,   // These deplete over time?
-    Attacks: [''],  // Determined by class? And equipement. Pre-populate with the generic actions
+    Attacks: [''],  // Pre-populate with the generic actions, then list equipped weapons and spells
     Spells: [''], // List of prepared spells. The edit modal lists all available spells?
     Wealth: {
       cp: 0,
@@ -200,14 +232,10 @@ function CharacterSheet({ headers, characterName }) {
     Bonds: '',
     Flaws: '',
     Feats: [''],  // mostly determined by class? also race?
-  });
 
-  // useEffect(() => {
-  //   setCharacter(prevCharacter => ({
-  //     ...prevCharacter,
-  //     Name: characterName
-  //   }));
-  // }, [characterName]);
+    Actions: [''], // List of actions the player can take
+    Attacks: [''], // List of attacks the player can make
+  });
 
   const [addAmount, setAddAmount] = useState(0);
   const [spendAmount, setSpendAmount] = useState(0);
@@ -227,10 +255,10 @@ function CharacterSheet({ headers, characterName }) {
     for (const currency in newWealth) {
       newWealth[currency] += (parseInt(addAmount[currency]) || 0) - (parseInt(spendAmount[currency]) || 0);
     }
-    setCharacter({
-      ...character,
+    setCharacter(prevState => ({
+      ...prevState,
       Wealth: newWealth,
-    });
+    }));
     // Clear addAmount and spendAmount
     setAddAmount(0);
     setSpendAmount(0);
@@ -238,7 +266,7 @@ function CharacterSheet({ headers, characterName }) {
     saveCharacter();  // Save character, since the user can't click the button anymore
   };
 
-  // Get Equipped item from Inventory
+  // Get Equipped items from Inventory & prepared spells from Spellbook
   useEffect(() => {
     axios.get('/api/equipment', { headers })
     .then(response => {
@@ -249,9 +277,7 @@ function CharacterSheet({ headers, characterName }) {
       }));
     })
     .catch(error => {
-      // error case
       console.error(error);
-      // setEquipment(); // use defaults
     });
 
     axios.get('/api/prepared_spells', { headers })
@@ -267,14 +293,25 @@ function CharacterSheet({ headers, characterName }) {
     });
   }, [headers, character.Name]);
 
+  // Determine Attacks based on equipped weapons
+  useEffect(() => {
+    if (character.Equipment) {
+      const weapons = character.Equipment.filter(item => item.type === 'Weapon');
+      console.log(`Weapons: ${weapons}`);
+      setCharacter(prevState => ({
+        ...prevState,
+        Attacks: weapons,
+      }));
+    }
+  }, [character.Equipment]);
+
   // Fetch the character data from the server when the component mounts
   useEffect(() => {
     console.log("character.Name:", character.Name);
     axios.get(`/api/character`, { headers: headers })
     .then(response => {
       console.log('Fetched character data:', response.data);
-      // Update the character state with the data
-      // Should this just overwrite with the updated version?
+      // Update the character state with the data from the server
       const {
         strength,
         dexterity,
@@ -289,7 +326,7 @@ function CharacterSheet({ headers, characterName }) {
         pp,
         ...rest
       } = response.data;
-
+      
       const abilityScores = {
         strength,
         dexterity,
@@ -298,7 +335,7 @@ function CharacterSheet({ headers, characterName }) {
         wisdom,
         charisma,
       };
-
+      
       const Wealth = {
         cp,
         sp,
@@ -306,24 +343,24 @@ function CharacterSheet({ headers, characterName }) {
         gp,
         pp,
       };
+      
+      setCharacter(prevState => ({
+        ...prevState,
+        ...rest,
+        abilityScores,
+        Wealth,
+      }));
 
-      setCharacter(prevState => {
-        return {
-          ...prevState,
-          ...rest,
-          abilityScores,
-          Wealth,
-        };
-      });
+      setLoading(false);
     })
     .catch(error => {
-      // error case
       console.error(error);
     });
   }, [])
 
+  // Log the character data whenever it changes
   useEffect(() => {
-    console.log("Character:", character);
+    console.log("Character Sheet:", character);
   }, [character]);
 
 
@@ -426,63 +463,63 @@ function CharacterSheet({ headers, characterName }) {
     return savingThrows;
   }
 
-  function formatFeatures(features, classData) {
-    return features.map(feature => ({
-      name: feature,
-      description: typeof classData.class_features[feature] === 'string'
-        ? classData.class_features[feature]
-        : classData.class_features[feature].description
-    }));
-  }
-
   const handleEquipmentChange = (e) => {
     const selectedIndex = e.target.selectedIndex - 1; // -1 to exclude the disabled "Select item" option
     const selectedItem = character.Equipment[selectedIndex];
     setSelectedEquipment(selectedItem);
   };
 
+  function formatFeatures(features, classData) {
+    // console.log('formatFeatures- Features:', features);
+    // console.log('formatFeatures- Class Data:', classData);
+    return features.map(feature => {
+      const trait = classData.class_features[feature];
+      return {
+        name: feature,
+        description: typeof trait === 'string'
+          ? trait
+          : trait.description
+      };
+    });
+  }
+
+  // Fetch character and race information from Flask and update character state
   useEffect(() => {
-    let tempProficiencies = [];
-
-    if (character.Class) {
-      axios.get(`/api/classes/${character.Class}`)
-        .then(response => {
-          // console.log('Class info from Flask- response.data:', response.data);
-          setHitPoints( response.data.hit_points );
-          const hpPerLevel = response.data.hit_points.level_increment + getModifier(character.abilityScores.constitution);
-          const hitPointMax = response.data.hit_points.base + (character.Level * hpPerLevel);
-          // console.log("hitPointMax:", hitPointMax);
-
+    const fetchClassData = character.Class ? axios.get(`/api/classes/${character.Class}`) : Promise.resolve(null);
+    const fetchRaceData = character.Race ? axios.get(`/api/races/${character.Race}`) : Promise.resolve(null);
+  
+    Promise.all([fetchClassData, fetchRaceData])
+      .then(([classResponse, raceResponse]) => {
+        let newCharacterState = { ...character };
+  
+        if (classResponse) {
+          const classData = classResponse.data;
+          console.log('Class info from Flask-', classData);
+  
+          newCharacterState.HitPointMax = classData.hit_points.base + (character.Level * (classData.hit_points.level_increment + getModifier(character.abilityScores.constitution)));
+  
           const features = [];
           for (let i = 0; i < character.Level; i++) {
-            features.push(...response.data.levels[i].features);
+            features.push(...classData.levels[i].features);
           }
-          const formattedFeatures = formatFeatures(features, response.data);
-
-          tempProficiencies = [...tempProficiencies, ...response.data.armor_proficiencies, ...response.data.weapon_proficiencies];
-
-          if (character.Race) {
-            axios.get(`/api/races/${character.Race}`)
-              .then(response => {
-                // console.log('Race info from Flask- response.data:', response.data);
-                tempProficiencies = [...tempProficiencies, ...Object.values(response.data.traits)];
-
-                setCharacter(prevState => ({
-                  ...prevState,
-                  Proficiencies: tempProficiencies,
-                  HitPointMax: hitPointMax,
-                  Attacks: response.data.class_features,
-                  Speed: response.data.speed,
-                  Feats: formattedFeatures
-                }));
-              });
-          }
-        })
-        .catch(error => {
-          // error case
-          console.error(error);
-        });
-    }
+          newCharacterState.Feats = formatFeatures(features, classData);
+          newCharacterState.Proficiencies = [...classData.armor_proficiencies, ...classData.weapon_proficiencies];
+        }
+  
+        if (raceResponse) {
+          const raceData = raceResponse.data;
+          console.log('Race info from Flask-', raceData);
+  
+          newCharacterState.Proficiencies = [...(newCharacterState.Proficiencies || []), ...raceData.languages];
+          newCharacterState.Speed = raceData.speed;
+          newCharacterState.Feats = [...(newCharacterState.Feats || []), ...Object.values(raceData.traits)];
+        }
+  
+        setCharacter(newCharacterState);
+      })
+      .catch(error => {
+        console.error(error);
+      });
   }, [character.Class, character.Race, character.Level]);
 
   // Calculate Skill Levels
@@ -495,10 +532,15 @@ function CharacterSheet({ headers, characterName }) {
         return [skill, skillPoints];
       })
     );
+    console.log("Skills:", Skills);
+
+    const passivePerception = 10 + Skills.Perception; // Passive score is just 10 + skill modifier
+
     setCharacter(prevState => ({
       ...prevState,
       proficiencyBonus,
       Skills,
+      PassivePerception: passivePerception
     }));
   }, [character.Level, character.abilityScores, character.Proficiencies]);
 
@@ -522,77 +564,67 @@ function CharacterSheet({ headers, characterName }) {
   }, [character.abilityScores, character.proficiencyBonus, character.Proficiencies]);
 
   // Calculate Armor Class
-  // TODO- Add logic for shields and other items that can affect AC
-  const calculateArmorClass = (equipment, dexterity) => {
-    const hasArmor = equipment.some(item => item.type === 'Armor');
-    const dexMod = getModifier(dexterity);
+  const calculateArmorClass = () => {
+    const hasArmor = character.Equipment.some(item => item.type === 'Armor');
+    const dexMod = getModifier(character.abilityScores.dexterity);
 
     if (hasArmor) {
-      const armor = equipment.find(item => item.type === 'Armor');
+      console.log('Character has armor equipped');
+      const armor = character.Equipment.find(item => item.type === 'Armor');
       let armorClass = armor.AC;
       if (armor.type === 'Light Armor') {
         armorClass += dexMod;
       } else if (armor.type === 'Medium Armor') {
         armorClass += Math.min(dexMod, 2);
       }
+
+      // Add class-specific AC bonuses
+      if (character.Class === 'Barbarian') {
+        armorClass += getModifier(character.abilityScores.constitution);
+      }
+      else if (character.Class === 'Monk') {
+        armorClass = Math.max(armorClass, 10 + dexMod + getModifier(character.abilityScores.wisdom));
+      }
+
+      // Check for shields
+      const shield = character.Equipment.find(item => item.type === 'Shield');
+      if (shield) {
+        armorClass += shield.AC;
+      }
+
+      // Check for other items that affect AC
+      // TODO- Add logic for other items that can affect AC
       return armorClass;
     }
-    return 10 + dexMod;
+    // If no armor is equipped, calculate unarmored AC
+    else {
+      console.log(`Character is unarmored, calculating AC for ${character.Class}`);
+      if (character.Class === 'Monk') {
+        return 10 + dexMod + getModifier(character.abilityScores.wisdom);
+      }
+      else if (character.Class === 'Barbarian') {
+        return 10 + dexMod + getModifier(character.abilityScores.constitution);
+      }
+      else if (character.Class === 'Wizard') {
+        return 13 + dexMod;
+      }
+      else {  // Default unarmored AC
+        return 10 + dexMod;
+      }
+    }
   }
 
-  useEffect(() => {
-    const armorClass = calculateArmorClass(character.Equipment, character.abilityScores.Dexterity);
-    setCharacter(prevState => ({
-      ...prevState,
-      ArmorClass: armorClass
-    }));
-  }, [character.Equipment, character.abilityScores.Dexterity]);
-
-
-  // Calculate Attack Options
-  const determineBonusToHit = (weapon) => {
-    let mod = 0;
-    const weaponType = weapon['type'];
-
-    if (["simple melee", "martial melee", "melee"].includes(weaponType)) {
-      mod = character.abilityScores.Strength;
-    } else if (["simple ranged", "martial ranged", "ranged"].includes(weaponType)) {
-      mod = character.abilityScores.Dexterity;
-    }
-
-    if (character.Proficiencies.includes(weaponType) ||
-        (weaponType.includes("melee") && character.Proficiencies.includes("melee")) ||
-        (weaponType.includes("ranged") && character.Proficiencies.includes("ranged"))) {
-      mod += character.proficiencyBonus;
-    }
-
-    return mod;
-  };
-
-  const determineDamage = (weapon) => {
-    const baseDamage = weapon.damage;
-    let mod = 0;
-
-    if (["simple melee", "martial melee"].includes(weapon.weapon_type)) {
-      mod = character.abilityScores.Strength;
-    } else if (["simple ranged", "martial ranged"].includes(weapon.weapon_type)) {
-      mod = character.abilityScores.Dexterity;
-    }
-
-    return `${baseDamage} + ${mod}`;
-  };
-
-  const renderAttacks = () => {
-    const attacks = [];
-
-    // Add generic moves to attacks (assuming you have them in an array or something similar)
-    // genericMoves.forEach(move => {
-    //   attacks.push(move);
-    // });
-
-    // Add equipped weapons to attacks
+    useEffect(() => {
+    // Calculate Armor Class if equipment or Dexterity changes
+    const armorClass = calculateArmorClass();
+    console.log('Armor Class:', armorClass);
+  
+    // Initialize actions array
+    const actions = [];
+  
+    // Add equipped weapons to actions
     character.Equipment.filter(item => item.type === 'Weapon' && item.equipped).forEach(weapon => {
-      attacks.push({
+      actions.push({
         name: weapon.name,
         bonusToHit: determineBonusToHit(weapon),
         damage: determineDamage(weapon),
@@ -600,170 +632,398 @@ function CharacterSheet({ headers, characterName }) {
         range: weapon.weapon_range
       });
     });
-
-    return attacks;
+  
+    // Add default unarmed strike
+    actions.push({
+      name: 'Unarmed Strike',
+      bonusToHit: determineBonusToHit({ type: 'unarmed' }),
+      damage: determineDamage({ weapon_type: 'unarmed', damage: '1' }),
+      damageType: 'bludgeoning',
+      range: 'melee'
+    });
+  
+    setCharacter(prevState => ({
+      ...prevState,
+      ArmorClass: armorClass,
+      Attacks: actions
+    }));
+  }, [character.Equipment, character.abilityScores]);
+  
+  // Calculate Attack Modifiers
+  const determineBonusToHit = (weapon) => {
+    let mod = 0;
+    const weaponType = weapon['type'];
+  
+    if (["simple melee", "martial melee", "melee", "unarmed"].includes(weaponType)) {
+      mod = getModifier(character.abilityScores.strength);
+    } else if (["simple ranged", "martial ranged", "ranged"].includes(weaponType)) {
+      mod = getModifier(character.abilityScores.dexterity);
+    }
+  
+    if (character.Proficiencies.includes(weaponType) ||
+        (weaponType.includes("melee") && character.Proficiencies.includes("melee")) ||
+        (weaponType.includes("ranged") && character.Proficiencies.includes("ranged"))) {
+      mod += character.proficiencyBonus;
+    }
+  
+    return mod;
+  };
+  
+  const determineDamage = (weapon) => {
+    const baseDamage = weapon.damage;
+    let mod = 0;
+  
+    if (["simple melee", "martial melee", "unarmed"].includes(weapon.weapon_type)) {
+      mod = getModifier(character.abilityScores.strength);
+    } else if (["simple ranged", "martial ranged"].includes(weapon.weapon_type)) {
+      mod = getModifier(character.abilityScores.dexterity);
+    }
+  
+    return `${baseDamage} + ${mod}`;
   };
 
-  // In your component's render method
-  const attacks = renderAttacks();
+  function consumeSelectedItem() {
+    // Remove the selected item from the character's equipment list
+    const newEquipment = character.Equipment.filter(item => item !== selectedEquipment);
+    setCharacter(prevState => ({
+      ...prevState,
+      Equipment: newEquipment
+    }));
+    setSelectedEquipment(null);
+    saveCharacter();
+  }
 
   function generateTileContent(tileId) {
     switch (tileId) {
       case 'Name':
-        return (<h1 className="h1">{character.Name}</h1>);
+        return character?.Name ? (
+          <h1>{character.Name}</h1>
+        ) : (
+          <Placeholder as="h1" animation="glow" />
+        );
       case 'Class':
         return (
           <>
             <div className="label">Class:</div>
-            <div>{character.Class} {character.Level}</div>
+            <h3 className="center">
+              {character?.Class && character?.Level ? (
+                `${character.Class} ${character.Level}`
+              ) : (
+                <>
+                  <Placeholder as="span" animation="glow">
+                    <Placeholder xs={6} />
+                  </Placeholder>
+                  <Placeholder as="span" animation="glow">
+                    <Placeholder xs={2} />
+                  </Placeholder>
+                </>
+              )}
+            </h3>
           </>
         );
       case 'Background':
         return (
           <>
-            <div className="label">Background</div>
-            <div>{character.Background}</div>
-        </>
-      );
+            <div className="label">Background:</div>
+            <h4 className="center">
+              {character?.Background ? (
+                character.Background
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={6} />
+                </Placeholder>
+              )}
+            </h4>
+          </>
+        );
       case 'ExperiencePoints':
         return (
           <>
-            <div className="label">XP</div>
-            <div>{character.ExperiencePoints} / {character.pointsToNextLevel}</div>
+            <h3 className="center-title">XP</h3>
+            <div className="center-title">
+              {character?.ExperiencePoints && character?.pointsToNextLevel ? (
+                `${character.ExperiencePoints} / ${character.pointsToNextLevel}`
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={6} />
+                </Placeholder>
+              )}
+            </div>
           </>
         );
       case 'Race':
         return (
           <>
             <div className="label">Race:</div>
-            <div>{character.Race}</div>
+            <h4 className="center">
+              {character?.Race ? (
+                character.Race
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={6} />
+                </Placeholder>
+              )}
+            </h4>
           </>
         );
       case 'Alignment':
         return (
           <>
             <div className="label">Alignment:</div>
-            <div>{character.Alignment}</div>
+            <h4 className="center">
+              {character?.Alignment ? (
+                character.Alignment
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={6} />
+                </Placeholder>
+              )}
+            </h4>
           </>
         );
       case 'Ability Scores':
         return (
-          <div>
-            {Object.entries(character.abilityScores).map(([score, value]) => (
-              <div key={score} className="ability-score-container">
-                <p className="label">{`${score}:`}</p>
-                <div className="ability-score-value">
-                  <h3>{`${value}`}</h3>
-                </div>
+          <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+            {character?.abilityScores ? (
+              Object.entries(character.abilityScores).map(([ability, value]) => {
+                const sentenceCaseAbility = ability.charAt(0).toUpperCase() + ability.slice(1).toLowerCase();
+                return (
+                  <div key={ability} className="ability-score-container">
+                    <p className="center-title">{`${sentenceCaseAbility}:`} </p>
+                    <h3 className="center">{`${value}`}</h3>
+                  </div>
+                );
+              })
+            ) : (
+              <div>
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={6} />
+                </Placeholder>
               </div>
-            ))}
+            )}
           </div>
         );
       case 'Proficiency Bonus':
         return (
-          <div>
-            <span className="label">Proficiency Bonus:</span>
-            <span>{character.proficiencyBonus}</span>
-          </div>
+          <>
+            <div className="label">Proficiency Bonus:</div>
+            <h4 className="center-title">
+              {character?.proficiencyBonus ? (
+                character.proficiencyBonus
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={6} />
+                </Placeholder>
+              )}
+            </h4>
+          </>
         );
       case 'Saving Throws':
         return (
           <>
-            <h3>Saving Throws:</h3>
-            {Object.entries(character.SavingThrows).map(([score, value]) => (
-              <p>
-              <span key={score} className="label">{`${score}:`}</span>
-              <span>{`${value}`}</span>
-              </p>
-            ))}
+            {character?.SavingThrows ? (
+              <>
+                <h3>Saving Throws:</h3>
+                <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+                  {Object.entries(character.SavingThrows).map(([ability, value]) => {
+                    const sentenceCaseAbility = ability.charAt(0).toUpperCase() + ability.slice(1).toLowerCase();
+                    return (
+                      <div className='skill-row' key={ability}>
+                        <span className="label">{`${sentenceCaseAbility}: `}</span>
+                        <span className="label-right">{`${value}`}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div>
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={6} />
+                </Placeholder>
+              </div>
+            )}
           </>
         );
       case 'Initiative':
         return (
-          <div>
-            <span className="label">Initiative:</span>
-            <p>{character.Initiative}</p>
-          </div>
+          <>
+            <div className="label">Initiative:</div>
+            <h2 className="center">
+              {character?.Initiative ? (
+                <>
+                  {character.Initiative}
+                </>
+              ) : (
+                <>
+                    <Placeholder as="span" animation="glow">
+                      <Placeholder xs={6} />
+                    </Placeholder>
+                </>
+              )}
+            </h2 >
+          </>
         );
       case 'Speed':
         return (
-          <div>
-            <span className="label">Speed:</span>
-            <p>{character.Speed}</p>
-          </div>
+          <>
+            <div className="label">Speed:</div>
+            <h2 className="center">
+              {character?.Speed ? (
+                character.Speed
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={4} />
+                </Placeholder>
+              )}
+            </h2>
+          </>
         );
       case 'Armor Class':
         return (
           <div>
             <span className="label">Armor Class:</span>
-            <h3>{character.ArmorClass}</h3>
+            <h3 className="center">
+              {character?.ArmorClass ? (
+                character.ArmorClass
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={4} />
+                </Placeholder>
+              )}
+            </h3>
           </div>
         );
       case 'HitPointMax':
         return (
-          <div>
-            <span className="label">Max HP</span>
-            <p>{character.HitPointMax}</p>
-          </div>
+          <>
+            <div className="label">Max HP</div>
+            <h3 className="center">
+              {character?.HitPointMax ? (
+                character.HitPointMax
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={4} />
+                </Placeholder>
+              )}
+            </h3>
+          </>
         );
       case 'CurrentHitPoints':
         return (
           <>
             <span className="label">Current HP</span>
-            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-              <h3>{character.CurrentHitPoints}</h3>
+            <div className="center">
+              <h3>
+                {character?.CurrentHitPoints ? (
+                  character.CurrentHitPoints
+                ) : (
+                  <Placeholder as="span" animation="glow">
+                    <Placeholder xs={4} />
+                  </Placeholder>
+                )}
+              </h3>
             </div>
           </>
         );
       case 'TemporaryHitPoints':
         return (
-          <div>
-            <span className="label">Temporary HP</span>
-            <span>{character.TemporaryHitPoints}</span>
-        </div>
-      );
+          <>
+            <div className="label">Temporary HP</div>
+            <h3 className="center">
+              {character?.TemporaryHitPoints ? (
+                character.TemporaryHitPoints
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={4} />
+                </Placeholder>
+              )}
+            </h3>
+          </>
+        );
       case 'Skills':
         return (
           <>
             <h3>Skills:</h3>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {Object.entries(character.Skills).map(([skill, score]) => (
-                <div className="skill-row">
-                  <span key={skill}>{skill}: {score}</span>
-                  <span className="label-right">{skillAbilities[skill]}</span>
-                </div>
-              ))}
+              {character?.Skills ? (
+                Object.entries(character.Skills).map(([skill, score]) => {
+                  const sentenceCaseSkillAbility = skillAbilities[skill].charAt(0).toUpperCase() + skillAbilities[skill].slice(1).toLowerCase();
+                  return (
+                    <div className="skill-row" key={skill}>
+                      <span>{skill}: {score}</span>
+                      <span className="label-right">({sentenceCaseSkillAbility})</span>
+                    </div>
+                  );
+                })
+              ) : (
+                <Placeholder as="div" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
             </div>
           </>
         );
       case 'Feats':
-        return(
+        return (
           <>
             <h3>Feats:</h3>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {Array.isArray(character.Feats) ? character.Feats.map((feature, index) => (
-                <div key={index}>
-                  <h4>{feature.name}</h4>
-                  <p>{feature.description}</p>
-                </div>
-              )) : <p>No Feats defined.</p>}
+              {Array.isArray(character?.Feats) && character.Feats.length > 0 ? (
+                character.Feats.map((feature, index) => (
+                  <div key={index}>
+                    <h4>{feature.name}</h4>
+                    <p>{feature.description}</p>
+                  </div>
+                ))
+              ) : (
+                <Placeholder as="p" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
             </div>
           </>
         );
       case 'Attacks':
         return (
           <>
-            <h3>Attacks:</h3>
-            <div style={{ overflow: 'auto', height: '100%' }}>
-              {Array.isArray(character.Attacks) ? character.Attacks.map((attack, index) => (
-                <div key={attack.name}>
-                  <h3>{attack.name}</h3>
-                  <p>Bonus to Hit: {attack.bonusToHit}</p>
-                  <p>Damage: {attack.damage} ({attack.damageType})</p>
-                  <p>Range: {attack.range}</p>
-                  <p>Special Properties: </p>
-                </div>
-              )) : <p>No Attacks defined.</p>}
+            <h2>Attacks:</h2>
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              {Array.isArray(character?.Attacks) && character.Attacks.length > 0 ? (
+                character.Attacks.map((attack) => (
+                  <div key={attack.name}>
+                    <h4>{attack.name}</h4>
+                    <div>Bonus to Hit: {attack.bonusToHit}</div>
+                    <div>Damage: {attack.damage} ({attack.damageType})</div>
+                    <div>Range: {attack.range}</div>
+                    {/* <div>Special Properties: </div> */}
+                    <p/>
+                  </div>
+                ))
+              ) : (
+                <Placeholder as="p" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
+            </div>
+          </>
+        );
+      case 'Actions':
+        return (
+          <>
+            <h3>Actions:</h3>
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              <p>Attack - choose a weapon to use & roll a D20</p>
+              <p>Grapple - Athletics check to restrain someone, with advantage. On the next turn, you can pin them.</p>
+              <p>Shove - Athletics check to push someone within reach back by 1 square (5 feet), or knock them prone.</p>
+              <p>Use Object - example: administering a potion to ally</p>
+              <p>Dash - Use the action on your turn to move</p>
+              <p>Disengage - run away without getting hit</p>
+              <p>Dodge - enemies have disadvantage attacking you</p>
+              <p>Help - gives an ally advantage on an ability check</p>
+              <p>Hide - make a stealth check to be hidden</p>
+              <p>Ready - wait for a specific condition, then attack</p>
+              <p>Search - Perception or Investigation check</p>
             </div>
           </>
         );
@@ -771,77 +1031,137 @@ function CharacterSheet({ headers, characterName }) {
         return (
         <div>
           <h3>Spells:</h3>
-          {character.Spells.map((spell, index) => (
-            <p key={index}>{spell}</p>
-          ))}
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              {character.Spells.map((spell, index) => (
+                <p key={index}>{spell}</p>
+              ))}
+            </div>
         </div>);
       case 'Equipment':
         return (
           <>
             <h3>Equipment:</h3>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character.Equipment.map((item, index) => (
-                <p key={index}>{item.name}</p>
-              ))}
+              {Array.isArray(character?.Equipment) && character.Equipment.length > 0 ? (
+                character.Equipment.map((item, index) => (
+                  <div key={index}>{item.name}</div>
+                ))
+              ) : (
+                <p>No items equipped. Check your inventory to equip more items!</p>
+              )}
             </div>
           </>
         );
       case 'Proficiencies':
-        return(
+        return (
           <>
             <h3>Proficiencies:</h3>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character.Proficiencies.map((proficiency, index) => (
-                <p key={index}>{proficiency}</p>
-              ))}
+              {character?.Proficiencies ? (
+                character.Proficiencies.map((proficiency, index) => (
+                  <div key={index}>{proficiency}</div>
+                ))
+              ) : (
+                <Placeholder as="div" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
             </div>
           </>
         );
       case 'PassivePerception':
         return (
           <>
-            <p className="label">Passive Perception</p>
-            <p>{character.PassivePerception}</p>
-        </>
-      );
+            <div className="label">Passive Perception</div>
+            <h3 className="center-title">
+              {character?.PassivePerception ? (
+                character.PassivePerception
+              ) : (
+                <Placeholder as="span" animation="glow">
+                  <Placeholder xs={4} />
+                </Placeholder>
+              )}
+            </h3>
+          </>
+        );
       case 'Wealth':
-        return(
-          <div>
+        return (
+          <>
             <h3>Wealth:</h3>
-            {Object.entries(character.Wealth).map(([currency, amount]) => (
-              <div>
-                <span key={currency} className="label">{currency}:</span>
-                <span>{amount}</span>
-              </div>
-            ))}
-          </div>
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              {character?.Wealth ? (
+                Object.entries(character.Wealth).map(([currency, amount]) => (
+                  <div key={currency}>
+                    <span>{amount}</span>
+                    <span> {currency}</span>
+                  </div>
+                ))
+            ) : (
+              <Placeholder as="div" animation="glow">
+                <Placeholder xs={12} />
+              </Placeholder>
+            )}
+            </div>
+          </>
         );
       case 'PersonalityTraits':
         return (
           <>
-            <p className="label">Personality Traits:</p>
-            <p>{character.PersonalityTraits}</p>
+            <h4 className='center-title'>Personality Traits:</h4>
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              {character?.PersonalityTraits ? (
+                <p>{character.PersonalityTraits}</p>
+              ) : (
+                <Placeholder as="p" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
+            </div>
           </>
         );
       case 'Ideals':
         return (
           <>
-            <p className="label">Ideals</p>
-            <p>{character.Ideals}</p>
+            <h4 className="center-title">Ideals</h4>
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              {character?.Ideals ? (
+                <p>{character.Ideals}</p>
+              ) : (
+                <Placeholder as="p" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
+            </div>
           </>
         );
       case 'Bonds':
         return (
           <>
-            <p className="label">Bonds</p>
-            <p>{character.Bonds}</p>
+            <h4 className="center-title">Bonds</h4>
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              {character?.Ideals ? (
+                <p>{character.Ideals}</p>
+              ) : (
+                <Placeholder as="p" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
+            </div>
           </>
         );
       case 'Flaws':
         return (
           <>
-            <p className="label">Flaws</p>
-            <p>{character.Flaws}</p>
+            <h4 className="center-title">Flaws</h4>
+            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
+              {character?.Ideals ? (
+                <p>{character.Ideals}</p>
+              ) : (
+                <Placeholder as="p" animation="glow">
+                  <Placeholder xs={12} />
+                </Placeholder>
+              )}
+            </div>
           </>
         );
       default:
@@ -860,14 +1180,22 @@ function CharacterSheet({ headers, characterName }) {
           onLayoutChange={handleLayoutChange}
         >
           {character && tiles.map(tile => (
-            <div
-              key={tile.i}
-              className="tile"
-            >
-              <div className="edit-icon">
-                <EditIcon onClick={(event) => handleEdit(event, tile.i)} />
-              </div>
-              {generateTileContent(tile.i)}
+            <div key={tile.i} className="tile">
+              <Paper elevation={3} style={{ height: '100%', padding: '10px', position: 'relative' }}>
+                <div className="edit-icon" style={{ position: 'absolute', top: '10px', right: '10px' }}>
+                  <EditIcon onClick={(event) => handleEdit(event, tile.i)} />
+                </div>
+                {loading ? (
+                  <Placeholder as="div" animation="glow">
+                    <Placeholder xs={12} />
+                    <Placeholder xs={12} />
+                    <Placeholder xs={12} />
+                    <Placeholder xs={12} />
+                  </Placeholder>
+                ) : (
+                  generateTileContent(tile.i)
+                )}
+              </Paper>
             </div>
           ))}
         </ResponsiveGridLayout>
@@ -1126,13 +1454,15 @@ function CharacterSheet({ headers, characterName }) {
                 case 'Armor Class':
                 {
                   const equipment = character.Equipment;
-                  const dexMod = getModifier(character.abilityScores.Dexterity);
-                  const armorClass = calculateArmorClass(equipment, character.abilityScores.Dexterity);
+                  console.log("Dexterity:", character.abilityScores.dexterity);
+                  const dexMod = getModifier(character.abilityScores.dexterity);
+                  console.log("DexMod:", dexMod);
+                  const armorClass = calculateArmorClass(character.Equipment);
                   let explanation = "";
-
-                  const hasArmor = equipment.some(item => item.type === 'Armor');
+                
+                  const hasArmor = character.Equipment.some(item => item.type === 'Armor');
                   if (hasArmor) {
-                    const armor = equipment.find(item => item.type === 'Armor');
+                    const armor = character.Equipment.find(item => item.type === 'Armor');
                     explanation = `You have ${armor.name} equipped, which grants an Armor Class of ${armor.AC}.`;
                     if (armor.type === 'Light Armor') {
                       explanation += ` As it's Light Armor, your Dexterity modifier of ${dexMod} is added, giving you a total Armor Class of ${armorClass}.`;
@@ -1140,18 +1470,62 @@ function CharacterSheet({ headers, characterName }) {
                       const appliedDexMod = Math.min(dexMod, 2);
                       explanation += ` As it's Medium Armor, a Dexterity modifier of up to +2 is added. Your Dexterity modifier is ${dexMod}, so an additional ${appliedDexMod} is added, giving you a total Armor Class of ${armorClass}.`;
                     } else {
-                      explanation += ` Heavy Armor doesn't add the Dexterity modifier, so your total Armor Class remains ${armorClass}.`;
+                      explanation += ` Heavy Armor doesn't have any additional modifiers, so your total Armor Class remains ${armorClass}.`;
                     }
                   } else {
-                    explanation = `You don't have any armor equipped. Your base Armor Class is 10 and your Dexterity modifier of ${dexMod} is added, giving you a total Armor Class of ${armorClass}.`;
+                    // Add class-specific AC bonuses
+                    if (character.Class === 'Barbarian') {
+                      const conMod = getModifier(character.abilityScores.constitution);
+                      explanation += ` As a Barbarian, your Constitution modifier of ${conMod} is added, giving you a total Armor Class of ${armorClass}.`;
+                    } else if (character.Class === 'Monk') {
+                      const wisMod = getModifier(character.abilityScores.wisdom);
+                      explanation += ` As a Monk, your Armor Class is the higher of 10 + Dexterity modifier (${dexMod}) + Wisdom modifier (${wisMod}) or your current Armor Class, giving you a total Armor Class of ${armorClass}.`;
+                    } else if (character.Class === 'Wizard') {
+                      explanation += ` As a Wizard, your Armor Class is the lower of 13 + Dexterity modifier (${dexMod}) or your current Armor Class, giving you a total Armor Class of ${armorClass}.`;
+                    } else {
+                      explanation = `You don't have any armor equipped. Your base Armor Class is 10 and your Dexterity modifier of ${dexMod} is added, giving you a total Armor Class of ${armorClass}.`;
+                    }
                   }
-
+                
+                  // Check for shields
+                  const shield = character.Equipment.find(item => item.type === 'Shield');
+                  if (shield) {
+                    explanation += ` You have a shield equipped, which grants an additional Armor Class of ${shield.AC}, giving you a total Armor Class of ${armorClass}.`;
+                  }
+                
+                  // TODO: Add logic for other items that can affect AC
+                
                   return <p>{explanation}</p>;
-                }
-                case 'Attacks':
-                  return(
-                    <p>Coming Soon!</p>
-                  )
+                };
+                // case 'Attacks':
+                //   const weapons = character.Equipment.filter(item => item.type === 'Weapon');
+                //   return (
+                //     <div>
+                //       <h3>Standard Attacks</h3>
+                //       <ul>
+                //         <p>Attack - choose a weapon to use & roll a D20</p>
+                //         <p>Grapple - Athletics check to restrain someone, with advantage. On the next turn, you can pin them.</p>
+                //         <p>Shove - Athletics check to push someone within reach back by 1 square (5 feet), or knock them prone.</p>
+                //         <p>Use Object - example: administering a potion to an ally</p>
+                //         <p>Dash - Use the action on your turn to move</p>
+                //         <p>Disengage - run away without getting hit</p>
+                //         <p>Dodge - enemies have disadvantage attacking you</p>
+                //         <p>Help - gives an ally advantage on an ability check</p>
+                //         <p>Hide - make a stealth check to be hidden</p>
+                //         <p>Ready - wait for a specific condition, then attack</p>
+                //         <p>Search - Perception or Investigation check</p>
+                //       </ul>
+                //       {weapons.length > 0 ? (
+                //         <ul>
+                //           {weapons.map((weapon, index) => (
+                //             <li key={index}>{weapon.name}</p>
+                //           ))}
+                //         </ul>
+                //       ) : (
+                //         <p>No weapons equipped.</p>
+                //       )}
+                //     </div>
+                //   );
                 case 'HitPointMax':
                   return (
                     <>
@@ -1170,6 +1544,14 @@ function CharacterSheet({ headers, characterName }) {
           </form>
         </Modal.Body>
         <Modal.Footer>
+          {editingTileId === 'Equipment' && (
+            <Button variant="danger" onClick={() => {
+              consumeSelectedItem();
+              setIsModalShown(false);
+            }}>
+              Consume
+            </Button>
+          )}
           <Button variant="primary" onClick={() => {
             saveCharacter();
             setIsModalShown(false);

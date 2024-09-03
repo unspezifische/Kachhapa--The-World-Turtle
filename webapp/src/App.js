@@ -53,7 +53,6 @@ function App() {
     'username': username,
     'characterID': characterID,
     'campaignID': selectedCampaign.id,
-    // 'characterName': characterName,  // Not sure this is ever used by Flask
   }), [token, userID, username, selectedCampaign.id, characterID]);
 
   useEffect(() => {
@@ -246,6 +245,9 @@ function App() {
                     window.location.href = `/${campaign_name}/${page_title}`;
                     return null;
                   }} />
+                  {/* Allow access to the server admin and monitoring dashboards */}
+                  <Route path="/admin" component={() => { window.location.href = '/admin'; return null; }} />
+                  <Route path="/dashboard" component={() => { window.location.href = '/dashboard'; return null; }} />
                 </Routes>
               </Col>
               <Col md={3} className="chat-column">
@@ -280,7 +282,8 @@ function App() {
                     headers={headers}
                     socket={socketRef.current}
                     characterName={characterName}
-                    username={username} />}
+                    username={username}
+                    campaignID={selectedCampaign.id} />}
               </Col>
             </Row>
           </Container>
