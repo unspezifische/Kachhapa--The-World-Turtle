@@ -1,7 +1,14 @@
+version: '3.8'
+
 services:
-  db:
+  postgres:
     image: postgres:latest
-    container_name: postgres_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: db
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -9,35 +16,29 @@ services:
 
   flask:
     build: ./Flask
-    container_name: flask_app
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
     depends_on:
-      - db
-    networks:
-      - Kachhapa-network
+      - postgres
+    volumes:
+      - myapp_socket:/tmp
     ports:
-      - "5000:5000"
-
-  react:
-    build: ./webapp
-    container_name: react_app
+      - "5001:5000"
     networks:
       - Kachhapa-network
 
-  nginx:
-    build: ./nginx
-    container_name: nginx_proxy
+  webapp:
+    build: ./webapp
     ports:
       - "80:80"
     depends_on:
-      - react
       - flask
+    volumes:
+      - myapp_socket:/tmp
     networks:
       - Kachhapa-network
 
 volumes:
   postgres_data:
+  myapp_socket:
 
 networks:
   Kachhapa-network:
