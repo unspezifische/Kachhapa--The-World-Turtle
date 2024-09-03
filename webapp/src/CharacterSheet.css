@@ -1,3 +1,50 @@
+.tile {
+  position: relative;
+  /* make sure the tile is positioned */
+  /* filter: drop-shadow(1px 2px 4px hsl(0, 0%, 0%)); */
+}
+
+.edit-icon {
+  position: absolute;
+  /* position the icon absolutely within the tile */
+  top: 0;
+  right: 0;
+  display: none;
+  /* hide the icon by default */
+}
+
+.tile:hover .edit-icon {
+  display: block;
+  /* show the icon when the user hovers over the tile */
+}
+
+.skill-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+}
+
+.label-right {
+  text-align: right;
+  flex: 1;
+}
+
+.center {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+}
+
+.center-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+
 .register-container {
   display: flex;
   flex-direction: column;
@@ -30,22 +77,5 @@
 
 .register-container button:hover {
   background-color: #0056b3;
-}
-
-.tile {
-  /* other styles */
-  position: relative; /* make sure the tile is positioned */
-}
-
-.edit-icon {
-  /* other styles */
-  position: absolute; /* position the icon absolutely within the tile */
-  top: 0; /* adjust as needed */
-  right: 0; /* adjust as needed */
-  display: none; /* hide the icon by default */
-}
-
-.tile:hover .edit-icon {
-  display: block; /* show the icon when the user hovers over the tile */
 }
 

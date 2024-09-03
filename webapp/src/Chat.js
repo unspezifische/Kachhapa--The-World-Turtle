@@ -27,7 +27,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
         axios.get('/api/chat_history', { headers: headers })
         .then(response => {
           const data = response.data;
-          console.log("CHAT- response:", data)
+          // console.log("CHAT HISTORY- response:", data)
 
           setMessages(data);
         })
@@ -44,7 +44,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
 
   useEffect(() => {
     console.log("CHAT- users:", users);
-  }, [users]);
+    console.log("CHAT- campaignID", campaignID)
+  }, [users, campaignID]);
 
   useEffect(() => {
     const handleMessage = (message) => {
@@ -89,6 +90,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
       const messageObj = {
         type: item ? 'item_transfer' : 'text_message',
         sender: username,
+        campaignID: campaignID,
         text: message,
         recipients: selectedUsers,
         item: item,
