@@ -5,7 +5,7 @@ from flask import redirect, url_for
 ## Server Admin Console
 from flask_admin import Admin
 from flask_admin.contrib.sqla import ModelView
-import flask_monitoringdashboard as dashboard
+# import flask_monitoringdashboard as dashboard
 
 ## For database stuff
 from flask_sqlalchemy import SQLAlchemy
@@ -38,13 +38,13 @@ from urllib.parse import unquote
 
 
 app = Flask(__name__)
-dashboard.bind(app)
+# dashboard.bind(app)
 
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
 app.config['MAP_FOLDER'] = '/home/ijohnson/Downloads/Maps'
 app.config['BATTLE_MAP_FOLDER'] = '/home/ijohnson/Downloads/battleMaps'
 app.config['SECRET_KEY'] = 'secret-key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@127.0.0.1/db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@postgres:5432/db'
 
 ## Token stuff
 app.config['JWT_SECRET_KEY'] = 'jwt-secret-key'
