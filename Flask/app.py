@@ -9,7 +9,7 @@ from flask_admin.contrib.sqla import ModelView
 
 ## For database stuff
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
 from sqlalchemy import select, Numeric, text, func
 
@@ -211,10 +211,10 @@ class Campaign(db.Model):
             'system': self.system,
             'description': self.description,
             'icon': self.icon,
-            'owner': self.owner.username,
-            'owner_id': self.owner.id,
-            'dm': self.dm.username,
-            'dm_id': self.dm.id,
+            'owner': self.owner.username if self.owner else None,
+            'owner_id': self.owner.id if self.owner else None,
+            'dm': self.dm.username if self.dm else None,
+            'dm_id': self.dm.id if self.dm else None,
             'scribes': self.scribes,
         }
     
@@ -275,7 +275,7 @@ class Weapon(db.Model):
     weapon_type = db.Column(db.String(20), nullable=False)
     damage = db.Column(db.String(20), nullable=False)
     damage_type = db.Column(db.String(20), nullable=False)
-    weapon_range = db.Column(db.Integer, nullable=False)
+    weapon_range = db.Column(db.Integer)
 
     def to_dict(self):
         return {
@@ -603,13 +603,16 @@ def index():
 # Global error handler
 @app.errorhandler(Exception)
 def handle_exception(e):
+    tb = traceback.format_exc()
     app.logger.error(f"An error occurred: {str(e)}")
     app.logger.error(f"Request data: {request.data}")
+    app.logger.error(f"Traceback: {tb}")
     
-    # Return a JSON response with a generic error message
+    # Return a JSON response with a generic error message and traceback
     response = {
         "error": "An unexpected error occurred",
-        "details": str(e)
+        "details": str(e),
+        "traceback": tb
     }
     return jsonify(response), 500
 
@@ -756,16 +759,26 @@ def campaigns():
     elif request.method == 'POST':
         data = request.get_json()
         username = get_jwt_identity()
-        user = User.query.filter_by(username=username).first()
-        # print("CAMPAIGN- username:", username)
         app.logger.debug("CAMPAIGN- username: %s", username)
-        # print("CAMPAIGN- user:", user.to_dict())
+    
+        user = User.query.filter_by(username=username).first()
         app.logger.debug("CAMPAIGN- user: %s", user.to_dict())
-        campaign = Campaign(name=data['name'], system=data['system'], owner_id=user.id, dm_id=user.id)
+    
+        # Create a new campaign with all necessary values
+        campaign = Campaign(
+            name=data['name'],
+            system=data['system'],
+            owner_id=user.id,
+            dm_id=user.id,
+            icon=data.get('icon', None),
+            description=data.get('description', None),
+            scribes=data.get('scribes', [])
+        )
         db.session.add(campaign)
-        # print("CAMPAIGN- campaign:", campaign.to_dict())
-        app.logger.debug("CAMPAIGN- campaign: %s", campaign.to_dict())
-
+        db.session.flush()  # Ensure the campaign ID is generated
+    
+        app.logger.debug("Creating new campaign %s", campaign.to_dict())
+    
         # Check if the user wants to use a module
         if 'module' in data and data['module']:
             # Retrieve the module's information from the GameElements table
@@ -775,18 +788,21 @@ def campaigns():
                     # Pre-populate the wiki with the module's information
                     wiki = Page(title=page.data.title, content=page.data.content, campaignID=campaign.id)
                     db.session.add(wiki)
-
+    
+        # Add the campaign creator as a member of their own campaign
+        app.logger.debug("Adding user %s to campaign %s", user.id, campaign.id)
+        db.session.execute(campaign_members.insert().values(userID=user.id, campaignID=campaign.id))
+    
         # Get all users except the current user
         other_users = User.query.filter(User.id != user.id).all()
+        app.logger.debug("other_users- %s", other_users)
         for other_user in other_users:
             # Add each user to the campaign's members
             db.session.execute(campaign_members.insert().values(userID=other_user.id, campaignID=campaign.id))
-
+    
         db.session.commit()
-        # print("CAMPAIGN- campaign:", campaign.to_dict())
-        app.logger.debug("CAMPAIGN- campaign: %s", campaign.to_dict())
         return jsonify(campaign.to_dict()), 201
-
+    
 @app.route('/api/characters', methods=['GET'])
 @jwt_required()
 def get_user_characters():
@@ -1108,9 +1124,8 @@ def items():
             
             item = Item(name=name, type=type, cost=cost, currency=currency, weight=weight, description=description)
             db.session.add(item)
-            db.session.commit()
-            # print(f"New item ID: {item.id}")
-            app.logger.info(f"New item ID: {item.id}")
+            db.session.flush()
+            app.logger.debug(f"New item ID: {item.id}")
 
         
             if type == 'Weapon':
@@ -1127,13 +1142,21 @@ def items():
                 else:
                     weapon = Weapon(itemID=item.id, damage=damage, damage_type=damage_type, weapon_type=weapon_type, weapon_range=weapon_range)
                     db.session.add(weapon)
-                db.session.commit()
+                # db.session.commit()
             elif type == 'Armor':
                 armor = Armor.query.filter_by(itemID=item.id).first()
                 ac = data.get('ac')
                 armor_type = data.get('armorType')
                 stealth_disadvantage = data.get('stealthDisadvantage', False)
-                strength_needed = data.get('strengthNeeded', None) or None
+                strength_needed = data.get('strengthNeeded', None)
+            
+                # Validate strength_needed
+                if strength_needed is not None:
+                    try:
+                        strength_needed = int(strength_needed)
+                    except ValueError:
+                        strength_needed = None  # Set to None if not a valid integer
+            
                 if armor:
                     # Update existing record
                     armor.armor_class = ac
@@ -1142,21 +1165,26 @@ def items():
                     armor.strength_needed = strength_needed
                 else:
                     # Insert new record
-                    armor = Armor(itemID=item.id, armor_class=ac, armor_type=armor_type, stealth_disadvantage=stealth_disadvantage, strength_needed=strength_needed)
+                    armor = Armor(
+                        itemID=item.id,
+                        armor_class=ac,
+                        armor_type=armor_type,
+                        stealth_disadvantage=stealth_disadvantage,
+                        strength_needed=strength_needed
+                    )
                     db.session.add(armor)
-                db.session.commit()
-
-            elif type in ['Ring', 'Wand', 'Scroll']:
-                spellItem = SpellItem.query.filter_by(itemID=item.id).first()
-                spell = data.get('spell')
-                charges = data.get('charges')
-                if spellItem:
-                    spellItem.spell = spell
-                    spellItem.charges = charges
-                else:
-                    magic_item = SpellItem(itemID=item.id, spell=spell, charges=charges)
-                    db.session.add(magic_item)
-                db.session.commit()
+                # db.session.commit()
+            # elif type in ['Ring', 'Wand', 'Scroll']:
+            #     spellItem = SpellItem.query.filter_by(itemID=item.id).first()
+            #     spell = data.get('spell')
+            #     charges = data.get('charges')
+            #     if spellItem:
+            #         spellItem.spell = spell
+            #         spellItem.charges = charges
+            #     else:
+            #         magic_item = SpellItem(itemID=item.id, spell=spell, charges=charges)
+            #         db.session.add(magic_item)
+            #     db.session.commit()
             elif type == 'MountVehicle':  # Handle MountVehicle items
                 mountVehicle = MountVehicle.query.filter_by(itemID=item.id).first()
                 speed = data.get('speed')
@@ -1170,14 +1198,20 @@ def items():
                     mount_vehicle = MountVehicle(itemID=item.id, speed=speed, speed_unit=speed_unit, capacity=capacity)
                     db.session.add(mount_vehicle)
                 db.session.commit()
-
+            
+            db.session.commit()
             return jsonify({'item': item.to_dict()}), 201
+        except IntegrityError as ie:
+            # Rollback the session if any operation fails
+            db.session.rollback()
+            app.logger.error(f"Integrity Error while attempting to create new item: {ie}")
+            return jsonify({'message': str(ie)}), 400
         except ValueError as ve:
             app.logger.error(f"Validation error: {ve}")
             return jsonify({'message': str(ve)}), 400
         except Exception as e:
-            app.logger.error(f"Error creating item: {e}")
             db.session.rollback()
+            app.logger.error(f"Error creating item: {e}")
             return jsonify({'message': 'Server error: ' + str(e)}), 500
 
 
@@ -1224,7 +1258,6 @@ def upload_csv():
     file = request.files['file']
     csv_data = csv.reader(file.stream)
     items = [row for row in csv_data]
-    # now you can emit items back to the client via socketio.emit
 
 ## Used to save the newly created (and verified) items
 @app.route('/api/save_items', methods=['POST'])
@@ -1237,16 +1270,13 @@ def save_items():
         return jsonify(error='Invalid JSON'), 400
 
     items = data.get('items')
-    ## app.logger.info("SAVE CSV- items received: %s", items)
-    print("SAVE CSV- items received:", items)
-    app.logger.info("SAVE CSV- items received: %s", items)
+    # app.logger.debug("SAVE CSV- items received: %s", items)
 
     if not items or not isinstance(items, list):
         return jsonify(error='Invalid items'), 400
 
     try:
-        # # app.logger.info("SAVE CSV- Recieving items: %s", items)
-        # print("SAVE CSV- Receiving items:", items)
+        # app.logger.debug("SAVE CSV- Recieving items: %s", items)
         for item in items:
             if not all(k in item for k in ('Name', 'Type', 'Cost', 'Currency')):
                 return jsonify(error='Missing item fields'), 400
@@ -1254,6 +1284,7 @@ def save_items():
             existing_item = Item.query.filter_by(name=item['Name']).first()
 
             if existing_item is None:
+                app.logger.debug("SAVE CSV- Creating new item: %s", item)
                 new_item = Item(name=item['Name'], type=item['Type'], cost=item['Cost'], currency=item['Currency'], weight=item.get('Weight'), description=item.get('Description'))
                 db.session.add(new_item)
                 db.session.commit()
@@ -1262,26 +1293,25 @@ def save_items():
                 itemID = new_item.id
 
                 if item_type == 'Weapon':
-                    print(item, "is a Weapon")
+                    app.logger.debug("%s is a Weapon", item)
                     weapon = Weapon(itemID=itemID, damage=item.get('Damage'), damage_type=item.get('DamageType'),
                     weapon_type=item.get('Weapon type'), weapon_range=item.get('Range'))
                     db.session.add(weapon)
                 elif item_type == 'Armor':
-                    print(item, "is Armor")
-                    armor = Armor(itemID=itemID, armor_class=item.get('Armor class'), armor_type=item.get('Armor type'), stealth_disadvantage=item.get('Stealth'), strength_needed=item.get('Strength'))
+                    app.logger.debug("%s is Armor", item)
+                    armor = Armor(itemID=itemID, armor_class=item.get('Ac'), armor_type=item.get('Armor type'), stealth_disadvantage=item.get('Stealth'), strength_needed=item.get('Strength'))
                     db.session.add(armor)
                 elif item_type in ['Ring', 'Wand', 'Scroll']:
-                    print(item, "is a Magic Item")
+                    app.logger.debug("%s is a Magic Item", item)
                     magic_item = SpellItem(itemID=itemID, spell=item.get('Spell'), charges=item.get('Charges'))
                     db.session.add(magic_item)
                 elif item_type == 'Mounts and Vehicles':
-                    print(item, "is a Mount or Vehicle")
+                    app.logger.debug("%s is a Mount or Vehicle", item)
                     mount_vehicle = MountVehicle(itemID=itemID, speed=item.get('Speed'), speed_unit=item.get('Units'), capacity=item.get('Capacity'), vehicle_type=item.get('Vehicle type'))
                     db.session.add(mount_vehicle)
 
                 db.session.commit()
             else:
-                print("SAVE CSV- Item", {item['Name']}, "already exists in the database. Skipping...")
                 app.logger.info("SAVE CSV- Item %s already exists in the database. Skipping...", {item['Name']})
 
         socketio.emit('items_updated')
@@ -2422,14 +2452,16 @@ def handle_user_connected(data):
 @socketio.on('sendMessage')
 def handle_send_message(messageObj):
     app.logger.debug("MESSAGE- messageObj: %s", messageObj)
+
     message = messageObj['text']
     sender = messageObj['sender']
     recipients = messageObj['recipients']
+
     campaignID = messageObj['campaignID']
-    # app.logger.debug("request.header- %s", request.headers)
-    # campaignID = request.headers.get('campaignID')
-    app.logger.debug("MESSAGE- recipients: %s", recipients)
+    # campaignID = request.headers.get('Character-ID')
     app.logger.debug("MESSAGE- campaignID: %s", campaignID)
+
+    app.logger.debug("MESSAGE- recipients: %s", recipients)
 
     recipient_characters = []
 

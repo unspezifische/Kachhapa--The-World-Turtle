@@ -18,7 +18,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './InventoryView.css';
 
-export default function InventoryView({ username, characterName, accountType, headers, socket, isLoading, setIsLoading }) {
+export default function InventoryView({ username, characterName, accountType, headers, socket, campaignID, isLoading, setIsLoading }) {
   const [inventory, setInventory] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   // const [showItemDetails, setShowItemDetails] = useState(false);
@@ -145,6 +145,7 @@ export default function InventoryView({ username, characterName, accountType, he
   };
 
   useEffect(() => {
+    console.log("INVENTORY PAGE- headers:", headers)
     fetchInventory();
   }, [headers]);
 
@@ -243,41 +244,6 @@ export default function InventoryView({ username, characterName, accountType, he
 
     // console.log("newSortedInventory:", newSortedInventory);
   }, [sortConfig, inventory]);
-
-
-  // // Only used to populate the inventory table (for player or DM)
-  // // TODO: Is this hook nnecessary? Can we just use the fetchInventory function?
-  // useEffect(() => {
-  //   const fetchData = () => {
-  //     if (accountType === 'Player') {
-  //       axios.get('/api/inventory', { headers })
-  //         .then(response => {
-  //           setInventory(response.data.inventory);
-  //         })
-  //         .catch(error => {
-  //           console.error(error);
-  //         })
-  //         .finally(() => {
-  //           setIsLoading(false);
-  //         });
-
-  //     } else if (accountType === 'DM') {
-  //       axios.get('/api/items', { headers })
-  //         .then(response => {
-  //           setInventory(response.data.items);
-  //         })
-  //         .catch(error => {
-  //           console.error(error);
-  //         })
-  //         .finally(() => {
-  //           setIsLoading(false);
-  //         });
-  //     }
-  //   }
-  //   if(!isLoading) {
-  //     fetchData();
-  //   }
-  // }, [accountType]);
 
 
   // For when a player is given a new item
@@ -453,37 +419,63 @@ export default function InventoryView({ username, characterName, accountType, he
         complete: function(results) {
           const data = results.data
           .map(item => {
+            console.log("Current item:", item);
             // Remove all blank lines
             let newItem = {};
             for (let key in item) {
-              // Change each key to title case
               let newKey = key.charAt(0).toUpperCase() + key.slice(1).toLowerCase();
               if (newKey === 'Type') {
                 newItem[newKey] = convertType(item[key]);
-              } else if (newKey === 'Stealth') {
-                // Convert the 'Stealth' value to a boolean
-                newItem[newKey] = (item[key].toUpperCase() === 'TRUE');
               } else if (newKey === 'Cost') {
                 if (item[key] !== null) {
                   // let [cost, currency] = item[key].match(/^(\d+\.?\d*)\s*(\w*)$/).slice(1);
                   let [cost, currency] = item[key].split(' ');
-                  newItem['Cost'] = cost;
+                  newItem['Cost'] = parseInt(cost);
                   newItem['Currency'] = convertCurrencyAbbreviation(currency);
                 } else {
                   console.error(`Item at line ${key} does not have a cost.`);
                   return null;
                 }
+              } else if (newKey === 'Weight') {
+                console.log(item["Name"] + " weighs " + item[key] + " pounds");
+                if (item[key] == 'N/A' || item[key]['Weight'] == 'NA' || item[key]['Weight'] == 'n/a' || item[key]['Weight'] == 'na' || item[key]['Weight'] == 'N/a' || item[key]['Weight'] == 'n/A' || item[key]['Weight'] == ' ' || item[key]['Weight'] == '') {
+                  newItem['Weight'] = 0;
+                } else {
+                  // Convert the 'Weight' value to an integer
+                  newItem["Weight"] = parseInt(item[key]);
+                }
+              } else if (newKey === 'AC') {
+                // Convert the 'Armor Class' value to an integer
+                newItem["AC"] = parseInt(item[key]);
+              } else if (newKey === 'Stealth') {
+                // Convert the 'Stealth' value to a boolean
+                newItem[newKey] = (item[key].toUpperCase() === 'TRUE');
+              } else if (newKey === 'Strength') {
+                // Convert the 'Strength' value to an integer
+                newItem[newKey] = parseInt(item[key]);
               } else if (newKey === 'Damage') {
                 // Split the 'Damage' value into 'damage' and 'damageType'
                 let [damage, damageType] = item[key].split(' ');
                 newItem['Damage'] = damage;
                 newItem['DamageType'] = damageType;
+              } else if (newKey === 'Range') {
+                // Convert the 'Range' value to an integer
+                newItem[newKey] = parseInt(item[key]);
               } else if (newKey === 'Speed') {
                 // Split the 'Speed' value into 'speed' and 'speedUnit'
                 let [speed, speedUnit] = item[key].split(' ');
-                newItem['Speed'] = speed;
+                newItem['Speed'] = parseInt(speed);
                 newItem['Units'] = speedUnit;
-              } else {
+              } else if (newKey === 'Capacity') {
+                console.log("Capacity of" + item["Name"] + "is" + item[key]);
+                if (item['capacity'] == 'N/A' || item['capacity'] == 'NA' || item['capacity'] == 'n/a' || item['capacity'] == 'na' || item['capacity'] == 'N/a' || item['capacity'] == 'n/A' || item['capacity'] == ' ' || item['capacity'] == '') {
+                  newItem[newKey] = 0;
+                } else {
+                  console.log(item["Name"] + " has a capacity of " + item[key]);
+                  // Convert the 'capacity' value to an integer
+                  newItem[newKey] = parseInt(item[key]);
+                }
+               } else {
                 newItem[newKey] = item[key];
               }
             }
@@ -736,7 +728,7 @@ export default function InventoryView({ username, characterName, accountType, he
           return abbrev;
       }
     } else {
-      console.error('Currency abbreviation is undefined.');
+      console.error('Currency abbreviation', abbrev, 'is undefined.');
       return '';
     }
   };
@@ -763,6 +755,7 @@ export default function InventoryView({ username, characterName, accountType, he
       text: `${characterName} gave you ${quantity} ${selectedItem.name}`,
       recipients: [selectedPlayer],
       item: { ...selectedItem, quantity: quantity },
+      campaignID: campaignID,
     };
 
     socket.emit('sendMessage', messageObj);
@@ -804,7 +797,7 @@ export default function InventoryView({ username, characterName, accountType, he
   const issueItemToPlayer = () => {
     console.log("issueItemToPlayer- selectedPlayer:", selectedPlayer);
     console.log("issueItemToPlayer- selectedItem:", selectedItem);
-    // console.log("issueItemToPlayer- Campaign ID:", headers['CampaignID']);
+    // console.log("issueItemToPlayer- Campaign ID:", headers['campaignID']);
 
     // Issue an item via messageObj
     const messageObj = {
@@ -812,8 +805,8 @@ export default function InventoryView({ username, characterName, accountType, he
       sender: headers['username'],
       text: `You received ${quantity} ${selectedItem.name}`,
       recipients: [selectedPlayer],
-      campaignID: headers['CampaignID'],
-      item: { ...selectedItem, quantity: parseInt(quantity) },
+      campaignID: headers['campaignID'],
+      item: { ...selectedItem, quantity: quantity },
     };
 
     console.log("Sending messageObj:", messageObj);

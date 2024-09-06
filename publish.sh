@@ -15,7 +15,7 @@ rsync -avz Flask/requirements.txt $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying requirements.txt"
 
 # Install Python dependencies on the Raspberry Pi
-ssh $DESTINATION "pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
+# ssh $DESTINATION "pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
 echo "Finished installing Python dependencies"
 
 # Copy the Flask app

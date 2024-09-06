@@ -1,0 +1,64 @@
+Name,Type,Weight,Cost,Description,AC,Armor Type,Strength,Stealth,Weapon Type,Damage,Range,Speed,capacity,Vehicle Type
+Padded,Armor,8,5 Gold,Padded armar consists of quilted layers of cloth and batting. ,11,Light Armor,,TRUE,,,,,,
+Leather,Armor,10,10 Gold,The breastplate and shoulder protectors of this armor are made of leather.,11,Light Armor,,FALSE,,,,,,
+Studded Leather,Armor,13,45 Gold,"Made from tough but flexible leather, studded leather is reinforced with close-set rivets ar spikes . ",12,Light Armor,,FALSE,,,,,,
+HIde,Armor,12,10 Gold,"his crude armor consists of thick furs and pelts. lt is commonly worn by barbarian tribes, evil humanoids, and other folk who lack access to the tools and materiaIs needed lOcreate betler armor. ",12,Medium Armor,,FALSE,,,,,,
+Chain Shirt,Armor,20,50 Gold,"Made of interlocking metal rings, a chain shirl is worn belween layers of clothing ar leather. This armor offers modest protection to the wearer's upper body and allows lhe sound of the rings rubbing against one another to be muffled by outer layers. ",13,Medium Armor,,FALSE,,,,,,
+Scale Mail,Armor,45,50 Gold,"This armor consists of a coat and leggings (and perhaps a separate skirt) of leather covered with overlapping pieces of metal, much like the scales of a fish, The suit includes gauntlets.",14,Medium Armor,,TRUE,,,,,,
+Breastplate,Armor,20,400 Gold,"This armor consists of a fitted metal chest piece worn with supple leather, Although it leaves the legs and arms relatively unprotected, this armor provides good protection for the wearer's vital organs while leaving the wearer relatively unencumbered, ",14,Medium Armor,,FALSE,,,,,,
+Half Plate,Armor,40,750 Gold,"Half plate consists of shaped metal plates that cover most of the wearer's body, 1tdoes not include leg protection beyond simple greaves that are attached with leather straps.",15,Medium Armor,,TRUE,,,,,,
+Ring Mail,Armor,40,30 Gold,"This armor is leather armor with heavy rings sewn into it. The rings he1p reinforce the armor against blows from swords and axes. Ring mail is inferior to chain mail, and it""s usual1y worn only by those who can't afford better armor.",14,Heavy Armor,,TRUE,,,,,,
+Chain Mail,Armor,55,75 Gold,"Made of interlocking metal rings, chain mail includes a layer of quilted fabric worn underneath themail to prevent chafing and to cushion the impact of blows. The suit includes gauntlets. ",16,Heavy Armor,13,TRUE,,,,,,
+Splint,Armor,60,200 Gold,This armor is made of narrow vertical strips of metal riveted to a backing of leather that is worn over c10th padding. Flcxible chain mail protects the joints.,17,Heavy Armor,13,TRUE,,,,,,
+Plate,Armor,65,1500 Gold,"Plate consists of shaped, interlocking metal plates to cover the entire body. A suit of plate includes gauntlets, heavy leather boots, a visored helmet, and thick layers of padding underneath the armor. Buckles and straps distribute the weight over the body. ",18,Heavy Armor,15,TRUE,,,,,,
+Club,Weapon,2,1 silver,Light,,,,,Simple Melee,1d4 Bludgeoning,,,,
+Dagger,Weapon,1,2 gold,"Finesse, light, thrown (range 20/60)",,,,,Simple Melee,1d4 Piercing,20,,,
+Greatclub,Weapon,10,2 sp,Two-handed,,,,,Simple Melee,1d8 Bludgeoning,,,,
+Handaxe,Weapon,2,5 gp,"Light, thrown (range 20/60)",,,,,Simple Melee,1d6 Slashing,20,,,
+ Javelin,Weapon,2,5 sp,Thrown (range 30/120),,,,,Simple Melee,1d6 Piercing,30,,,
+Light hammer,Weapon,2,2 gp,"Light, thrown (range 20/60)",,,,,Simple Melee,1d4 Bludgeoning,20,,,
+Mace,Weapon,4,5 gp,,,,,,Simple Melee,1d6 Bludgeoning,,,,
+Quarterstaff,Weapon,4,2 sp,Versatile (1d8),,,,,Simple Melee,1d6 Bludgeoning,,,,
+ Sickle ,Weapon,2,1 gp,Light,,,,,Simple Melee,1d4 Slashing,,,,
+Spear ,Weapon,3,1 gp,"Thrown (range 20/60), versatile (1d8)",,,,,Simple Melee,1d6 Piercing,20,,,
+"Crossbow, Light",Weapon,5,25 gp,"Ammunition (range 80/320), loading, two-handed",,,,,Simple Ranged,1d8 Piercing,80,,,
+Dart,Weapon,0.25,25 gp,"Finesse, thrown (range 20/60)",,,,,Simple Ranged,1d4 Piercing,20,,,
+Shortbow,Weapon,2,5 cp,Ammunition (range 30/120),,,,,Simple Ranged,1d6 Piercing,80,,,
+Sling,Weapon,,1 sp,,,,,,Simple Ranged,1d4 Bludgeoning,30,,,
+Battleaxe,Weapon,4,10 Gold,Versatile (1d10),,,,,Martial Melee,1d8 Slashing,,,,
+Flail,Weapon,2,10 gp,,,,,,Martial Melee,1d8 Bludgeoning,,,,
+Glaive,Weapon,6,20 gp,"Heavy, reach, two-handed",,,,,Martial Melee,1d10 Slashing,,,,
+Greataxe,Weapon,7,30 gp,"Heavy, two-handed",,,,,Martial Melee,1d12 Slashing,,,,
+Greatsword,Weapon,6,50 gp,"Heavy, two-handed",,,,,Martial Melee,2d6 Slashing,,,,
+Halberd,Weapon,6,20 gp,"Heavy, reach, two-handed",,,,,Martial Melee,1d10 Slashing,,,,
+Lance,Weapon,6,10 gp,"Reach, special",,,,,Martial Melee,1d12 Piercing,,,,
+Longsword,Weapon,3,15 gp,Versatile (1d10),,,,,Martial Melee,1d8 Slashing,,,,
+Maul,Weapon,10,10 gp,"Heavy, two-handed",,,,,Martial Melee,2d6 Bludgeoning,,,,
+Morningstar,Weapon,4,15 gp,,,,,,Martial Melee,1d8 Piercing,,,,
+Pike,Weapon,18,5 gp,"Heavy, reach, two-handed",,,,,Martial Melee,1d10 Piercing,,,,
+Rapier,Weapon,2,25 gp,Finesse,,,,,Martial Melee,1d8 Piercing,,,,
+Scimitar,Weapon,3,25 gp,"Finesse, light",,,,,Martial Melee,1d6 Slashing,,,,
+Shortsword,Weapon,2,10 gp,"Finesse, light",,,,,Martial Melee,1d6 Piercing,,,,
+Trident,Weapon,4,5 gp,"Thrown (range 20/60), versatile (1d8)",,,,,Martial Melee,1d6 Piercing,,,,
+War pick,Weapon,2,5 gp,,,,,,Martial Melee,1d8 Piercing,,,,
+Warhammer,Weapon,2,15 gp,Versatile (1d10),,,,,Martial Melee,1d8 Bludgeoning,,,,
+Whip,Weapon,3,2 gp,"Finesse, reach",,,,,Martial Melee,1d4 Slashing,,,,
+Blowgun,Weapon,1,10 gp,"Ammunition (range 25/100), loading",,,,,Martial Ranged,1 Piercing,,,,
+"Crossbow, hand",Weapon,3,75 gp,"Ammunition (range 30/120), light, loading",,,,,Martial Ranged,1d6 Piercing,,,,
+"Crossbow, heavy",Weapon,18,50 gp,"Ammunition (range 100/400), heavy, loading, two-handed",,,,,Martial Ranged,1d10 Piercing,,,,
+Longbow,Weapon,2,50 gp,"Ammunition (range 150/600), heavy, two-handed",,,,,Martial Ranged,1d8 Piercing,,,,
+Net,Weapon,3,1 gp,"Special, thrown (range 5/15)",,,,,,0,,,,
+Camel,Mount,,50 gp,,,,,,,,,50 feet,480,Land
+Donkey or mule,Mount,,8 gp,,,,,,,,,40 feet,420,Land
+Elephant,Mount,,200 gp,,,,,,,,,40 feet,1320,Land
+Draft Horse,Mount,,50 gp,,,,,,,,,40 feet,540,Land
+Riding Horse,Mount,,75 gp,,,,,,,,,60 feet,480,Land
+Mastiff,Mount,,25 gp,,,,,,,,,40 feet,195,Land
+Pony,Mount,,30 gp,,,,,,,,,40 feet,225,Land
+Warhorse,Mount,,400 gp,,,,,,,,,60 feet,540,Land
+Galley,Vehicle,,30000 gp,,,,,,,,,,,Water
+Keelboat,Vehicle,,3000 gp,"Keelboats are used on lakes and rivers. If going downstream, add the speed of the current (typically 3 miles per hour) to the speed of  the vehicle. They can't be rowed against any significant current, but they can be pulled upstream by draft animals on the shores.",,,,,,,,,,Water
+Longship,Vehicle,,10000 gp,,,,,,,,,,,Water
+Rowboat,Vehicle,100,50 gp,"Rowboats are used on lakes and rivers. If going downstream, add the speed of the current (typically 3 miles per hour) to the speed of  the vehicle. They can't be rowed against any significant current, but they can be pulled upstream by draft animals on the shores. A rowboat weighs 100 pounds, in case adventurers carry it over land.",,,,,,,,,,Water
+Sailing ship,Vehicle,,10000 gp,,,,,,,,,,,Water
+Warship ,Vehicle,,25000 gp,,,,,,,,,,,Water
