@@ -1,4 +1,4 @@
-I would highly recommend using (Docker Desktop)[https://www.docker.com/products/docker-desktop/] for this project. It will make accessing the terminal window for each container much easier.
+I would highly recommend using [Docker Desktop](https://www.docker.com/products/docker-desktop/) for this project. It will make accessing the terminal window for each container much easier.
 
 Clone the repo, then run this command in the parent direcvtory: `docker-compose up --build -d`
 
