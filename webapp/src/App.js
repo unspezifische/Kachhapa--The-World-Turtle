@@ -233,7 +233,7 @@ function App() {
                   <Route path="/" element={<Navigate to="/accountProfile" />} />
                   <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} />} />
                   <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
-                  <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} />
+                    <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
