@@ -1,0 +1,249 @@
+{
+  "Name": "Bard",
+  "hit_points": {
+    "hit_dice": "1d8",
+    "base": 8,
+    "level_increment": 5
+
+  },
+  "Primary Ability": "Charisma",
+  "Saving Throw Proficiencies": ["Dexterity", "Charisma"],
+  "Armor Proficiencies": ["Light Armor"],
+  "Weapon Proficiencies": ["Simple Weapons", "Hand Crossbows", "Longswords", "Rapiers", "Shortswords"],
+  "class Features": {
+    "Spellcasting": {
+      "description": "You have learned to untangle and reshape the fabric of reality in harmony with your wishes and music. Your spells are part of your vast repertoire, magic that you can tune to different situations.",
+      "options": []
+    },
+    "Bardic Inspiration": {
+      "description": "You can inspire others through stirring words or music. To do so, you use a bonus action on your turn to choose one creature other than yourself within 60 feet of you who can hear you. That creature gains one Bardic Inspiration die, a d6.",
+      "options": []
+    },
+    "Jack of All Trades": {
+      "description": "Starting at 2nd level, you can add half your proficiency bonus, rounded down, to any ability check you make that doesn't already include your proficiency bonus.",
+      "options": []
+    },
+    "Song of Rest": {
+      "description": "Beginning at 2nd level, you can use soothing music or oration to help revitalize your wounded allies during a short rest. If you or any friendly creatures who can hear your performance regain hit points at the end of the short rest by spending one or more Hit Dice, each of those creatures regains an extra 1d6 hit points."
+    },
+    "Bard College": {
+      "description": "At 3rd level, you delve into the advanced techniques of a bard college of your choice: the College of Lore or the College of Valor, both detailed at the end of the class description. Your choice grants you features at 3rd level and again at 6th and 14th level."
+    }
+    },
+    "levels": [
+        {
+        "level": 1,
+        "features": ["Spellcasting", "Bardic Inspiration"],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 4
+        }
+        },
+        {
+        "level": 2,
+        "features": ["Jack of All Trades", "Song of Rest"],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 5
+        }
+        },
+        {
+        "level": 3,
+        "features": ["Bard College"],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 6,
+            "2nd": 3
+        }
+        },
+        {
+        "level": 4,
+        "features": ["Ability Score Improvement"],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 7,
+            "2nd": 4
+        }
+        },
+        {
+        "level": 5,
+        "features": ["Bardic Inspiration (d8)", "Font of Inspiration"],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 8,
+            "2nd": 4,
+            "3rd": 2
+        }
+        },
+        {
+        "level": 6,
+        "features": ["Countercharm"],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 9,
+            "2nd": 4,
+            "3rd": 2
+        }
+        },
+        {
+        "level": 7,
+        "features": [],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 10,
+            "2nd": 4,
+            "3rd": 3
+        }
+        },
+        {
+        "level": 8,
+        "features": ["Ability Score Improvement"],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 11,
+            "2nd": 4,
+            "3rd": 3
+        }
+        },
+        {
+        "level": 9,
+        "features": [],
+        "spells": {
+            "Cantrips": 2,
+            "1st": 12,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 1
+        }
+        },
+        {
+        "level": 10,
+        "features": ["Magical Secrets"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 12,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 1
+        }
+        },
+        {
+        "level": 11,
+        "features": ["Expertise", "Additional Magical Secrets"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 13,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 2
+        }
+        },
+        {
+        "level": 12,
+        "features": ["Ability Score Improvement"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 13,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 2
+        }
+        },
+        {
+        "level": 13,
+        "features": [],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 14,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3
+        }
+        },
+        {
+        "level": 14,
+        "features": ["Magical Secrets"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 14,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3
+        }
+        },
+        {
+        "level": 15,
+        "features": [],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 15,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3,
+            "5th": 2
+        }
+        },
+        {
+        "level": 16,
+        "features": ["Ability Score Improvement"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 15,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3,
+            "5th": 2
+        }
+        },
+        {
+        "level": 17,
+        "features": [],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 16,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3,
+            "5th": 3
+        }
+        },
+        {
+        "level": 18,
+        "features": ["Magical Secrets"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 16,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3,
+            "5th": 3
+        }
+        },
+        {
+        "level": 19,
+        "features": ["Ability Score Improvement"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 17,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3,
+            "5th": 3,
+            "6th": 1
+        }
+        },
+        {
+        "level": 20,
+        "features": ["Superior Inspiration"],
+        "spells": {
+            "Cantrips": 3,
+            "1st": 17,
+            "2nd": 4,
+            "3rd": 3,
+            "4th": 3,
+            "5th": 3,
+            "6th": 1
+        }
+        }
+    ]
+}

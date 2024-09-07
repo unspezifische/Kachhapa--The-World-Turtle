@@ -1,0 +1,128 @@
+{
+  "Name": "Sorcerer",
+  "hit_points": {
+    "hit_dice": "1d6",
+    "base": 6,
+    "level_increment": 4
+  },
+  "Primary Ability": "Charisma",
+  "Saving Throw Proficiencies": ["Constitution", "Charisma"],
+  "Armor Proficiencies": [],
+  "Weapon Proficiencies": ["Daggers", "Darts", "Slings", "Quarterstaffs", "Light crossbows"],
+  "class Features": {
+    "Spellcasting": {
+      "description": "An event in your past, or in the life of a parent or ancestor, left an indelible mark on you, infusing you with arcane magic. This font of magic, whatever its origin, fuels your spells. See chapter 10 for the general rules of spellcasting and chapter 11 for the sorcerer spell list.",
+      "options": []
+    },
+    "Sorcerous Origin": {
+      "description": "Choose a sorcerous origin, which describes the source of your innate magical power, such as Draconic Bloodline or Wild Magic, both detailed at the end of the class description. Your choice grants you features at 1st level and again at 6th, 14th, and 18th level.",
+      "options": []
+    },
+    "Font of Magic": {
+      "description": "At 2nd level, you tap into a deep wellspring of magic within yourself. This wellspring is represented by sorcery points, which allow you to create a variety of magical effects. See chapter 10 for the sorcerer class table.",
+      "options": []
+    }
+  },
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Spellcasting", "Sorcerous Origin"],
+      "spells": {}
+    },
+    {
+      "level": 2,
+      "features": ["Font of Magic"],
+      "spells": {}
+    },
+    {
+      "level": 3,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 5,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 6,
+      "features": ["Sorcerous Origin"],
+      "spells": {}
+    },
+    {
+      "level": 7,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 9,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 10,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 11,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 13,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 14,
+      "features": ["Sorcerous Origin"],
+      "spells": {}
+    },
+    {
+      "level": 15,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 17,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 18,
+      "features": ["Sorcerous Origin"],
+      "spells": {}
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 20,
+      "features": [],
+      "spells": {}
+    }
+  ]
+}

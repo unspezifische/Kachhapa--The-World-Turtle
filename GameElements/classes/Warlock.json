@@ -1,0 +1,128 @@
+{
+  "Name": "Warlock",
+  "hit_points": {
+    "hit_dice": "1d8",
+    "base": 8,
+    "level_increment": 5
+  },
+  "Primary Ability": "Charisma",
+  "Saving Throw Proficiencies": ["Wisdom", "Charisma"],
+  "Armor Proficiencies": ["Light armor"],
+  "Weapon Proficiencies": ["Simple weapons"],
+  "class Features": {
+    "Eldritch Blast": {
+      "description": "Starting at 1st level, you can unleash the power of eldritch energy. You gain the ability to cast Eldritch Blast as a cantrip. This spell creates a beam of crackling energy that you can direct at a creature within range. On a hit, the target takes force damage.",
+      "options": []
+    },
+    "Pact Magic": {
+      "description": "At 1st level, your otherworldly patron grants you the ability to cast spells. You regain all expended spell slots when you finish a short or long rest.",
+      "options": []
+    },
+    "Otherworldly Patron": {
+      "description": "At 1st level, you choose an otherworldly patron that grants you powers and spells. Your choice grants you features at 1st level and again at 6th, 10th, and 14th level.",
+      "options": []
+    }
+  },
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Eldritch Blast", "Pact Magic", "Otherworldly Patron"],
+      "spells": {}
+    },
+    {
+      "level": 2,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 3,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 5,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 6,
+      "features": ["Ability Score Improvement", "Otherworldly Patron"],
+      "spells": {}
+    },
+    {
+      "level": 7,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 9,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 10,
+      "features": ["Ability Score Improvement", "Otherworldly Patron"],
+      "spells": {}
+    },
+    {
+      "level": 11,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 13,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 14,
+      "features": ["Ability Score Improvement", "Otherworldly Patron"],
+      "spells": {}
+    },
+    {
+      "level": 15,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 17,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 18,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 19,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 20,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    }
+  ]
+}

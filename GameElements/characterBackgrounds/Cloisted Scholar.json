@@ -1,0 +1,21 @@
+{
+  "Name": "Cloistered Scholar",
+  "Description": "You have spent years learning the lore of the multiverse. You scoured manuscripts, studied scrolls, and listened to the greatest experts on the subjects that interest you. Your efforts have made you a master in your fields of study.",
+  "Skill Proficiency": {
+    "1": "History",
+    "2": "Religion"
+  },
+  "Tool Proficiency": {
+    "1": "Choose one of the following: Calligrapher's supplies, painter's supplies, or a musical instrument"
+  },
+  "languages": 2,
+  "Equipment": {
+    "1": "A set of common clothes",
+    "2": "A letter from a dead colleague posing a question you have not yet been able to answer",
+    "3": "A blank journal",
+    "4": "A belt pouch containing 10 gp"
+  },
+  "Feature": {
+    "Library Access": "As a member of the scholar's network, you have access to a library that contains a wealth of information on a variety of topics. If you can't find the answer at the library, the librarian might know where to find it. The library might be a room, a building, or a campus. Your access to the library is subject to the rules of the library. You might have to make a donation or pay a fee to access the information you seek. The librarian might ask for a favor in exchange for the information you seek."
+  }
+}

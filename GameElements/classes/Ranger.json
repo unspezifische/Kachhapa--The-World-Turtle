@@ -1,0 +1,267 @@
+{
+  "name": "Ranger",
+  "hit_points": {
+    "base": 10,
+    "level_increment": 6
+  },
+  "primary_ability": "Dexterity",
+  "saving_throw_proficiencies": ["Strength", "Dexterity"],
+  "armor_proficiencies": ["Light armor", "Medium armor", "Shields"],
+  "weapon_proficiencies": ["Simple weapons", "Martial weapons"],
+  "class_features": {
+    "Favored Enemy": "Beginning at 1st level, you have significant experience studying, tracking, hunting, and even talking to a certain type of enemy commonly encountered in the wilds. Choose a type of favored enemy: aberrations, beasts, celestials, constructs, dragons, elementals, fey, fiends, giants, monstrosities, oozes, plants, or undead. Alternatively, you can select two races of humanoid (such as gnolls and orcs) as favored enemies.",
+    "Natural Explorer": "You are particularly familiar with one type of natural environment and are adept at traveling and surviving in such regions. Choose one type of favored terrain: arctic, coast, desert, forest, grassland, mountain, swamp, or the Underdark. When you make an Intelligence or Wisdom check related to your favored terrain, your proficiency bonus is doubled if you are using a skill that you're proficient in.",
+    "Spellcasting": "By the time you reach 2nd level, you have learned to use the magical essence of nature to cast spells, much as a druid does."
+  },
+  "subclasses": ["Hunter", "Beast Master"],
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Favored Enemy", "Natural Explorer"],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 2
+      }
+    },
+    {
+      "level": 2,
+      "features": ["Spellcasting"],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 3
+      }
+    },
+    {
+      "level": 3,
+      "features": ["Ranger Archetype"],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 4,
+        "2nd": 2
+      }
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3
+      }
+    },
+    {
+      "level": 5,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 2
+      }
+    },
+    {
+      "level": 6,
+      "features": ["Favored Enemy Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3
+      }
+    },
+    {
+      "level": 7,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 1
+      }
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2
+      }
+    },
+    {
+      "level": 9,
+      "features": ["Natural Explorer Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 1
+      }
+    },
+    {
+      "level": 10,
+      "features": ["Hide in Plain Sight"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2
+      }
+    },
+    {
+      "level": 11,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1
+      }
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1
+      }
+    },
+    {
+      "level": 13,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1
+      }
+    },
+    {
+      "level": 14,
+      "features": ["Favored Enemy Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1
+      }
+    },
+    {
+      "level": 15,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1
+      }
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1
+      }
+    },
+    {
+      "level": 17,
+      "features": ["Favored Enemy Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1,
+        "9th": 1
+      }
+    },
+    {
+      "level": 18,
+      "features": ["Feral Senses"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1,
+        "9th": 1
+      }
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 2,
+        "7th": 2,
+        "8th": 2,
+        "9th": 2
+      }
+    },
+    {
+      "level": 20,
+      "features": ["Foe Slayer"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 2,
+        "7th": 2,
+        "8th": 2,
+        "9th": 2
+      }
+    }
+  ]
+}

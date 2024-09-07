@@ -1,0 +1,18 @@
+{
+  "Name": "Aasimar",
+  "Ability Score Increase": {
+    "Charisma": 2,
+    "Wisdom": 1
+  },
+  "Description": "Aasimars are humans with a significant amount of celestial or other good outsider blood in their ancestry. Aasimars are not always good, but it is a natural tendency for them, and they gravitate to good faiths or organizations associated with celestials. Aasimar heritage can hide for generations, only to appear suddenly in the child of two apparently human parents. Most societies interpret aasimar births as good omens, though it must be acknowledged that some aasimars take advantage of the reputation of their kind, brutally subverting the expectations of others with acts of evil.",
+  "Age": "Aasimars mature at the same rate as humans but live a few years longer.",
+  "alignment": "Aasimars are often of good alignment.",
+  "size": "Medium",
+  "speed": 30,
+  "traits": {
+    "Darkvision": "You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.",
+    "Celestial Resistance": "You have resistance to necrotic damage and radiant damage.",
+    "Healing Hands": "As an action, you can touch a creature and cause it to regain a number of hit points equal to your level. Once you use this trait, you can’t use it again until you finish a long rest."
+  },
+  "languages": "You can speak, read, and write Common and Halfling. The Halfling language isn’t secret, but halflings are loath to share it with others. They write very little, so they don’t have a rich body of literature. Their oral tradition, however, is very strong. Almost all halflings speak Common to converse with the people in whose lands they dwell or through which they are traveling."
+}

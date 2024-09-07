@@ -5,7 +5,8 @@ Flask/convert.py
 Flask/corrections.py
 Flask/migrate2.py
 
-GameElements/
+GameElements/Library/
+Library/
 node_modules/
 
 webapp/build/
@@ -15,7 +16,8 @@ public/
 wiki/
 backup.sh
 ijohnson@raspberrypi.local
-Items.numbers
+Items- full.numbers
+*.numbers
 myapp.service
 publish.sh
 TTRPG

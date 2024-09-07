@@ -1,0 +1,278 @@
+{
+  "Name": "Cleric",
+  "hit_points": {
+    "hit_dice": "1d8",
+    "base": 8,
+    "level_increment": 5
+
+  },
+  "Primary Ability": "Wisdom",
+  "Saving Throw Proficiencies": ["Wisdom", "Charisma"],
+  "Armor Proficiencies": ["Light armor", "Medium armor", "Shields"],
+  "Weapon Proficiencies": ["Simple weapons"],
+  "class Features": {
+    "Divine Domain": {
+      "description": "At 1st level, you choose a domain that represents your deity and grants you domain spells and other features. See the Cleric Divine Domains section for more details.",
+      "options": []
+    },
+    "Channel Divinity": {
+      "description": "At 2nd level, you gain the ability to channel divine energy directly from your deity, using that energy to fuel magical effects. See the Cleric Divine Domains section for the specific effects of your Channel Divinity.",
+      "options": []
+    },
+    "Divine Intervention": {
+      "description": "Beginning at 10th level, you can call on your deity to intervene on your behalf when your need is great. See the Cleric Divine Domains section for more details.",
+      "options": []
+    }
+  },
+  "Divine Domains": ["Knowledge", "Life", "Light", "Nature", "Tempest", "Trickery", "War"],
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Divine Domain"],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 2
+      }
+    },
+    {
+      "level": 2,
+      "features": ["Channel Divinity"],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 3
+      }
+    },
+    {
+      "level": 3,
+      "features": [],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 4,
+        "2nd": 2
+      }
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3
+      }
+    },
+    {
+      "level": 5,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 2
+      }
+    },
+    {
+      "level": 6,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3
+      }
+    },
+    {
+      "level": 7,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 1
+      }
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2
+      }
+    },
+    {
+      "level": 9,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 1
+      }
+    },
+    {
+      "level": 10,
+      "features": ["Divine Intervention"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2
+      }
+    },
+    {
+      "level": 11,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1
+      }
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1
+      }
+    },
+    {
+      "level": 13,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1
+      }
+    },
+    {
+      "level": 14,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1
+      }
+    },
+    {
+      "level": 15,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1
+      }
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1
+      }
+    },
+    {
+      "level": 17,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1,
+        "9th": 1
+      }
+    },
+    {
+      "level": 18,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1,
+        "9th": 1
+      }
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 2,
+        "7th": 2,
+        "8th": 2,
+        "9th": 2
+      }
+    },
+    {
+      "level": 20,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 2,
+        "7th": 2,
+        "8th": 2,
+        "9th": 2
+      }
+    }
+  ]
+}

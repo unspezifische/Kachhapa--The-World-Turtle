@@ -1,0 +1,17 @@
+{
+  "Name": "Arakocra",
+  "Ability Score Increase": {
+    "Dexterity": 2,
+    "Wisdom": 1
+  },
+  "Description": "Arakocra are about 5 feet tall. They have thin, lightweight bodies that weigh between 80 and 100 pounds. Their heads resemble those of eagles and other birds of prey, and they have wings and taloned feet.",
+  "Age": "Arakocra reach maturity by age 3. Compared to humans, arakocra don’t usually live longer than 30 years.",
+  "alignment": "Most arakocra are good and rarely choose sides when it comes to law and chaos. Tribal leaders and warriors might be lawful, while explorers and adventurers might tend toward chaotic.",
+  "size": "Arakocra are about 5 feet tall. They have thin, lightweight bodies that weigh between 80 and 100 pounds. Your size is Medium.",
+  "speed": 25,
+  "traits": {
+    "Flight": "You have a flying speed of 50 feet. To use this speed, you can’t be wearing medium or heavy armor.",
+    "Talons": "You are proficient with your unarmed strikes, which deal 1d4 slashing damage on a hit."
+  },
+  "languages": "You can speak, read, and write Common, Auran, and Aarakocra. Aarakocra is a language made up of trills, caws, and sounds that mimic birds. It has no script of its own but is written in Common."
+}

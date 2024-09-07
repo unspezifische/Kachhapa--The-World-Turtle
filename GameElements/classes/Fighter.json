@@ -1,0 +1,123 @@
+{
+  "name": "Fighter",
+  "hit_points": {
+    "base": 10,
+    "level_increment": 6
+  },
+  "primary_ability": "Strength",
+  "saving_throw_proficiencies": ["Strength", "Constitution"],
+  "armor_proficiencies": ["All armor", "Shields"],
+  "weapon_proficiencies": ["Simple weapons", "Martial weapons"],
+  "class_features": {
+    "Fighting Style": {
+      "description": "You adopt a particular style of fighting as your specialty.",
+      "options": [
+        "Archery",
+        "Defense",
+        "Dueling",
+        "Great Weapon Fighting",
+        "Protection",
+        "Two-Weapon Fighting"
+      ]
+    },
+    "Second Wind": "You have a limited well of stamina that you can draw on to protect yourself from harm. On your turn, you can use a bonus action to regain hit points equal to 1d10 + your fighter level. Once you use this feature, you must finish a short or long rest before you can use it again.",
+    "Martial Archetype": {
+      "description": "At 3rd level, you choose an archetype that you strive to emulate in your combat styles and techniques. Choose one of the following options:",
+      "options": [
+        "Champion",
+        "Battle Master",
+        "Eldritch Knight"
+      ]
+    },
+    "Action Surge": "Starting at 2nd level, you can push yourself beyond your normal limits for a moment. On your turn, you can take one additional action.",
+    "Ability Score Improvement": "When you reach 4th level, and again at 6th, 8th, 12th, 14th, 16th, and 19th level, you can increase one ability score of your choice by 2, or you can increase two ability scores of your choice by 1 each.",
+    "Extra Attack": "Beginning at 5th level, you can attack twice, instead of once, whenever you take the Attack action on your turn.",
+    "Indomitable": "Beginning at 9th level, you can reroll a saving throw that you fail. If you do so, you must use the new roll.",
+    "Extra Attack (2)": "At 11th level, you can attack three times, instead of twice, whenever you take the Attack action on your turn.",
+    "Indomitable (2)": "Starting at 13th level, you can use Indomitable twice between rests.",
+    "Extra Attack (3)": "At 20th level, you can attack four times, instead of three times, whenever you take the Attack action on your turn."
+  },
+  "subclasses": ["Champion", "Battle Master", "Eldritch Knight"],
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Fighting Style", "Second Wind"]
+    },
+    {
+      "level": 2,
+      "features": ["Action Surge"]
+    },
+    {
+      "level": 3,
+      "features": ["Martial Archetype"]
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 5,
+      "features": ["Extra Attack"]
+    },
+    {
+      "level": 6,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 7,
+      "features": ["Martial Archetype Feature"]
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 9,
+      "features": ["Indomitable"]
+    },
+    {
+      "level": 10,
+      "features": ["Martial Archetype Feature"]
+    },
+    {
+      "level": 11,
+      "features": ["Extra Attack (2)"]
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 13,
+      "features": ["Indomitable (2)"]
+    },
+    {
+      "level": 14,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 15,
+      "features": ["Martial Archetype Feature"]
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 17,
+      "features": ["Action Surge (2)", "Indomitable (3)"]
+    },
+    {
+      "level": 18,
+      "features": ["Martial Archetype Feature"]
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 20,
+      "features": ["Extra Attack (3)"]
+    }
+  ]
+}

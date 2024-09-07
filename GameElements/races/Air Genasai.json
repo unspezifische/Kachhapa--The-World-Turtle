@@ -1,0 +1,19 @@
+{
+  "name": "Air Genasi",
+  "abilityScoreIncrease": {
+    "Constitution": 2,
+    "Dexterity": 1
+  },
+  "age": "Genasi mature at about the same rate as humans and reach adulthood in their late teens. They live somewhat longer than humans do, up to 120 years.",
+  "alignment": "Genasi tend toward no particular alignment. The best and the worst are found among them.",
+  "size": "Medium",
+  "speed": 30,
+  "traits": {
+    "Unending Breath": "You can hold your breath indefinitely while you’re not incapacitated.",
+    "Mingle with the Wind": "You can cast the levitate spell once with this trait, requiring no material components, and you regain the ability to cast it this way when you finish a long rest. Constitution is your spellcasting ability for this spell."
+  },
+  "languages": [
+    "Common",
+    "Primordial"
+  ]
+}

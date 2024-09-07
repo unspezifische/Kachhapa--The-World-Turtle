@@ -1,0 +1,21 @@
+{
+  "Name": "Clan Crafter",
+  "Description": "You are a member of an artisan's guild, skilled in a particular field and closely associated with other artisans. You are a well-established part of the mercantile world, freed by talent and wealth from the constraints of a feudal social order. You learned your skills as an apprentice to a master artisan, under the sponsorship of your guild, until you became a master in your own right.",
+  "Skill Proficiency": {
+    "1": "Insight",
+    "2": "History"
+  },
+  "Tool Proficiency": {
+    "1": "One type of artisan's tools"
+  },
+  "languages": "Dwarvish or one other of your choice (if this language is already known, you may choose another)",
+  "Equipment": {
+    "1": "A set of artisan's tools",
+    "2": "A set of traveler's clothes",
+    "3": "A letter of introduction from your guild",
+    "4": "A belt pouch containing 15 gp"
+  },
+  "Feature": {
+    "Respect of the Stout Fold": "As a member of the guild, you can rely on certain benefits that membership provides. Your fellow guild members will provide you with lodging and food if necessary, and pay for your funeral if needed. In some cities and towns, a guildhall offers a central place to meet other members of your profession, which can be a good place to meet potential patrons, allies, or hirelings."
+  }
+}

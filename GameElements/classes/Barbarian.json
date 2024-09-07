@@ -1,0 +1,126 @@
+{
+  "Name": "Barbarian",
+  "hit_points": {
+    "hit_dice": "1d12",
+    "Hit Points at 1st level": 12,
+    "Hit points at higher levels": "1d12 (or 7) + your Constitution modifier per barbarian level after 1st"
+  },
+  "Primary Ability": "Strength",
+  "Saving Throw Proficiencies": ["Strength", "Constitution"],
+  "Armor Proficiencies": ["Light armor", "Medium armor", "Shields"],
+  "Weapon Proficiencies": ["Simple weapons", "Martial weapons"],
+  "class Features": {
+    "Rage": {
+      "description": "In battle, you fight with primal ferocity. On your turn, you can enter a rage as a bonus action.",
+      "options": []
+    },
+    "Unarmored Defense": {
+      "description": "While you are not wearing any armor, your Armor Class equals 10 + your Dexterity modifier + your Constitution modifier. You can use a shield and still gain this benefit.",
+      "options": []
+    },
+    "Reckless Attack": {
+      "description": "Starting at 2nd level, you can throw aside all concern for defense to attack with fierce desperation. When you make your first attack on your turn, you can decide to attack recklessly.",
+      "options": []
+    },
+    "Danger Sense": {
+      "description": "At 2nd level, you gain an uncanny sense of when things nearby aren't as they should be, giving you an edge when you dodge away from danger.",
+      "options": []
+    },
+    "Primal Path": {
+      "description": "At 3rd level, you choose a path that shapes the nature of your rage. Choose the Path of the Berserker or the Path of the Totem Warrior, both detailed at the end of the class description.",
+      "options": ["Path of the Berserker", "Path of the Totem Warrior"]
+    },
+    "Subclasses": {
+      "Path of the Berserker": {
+        "description": "For some barbarians, rage is a means to an end—that end being violence. The Path of the Berserker is a path of untrammeled fury, slick with blood.",
+        "features": ["Frenzy", "Mindless Rage", "Intimidating Presence", "Retaliation"]
+      },
+      "Path of the Totem Warrior": {
+        "description": "The Path of the Totem Warrior is a spiritual journey, as the barbarian accepts a spirit animal as guide, protector, and inspiration.",
+        "features": ["Spirit Seeker", "Totem Spirit", "Aspect of the Beast", "Totemic Attunement"]
+      }
+    }
+  },
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Rage", "Unarmored Defense"]
+    },
+    {
+      "level": 2,
+      "features": ["Reckless Attack", "Danger Sense"]
+    },
+    {
+      "level": 3,
+      "features": ["Primal Path"]
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 5,
+      "features": ["Extra Attack", "Fast Movement"]
+    },
+    {
+      "level": 6,
+      "features": ["Path Feature"]
+    },
+    {
+      "level": 7,
+      "features": ["Feral Instinct"]
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 9,
+      "features": ["Brutal Critical (1 die)"]
+    },
+    {
+      "level": 10,
+      "features": ["Path Feature"]
+    },
+    {
+      "level": 11,
+      "features": ["Relentless Rage"]
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 13,
+      "features": ["Brutal Critical (2 dice)"]
+    },
+    {
+      "level": 14,
+      "features": ["Path Feature"]
+    },
+    {
+      "level": 15,
+      "features": ["Persistent Rage"]
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 17,
+      "features": ["Brutal Critical (3 dice)"]
+    },
+    {
+      "level": 18,
+      "features": ["Indomitable Might"]
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 20,
+      "features": ["Primal Champion"]
+    }
+  ]
+}

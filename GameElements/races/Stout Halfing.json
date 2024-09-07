@@ -1,0 +1,19 @@
+{
+  "Name": "Stout Halfling",
+  "Ability Score Increase": {
+    "Dexterity": 2,
+    "Constitution": 1
+  },
+  "Description": "As a stout halfling, you’re hardier than average and have some resistance to poison. Some say that stouts have dwarven blood. Whether that’s true or not, it’s a fact that stouts are sturdier than other halflings.",
+  "Age": "A halfling reaches adulthood at the age of 20 and generally lives into the middle of his or her second century.",
+  "alignment": "Most halflings are lawful good. As a rule, they are good-hearted and kind, hate to see others in pain, and have no tolerance for oppression. They are also very orderly and traditional, leaning heavily on the support of their community and the comfort of their old ways.",
+  "size": "Small",
+  "speed": 30,
+  "traits": {
+    "Lucky": "When you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll.",
+    "Brave": "You have advantage on saving throws against being frightened.",
+    "Halfling Nimbleness": "You can move through the space of any creature that is of a size larger than yours.",
+    "Stout Resilience": "You have advantage on saving throws against poison, and you have resistance against poison damage."
+  },
+  "languages": "You can speak, read, and write Common and Halfling. The Halfling language isn’t secret, but halflings are loath to share it with others. They write very little, so they don’t have a rich body of literature. Their oral tradition, however, is very strong. Almost all halflings speak Common to converse with the people in whose lands they dwell or through which they are traveling."
+}

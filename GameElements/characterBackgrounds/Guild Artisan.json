@@ -1,0 +1,65 @@
+{
+  "Name": "Guild Artisan",
+  "Description": "You are a member of an artisan's guild, skilled in a particular field and closely associated with other artisans. You are well-established in the community of your chosen craft, and you command the respect of others in your guild.",
+  "Skill Proficiency": {
+    "1": "Insight",
+    "2": "Persuasion"
+  },
+  "Tool Proficiency": {
+    "1": "One type of artisan's tools",
+    "2": "One type of musical instrument"
+  },
+  "languages": false,
+  "Equipment": {
+    "1": "a set of artisan's tools (one of your choice)",
+    "2": "a letter of introduction from your guild",
+    "3": "a set of traveler's clothes",
+    "4": "a belt pouch containing 15 gp"
+  },
+  "Feature": {
+    "Guild Membership": "As a member of an artisan's guild, you have access to a guildhall that serves as a place to meet other members of your profession, as well as a place to receive lodging and meals when you are in town. Your guild will also provide you with legal and financial support, as long as you maintain your standing within the guild."
+  },
+  "Variant": {
+    "Guild Business": "You have a particular business that you are skilled in, such as a baker, blacksmith, or jeweler. You have established connections and a reputation in your chosen field, and you can use your skills to earn a modest income when you are not adventuring."
+  },
+  "Defining Event": {
+    "1": "I created a piece of art that gained recognition and praise.",
+    "2": "I successfully completed a commission for a wealthy patron.",
+    "3": "I organized a successful community event showcasing my craft.",
+    "4": "I uncovered a secret plot within my guild and exposed the culprits.",
+    "5": "I invented a new technique or tool that revolutionized my craft.",
+    "6": "I traveled to a distant land to learn from a master artisan."
+  },
+  "Personality Trait": {
+    "1": "I am always thinking of new ideas and ways to improve my craft.",
+    "2": "I take pride in my work and strive for perfection.",
+    "3": "I am willing to share my knowledge and mentor others in my craft.",
+    "4": "I am a bit eccentric and have unconventional methods in my craft.",
+    "5": "I am fiercely loyal to my guild and will do anything to protect its reputation.",
+    "6": "I am constantly seeking inspiration and new sources of creativity."
+  },
+  "Ideal": {
+    "1": "Community. My craft is a way to contribute to and strengthen my community. (Good)",
+    "2": "Creativity. I value the freedom to express myself through my craft. (Chaotic)",
+    "3": "Tradition. I adhere to the traditional methods and practices of my craft. (Lawful)",
+    "4": "Innovation. I strive to push the boundaries and explore new possibilities in my craft. (Neutral)",
+    "5": "Excellence. I aim for the highest standards of quality and craftsmanship. (Any)",
+    "6": "Independence. I value my freedom and autonomy in pursuing my craft. (Any)"
+  },
+  "Bond": {
+    "1": "My guild is like a family to me, and I would do anything to protect its members.",
+    "2": "I have a rival in my guild, and I am determined to surpass them in skill and reputation.",
+    "3": "I owe a debt to a powerful individual in my guild, and I must repay it.",
+    "4": "I am searching for a lost masterpiece that holds great significance to my craft.",
+    "5": "I am dedicated to preserving the traditions and history of my craft.",
+    "6": "I have a deep respect for a master artisan, and I seek their approval and recognition."
+  },
+  "Flaw": {
+    "1": "I am overly critical of others' work and have a hard time appreciating different styles and techniques.",
+    "2": "I am easily swayed by flattery and can be manipulated by those who praise my craft.",
+    "3": "I have a tendency to take on too many projects at once and struggle to complete them all.",
+    "4": "I am fiercely competitive and have a hard time working collaboratively with others.",
+    "5": "I have a habit of hoarding rare materials and resources, even if I have no immediate use for them.",
+    "6": "I am easily distracted by new ideas and projects, often abandoning previous ones unfinished."
+  }
+}

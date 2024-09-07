@@ -1,0 +1,19 @@
+{
+    "Name": "Half-Orc",
+    "Ability Score Increase": {
+        "Strength": 2,
+        "Constitution": 1
+    },
+    "Description": "Half-orcs’ grayish pigmentation, sloping foreheads, jutting jaws, prominent teeth, and towering builds make their orcish heritage plain for all to see.",
+    "Age": "Half-orcs mature a little faster than humans, reaching adulthood around age 14. They age noticeably faster and rarely live longer than 75 years.",
+    "alignment": "Half-orcs inherit a tendency toward chaos from their orc parents and are not strongly inclined toward good. Half-orcs raised among orcs and willing to live out their lives among them are usually evil.",
+    "size": "Medium",
+    "speed": 30,
+    "traits": {
+        "Darkvision": "Thanks to your orc blood, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can’t discern color in darkness, only shades of gray.",
+        "Menacing": "You gain proficiency in the Intimidation skill.",
+        "Relentless Endurance": "When you are reduced to 0 hit points but not killed outright, you can drop to 1 hit point instead. You can’t use this feature again until you finish a long rest.",
+        "Savage Attacks": "When you score a critical hit with a melee weapon attack, you can roll one of the weapon’s damage dice one additional time and add it to the extra damage of the critical hit."
+    },
+    "languages": "You can speak, read, and write Common, Elvish, and one extra language of your choice."
+}

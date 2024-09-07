@@ -1,0 +1,113 @@
+{
+  "name": "Monk",
+  "hit_points": {
+    "base": 8,
+    "level_increment": 5
+  },
+  "primary_ability": "Dexterity",
+  "saving_throw_proficiencies": ["Strength", "Dexterity"],
+  "armor_proficiencies": [],
+  "weapon_proficiencies": ["Simple weapons", "Shortswords"],
+  "class_features": {
+    "Unarmored Defense": "Beginning at 1st level, while you are wearing no armor and not wielding a shield, your AC equals 10 + your Dexterity modifier + your Wisdom modifier.",
+    "Martial Arts": "At 1st level, your practice of martial arts gives you mastery of combat styles that use unarmed strikes and monk weapons, which are shortswords and any simple melee weapons that don't have the two-handed or heavy property.",
+    "Ki": "Starting at 2nd level, your training allows you to harness the mystic energy of ki. Your access to this energy is represented by a number of ki points.",
+    "Flurry of Blows": "Immediately after you take the Attack action on your turn, you can spend 1 ki point to make two unarmed strikes as a bonus action.",
+    "Deflect Missiles": "Starting at 3rd level, you can use your reaction to deflect or catch the missile when you are hit by a ranged weapon attack.",
+    "Slow Fall": "Beginning at 4th level, you can use your reaction when you fall to reduce any falling damage you take by an amount equal to five times your monk level.",
+    "Extra Attack": "Beginning at 5th level, you can attack twice, instead of once, whenever you take the Attack action on your turn.",
+    "Stunning Strike": "Starting at 5th level, you can interfere with the flow of ki in an opponent's body.",
+    "Ki-Empowered Strikes": "Starting at 6th level, your unarmed strikes count as magical for the purpose of overcoming resistance and immunity to nonmagical attacks and damage.",
+    "Evasion": "At 7th level, your instinctive agility lets you dodge out of the way of certain area effects, such as a blue dragon's lightning breath or a fireball spell.",
+    "Stillness of Mind": "Starting at 7th level, you can use your action to end one effect on yourself that is causing you to be charmed or frightened.",
+    "Purity of Body": "At 10th level, your mastery of the ki flowing through you makes you immune to disease and poison.",
+    "Tongue of the Sun and Moon": "Starting at 13th level, you learn to touch the ki of other minds so that you understand all spoken languages.",
+    "Diamond Soul": "Beginning at 14th level, your mastery of ki grants you proficiency in all saving throws.",
+    "Timeless Body": "At 15th level, your ki sustains you so that you suffer none of the frailty of old age.",
+    "Empty Body": "Beginning at 18th level, you can use your action to spend 4 ki points to become invisible for 1 minute.",
+    "Perfect Self": "At 20th level, when you roll for initiative and have no ki points remaining, you regain 4 ki points."
+  },
+  "subclasses": ["Way of the Open Hand", "Way of Shadow", "Way of the Four Elements"],
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Unarmored Defense", "Martial Arts"]
+    },
+    {
+      "level": 2,
+      "features": ["Ki"]
+    },
+    {
+      "level": 3,
+      "features": ["Flurry of Blows", "Deflect Missiles"]
+    },
+    {
+      "level": 4,
+      "features": ["Slow Fall", "Ability Score Improvement"]
+    },
+    {
+      "level": 5,
+      "features": ["Extra Attack", "Stunning Strike"]
+    },
+    {
+      "level": 6,
+      "features": ["Ki-Empowered Strikes", "Ability Score Improvement"]
+    },
+    {
+      "level": 7,
+      "features": ["Evasion", "Stillness of Mind"]
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 9,
+      "features": []
+    },
+    {
+      "level": 10,
+      "features": ["Purity of Body", "Ability Score Improvement"]
+    },
+    {
+      "level": 11,
+      "features": ["Martial Arts Improvement", "Extra Attack (2)"]
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 13,
+      "features": ["Tongue of the Sun and Moon"]
+    },
+    {
+      "level": 14,
+      "features": ["Diamond Soul"]
+    },
+    {
+      "level": 15,
+      "features": ["Timeless Body", "Ability Score Improvement"]
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 17,
+      "features": ["Martial Arts Improvement"]
+    },
+    {
+      "level": 18,
+      "features": ["Empty Body"]
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 20,
+      "features": ["Perfect Self"]
+    }
+  ]
+}
