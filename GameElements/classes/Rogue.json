@@ -1,0 +1,128 @@
+{
+  "Name": "Rogue",
+  "hit_points": {
+    "hit_dice": "1d8",
+    "base": 8,
+    "level_increment": 5
+  },
+  "Primary Ability": "Dexterity",
+  "Saving Throw Proficiencies": ["Dexterity", "Intelligence"],
+  "Armor Proficiencies": ["Light armor"],
+  "Weapon Proficiencies": ["Simple weapons", "Hand crossbows", "Longswords", "Rapiers", "Shortswords"],
+  "class Features": {
+    "Sneak Attack": {
+      "description": "Beginning at 1st level, you know how to strike subtly and exploit a foe's distraction. Once per turn, you can deal extra damage to one creature you hit with an attack if you have advantage on the attack roll. The amount of extra damage increases as you gain levels in this class.",
+      "options": []
+    },
+    "Thieves' Cant": {
+      "description": "During your rogue training you learned thieves' cant, a secret mix of dialect, jargon, and code that allows you to hide messages in seemingly normal conversation. Only another creature that knows thieves' cant understands such messages. It takes four times longer to convey such a message than it does to speak the same idea plainly.",
+      "options": []
+    },
+    "Cunning Action": {
+      "description": "Starting at 2nd level, your quick thinking and agility allow you to move and act quickly. You can take a bonus action on each of your turns in combat. This action can be used only to take the Dash, Disengage, or Hide action.",
+      "options": []
+    }
+  },
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Sneak Attack", "Thieves' Cant"],
+      "spells": {}
+    },
+    {
+      "level": 2,
+      "features": ["Cunning Action"],
+      "spells": {}
+    },
+    {
+      "level": 3,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 5,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 6,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 7,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 9,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 10,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 11,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 13,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 14,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 15,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 17,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 18,
+      "features": [],
+      "spells": {}
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"],
+      "spells": {}
+    },
+    {
+      "level": 20,
+      "features": [],
+      "spells": {}
+    }
+  ]
+}

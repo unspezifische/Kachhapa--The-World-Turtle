@@ -1,0 +1,21 @@
+{
+  "Name": "Uthgardt Tribe Member",
+  "Description": "You grew up in one of the ten tribes of the Uthgardt barbarians. You know the secret paths and trails of the wilderness, and you have a natural resistance to poisons.",
+  "Skill Proficiency": {
+    "1": "Athletics",
+    "2": "Survival"
+  },
+  "Tool Proficiency": {
+    "1": "One type of musical instrument or artisan's tools"
+  },
+  "languages": 1,
+  "Equipment": {
+    "1": "A hunting trap,",
+    "2": "a totemic token or set of tattoos marking your loyalty to Uthgar and your tribal totem,",
+    "3": "a set of traveler's clothes,",
+    "4": "10 gp."
+  },
+  "Feature": {
+    "Uthgardt Heritage": "You have an excellent knowledge of the wilderness and are familiar with the terrain and natural resources of the North. You are also familiar with the secret trails and paths of the Uthgardt barbarians."
+  }
+}

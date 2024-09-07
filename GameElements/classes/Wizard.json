@@ -1,0 +1,287 @@
+{
+  "name": "Wizard",
+  "hit_points": {
+    "base": 6,
+    "level_increment": 4
+  },
+  "primary_ability": "Intelligence",
+  "saving_throw_proficiencies": ["Intelligence", "Wisdom"],
+  "armor_proficiencies": [],
+  "weapon_proficiencies": ["Daggers", "Darts", "Slings", "Quarterstaffs", "Light crossbows"],
+  "class_features": {
+    "Arcane Recovery": {
+      "description": "You have learned to regain some of your magical energy by studying your spellbook. Once per day when you finish a short rest, you can choose expended spell slots to recover. The spell slots can have a combined level that is equal to or less than half your wizard level (rounded up), and none of the slots can be 6th level or higher.",
+      "options": ["Recover spell slots"]
+    },
+    "Spellcasting": {
+      "description": "As a student of arcane magic, you have a spellbook containing spells that show the first glimmerings of your true power."
+    },
+    "Arcane Tradition": {
+      "description": "At 2nd level, you choose an arcane tradition, shaping your practice of magic through one of the following schools:",
+      "options": [
+        "Abjuration",
+        "Conjuration",
+        "Divination",
+        "Enchantment",
+        "Evocation",
+        "Illusion",
+        "Necromancy",
+        "Transmutation"
+      ]
+    },
+    "Ability Score Improvement": "When you reach 4th level, and again at 8th, 12th, 16th, and 19th level, you can increase one ability score of your choice by 2, or you can increase two ability scores of your choice by 1 each.",
+    "Spell Mastery": "At 18th level, you have achieved such mastery over certain spells that you can cast them at will. Choose a 1st-level wizard spell and a 2nd-level wizard spell that are in your spellbook. You can cast those spells at their lowest level without expending a spell slot whenever you have them prepared.",
+    "Signature Spell": "At 20th level, you gain the ability to invest a spell with a portion of your soul. When you cast a wizard spell of 1st through 5th level that deals damage, you can deal maximum damage with that spell."
+  },
+  "subclasses": ["School of Abjuration", "School of Conjuration", "School of Divination", "School of Enchantment", "School of Evocation", "School of Illusion", "School of Necromancy", "School of Transmutation"],
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Spellcasting", "Arcane Recovery"],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 2
+      }
+    },
+    {
+      "level": 2,
+      "features": ["Arcane Tradition"],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 3
+      }
+    },
+    {
+      "level": 3,
+      "features": [],
+      "spells": {
+        "Cantrips": 3,
+        "1st": 4,
+        "2nd": 2
+      }
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3
+      }
+    },
+    {
+      "level": 5,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 2
+      }
+    },
+    {
+      "level": 6,
+      "features": ["Arcane Tradition feature"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3
+      }
+    },
+    {
+      "level": 7,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 1
+      }
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2
+      }
+    },
+    {
+      "level": 9,
+      "features": [],
+      "spells": {
+        "Cantrips": 4,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 1
+      }
+    },
+    {
+      "level": 10,
+      "features": ["Arcane Tradition feature"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2
+      }
+    },
+    {
+      "level": 11,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1
+      }
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1
+      }
+    },
+    {
+      "level": 13,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1
+      }
+    },
+    {
+      "level": 14,
+      "features": ["Arcane Tradition feature"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1
+      }
+    },
+    {
+      "level": 15,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1
+      }
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1
+      }
+    },
+    {
+      "level": 17,
+      "features": [],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 2,
+        "5th": 2,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1,
+        "9th": 1
+      }
+    },
+    {
+      "level": 18,
+      "features": ["Spell Mastery"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 1,
+        "7th": 1,
+        "8th": 1,
+        "9th": 1
+      }
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 2,
+        "7th": 2,
+        "8th": 2,
+        "9th": 2
+      }
+    },
+    {
+      "level": 20,
+      "features": ["Signature Spell"],
+      "spells": {
+        "Cantrips": 5,
+        "1st": 4,
+        "2nd": 3,
+        "3rd": 3,
+        "4th": 3,
+        "5th": 3,
+        "6th": 2,
+        "7th": 2,
+        "8th": 2,
+        "9th": 2
+      }
+    }
+  ]
+}

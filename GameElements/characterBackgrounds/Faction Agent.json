@@ -1,0 +1,20 @@
+{
+  "Name": "Faction Agent",
+  "Description": "You are a member of a particular faction within a kingdom or empire. You are well versed in the politics and power struggles of your faction and are able to use your knowledge to gain access to powerful figures and events.",
+  "Skill Proficiency": {
+    "1": "Insight",
+    "2": "Ione Intelligence, Wisdom,or Charisma skill ofyour choice, as appropriate to your faction"
+  },
+  "Tool Proficiency": false,
+  "languages": 2,
+  "Equipment": {
+    "1": "Set of common clothes",
+    "2": "Insignia of your faction",
+    "3": "Scroll of pedigree",
+    "4": "Letter of introduction from your faction",
+    "5": "Belt pouch containing 15 gp"
+  },
+  "Feature": {
+    "Safe Haven": "You have a secure place to stay within your faction’s territory or capital. Your faction will provide you with information and support, but only if you remain loyal to the faction. If you betray your faction, you will lose this feature."
+  }
+}

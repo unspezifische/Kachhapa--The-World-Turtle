@@ -1,0 +1,17 @@
+{
+  "Name": "Deep Gnome",
+  "Ability Score Increase": {
+    "Intelligence": 2,
+    "Dexterity": 1
+  },
+  "Description": "Gnomes are distant relatives of the fey, and their history tells of a time when they lived in the fey’s mysterious realm, a place where colors are brighter, the wildlands wilder, and emotions more primal. Unknown forces drove the ancient gnomes from that realm long ago, forcing them to seek refuge in this world; despite this, the gnomes have never completely abandoned their fey roots or adapted to mortal culture. Though gnomes are no longer truly fey, their fey heritage can be seen in their innate magic powers, their oft-capricious natures, and their outlooks on life and the world.",
+  "Age": "Deep gnomes are short-lived for gnomes. They mature at the same rate humans do and are considered full-grown adults by 25. They live 200 to 250 years, although hard toil and the dangers of the Underdark often claim them before their time.",
+  "alignment": "Svirfneblin believe that survival depends on avoiding entanglements with other creatures and not making enemies, so they favor neutral alignments. They rarely wish others ill, and they are unlikely to take risks on behalf of others.",
+  "size": "Small",
+  "speed": 25,
+  "traits": {
+    "Superior Darkvision": "Your darkvision has a radius of 120 feet.",
+    "Stone Camouflage": "You have advantage on Dexterity (stealth) checks to hide in rocky terrain."
+  },
+  "languages": "You can speak, read, and write Common, Gnomish, and Undercommon. The svirfneblin dialect is more guttural than surface Gnomish, and most svirfneblin know only a little bit of Common, but those who deal with outsiders (and that includes you as an adventurer) pick up enough Common to get by in other lands."
+}

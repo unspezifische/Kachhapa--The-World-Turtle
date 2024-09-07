@@ -1,0 +1,19 @@
+{
+  "name": "Changeling",
+  "abilityScoreIncrease": {
+    "Charisma": 2,
+    "Dexterity": 1
+  },
+  "age": "Changelings mature slightly faster than humans but share a similar lifespan—typically a century or less. While a changeling can shapeshift to conceal their age, the effects of aging catch up to them and they often die of old age while appearing young.",
+  "alignment": "Changelings are commonly neutral, favoring freedom and kindness without the dogma of law and order to restrict their flexibility. They value individual choice and believe in personal freedom.",
+  "size": "Medium",
+  "speed": 30,
+  "traits": {
+    "Shapechanger": "As an action, you can change your appearance and your voice. You determine the specifics of the changes, including your coloration, hair length, and sex. You can also adjust your height and weight, but not so much that your size changes. You can make yourself appear as a member of another race, though none of your game statistics change. You can’t duplicate the appearance of a specific individual. You stay in the new form until you use an action to revert to your true form or until you die.",
+    "Changeling Instincts": "You gain proficiency with two skills of your choice."
+  },
+  "languages": [
+    "Common",
+    "Two other languages of your choice"
+  ]
+}

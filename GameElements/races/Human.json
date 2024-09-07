@@ -1,0 +1,22 @@
+{
+  "Name": "Human",
+  "Ability Score Increase": {
+    "Strength": 1,
+    "Dexterity": 1,
+    "Constitution": 1,
+    "Intelligence": 1,
+    "Wisdom": 1,
+    "Charisma": 1
+  },
+  "Description": "Humans are the most adaptable and ambitious people among the common races. Whatever drives them, humans are the innovators, the achievers, and the pioneers of the worlds.",
+  "Age": "Humans reach adulthood in their late teens and live less than a century.",
+  "Alignment": "Humans tend toward no particular alignment. The best and the worst are found among them.",
+  "Size": "Medium",
+  "Speed": 30,
+  "Traits": {
+    "Languages": "You can speak, read, and write Common and one extra language of your choice.",
+    "Skills": "You gain proficiency in one skill of your choice.",
+    "Feat": "You gain one feat of your choice."
+  },
+  "languages": "You can speak, read, and write Common and one extra language of your choice. Humans typically learn the languages of other peoples they deal with, including obscure dialects. They are fond of sprinkling their speech with words borrowed from other tongues: Orc curses, Elvish musical expressions, Dwarvish military phrases, and so on."
+}

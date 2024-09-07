@@ -15,6 +15,8 @@ from sqlalchemy import select, Numeric, text, func
 
 from flask_migrate import Migrate   ## For database migrations
 
+from fuzzywuzzy import fuzz, process
+
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
@@ -1259,69 +1261,102 @@ def upload_csv():
     csv_data = csv.reader(file.stream)
     items = [row for row in csv_data]
 
-## Used to save the newly created (and verified) items
+def get_table_columns(model):
+    """Get the column names for a given SQLAlchemy model."""
+    return [column.name for column in model.__table__.columns]
+
+def map_fields(data, model):
+    """Map incoming data fields to model columns using fuzzy matching."""
+    valid_fields = get_table_columns(model)
+    mapped_data = {}
+    for key, value in data.items():
+        # Use fuzzy matching to map the field
+        best_match = process.extractOne(key, valid_fields, score_cutoff=80)
+        if best_match:
+            mapped_data[best_match[0]] = value
+        else:
+            mapped_data[key] = value  # Keep it if no match found, you might want to log this case
+    return mapped_data
+
 @app.route('/api/save_items', methods=['POST'])
 def save_items():
     data = request.get_json()
-    ## app.logger.info("SAVE CSV- data: %s", data)
-    # print("SAVE CSV- data:", data)
 
     if not data or not isinstance(data, dict):
         return jsonify(error='Invalid JSON'), 400
 
     items = data.get('items')
-    # app.logger.debug("SAVE CSV- items received: %s", items)
-
     if not items or not isinstance(items, list):
         return jsonify(error='Invalid items'), 400
 
     try:
-        # app.logger.debug("SAVE CSV- Recieving items: %s", items)
         for item in items:
-            if not all(k in item for k in ('Name', 'Type', 'Cost', 'Currency')):
+            # Map fields for the Item model using fuzzy matching
+            item = map_fields(item, Item)
+
+            if not all(k in item for k in ('name', 'type', 'cost', 'currency')):  # Match mapped keys
                 return jsonify(error='Missing item fields'), 400
 
-            existing_item = Item.query.filter_by(name=item['Name']).first()
+            existing_item = Item.query.filter_by(name=item['name']).first()
 
             if existing_item is None:
-                app.logger.debug("SAVE CSV- Creating new item: %s", item)
-                new_item = Item(name=item['Name'], type=item['Type'], cost=item['Cost'], currency=item['Currency'], weight=item.get('Weight'), description=item.get('Description'))
+                new_item = Item(name=item['name'], type=item['type'], cost=item['cost'], currency=item['currency'],
+                                weight=item.get('weight'), description=item.get('description'))
                 db.session.add(new_item)
                 db.session.commit()
 
-                item_type = item['Type']
+                item_type = item['type']
                 itemID = new_item.id
 
                 if item_type == 'Weapon':
-                    app.logger.debug("%s is a Weapon", item)
-                    weapon = Weapon(itemID=itemID, damage=item.get('Damage'), damage_type=item.get('DamageType'),
-                    weapon_type=item.get('Weapon type'), weapon_range=item.get('Range'))
+                    print(item, "is a Weapon")
+                    # Map fields for the Weapon model
+                    weapon_data = map_fields(item, Weapon)
+                    weapon = Weapon(itemID=itemID, damage=weapon_data.get('damage'),
+                                    damage_type=weapon_data.get('damage_type'),
+                                    weapon_type=weapon_data.get('weapon_type'),
+                                    weapon_range=weapon_data.get('range'))
                     db.session.add(weapon)
+
                 elif item_type == 'Armor':
-                    app.logger.debug("%s is Armor", item)
-                    armor = Armor(itemID=itemID, armor_class=item.get('Ac'), armor_type=item.get('Armor type'), stealth_disadvantage=item.get('Stealth'), strength_needed=item.get('Strength'))
+                    print(item, "is Armor")
+                    # Map fields for the Armor model
+                    armor_data = map_fields(item, Armor)
+                    armor = Armor(itemID=itemID, armor_class=armor_data.get('armor_class'),
+                                  armor_type=armor_data.get('armor_type'),
+                                  stealth_disadvantage=armor_data.get('stealth'),
+                                  strength_needed=armor_data.get('strength'))
                     db.session.add(armor)
+
                 elif item_type in ['Ring', 'Wand', 'Scroll']:
-                    app.logger.debug("%s is a Magic Item", item)
-                    magic_item = SpellItem(itemID=itemID, spell=item.get('Spell'), charges=item.get('Charges'))
+                    print(item, "is a Magic Item")
+                    # Map fields for the SpellItem model
+                    spell_data = map_fields(item, SpellItem)
+                    magic_item = SpellItem(itemID=itemID, spell=spell_data.get('spell'),
+                                           charges=spell_data.get('charges'))
                     db.session.add(magic_item)
+
                 elif item_type == 'Mounts and Vehicles':
-                    app.logger.debug("%s is a Mount or Vehicle", item)
-                    mount_vehicle = MountVehicle(itemID=itemID, speed=item.get('Speed'), speed_unit=item.get('Units'), capacity=item.get('Capacity'), vehicle_type=item.get('Vehicle type'))
+                    print(item, "is a Mount or Vehicle")
+                    # Map fields for the MountVehicle model
+                    mount_data = map_fields(item, MountVehicle)
+                    mount_vehicle = MountVehicle(itemID=itemID, speed=mount_data.get('speed'),
+                                                 speed_unit=mount_data.get('speed_unit'),
+                                                 capacity=mount_data.get('capacity'),
+                                                 vehicle_type=mount_data.get('vehicle_type'))
                     db.session.add(mount_vehicle)
 
                 db.session.commit()
             else:
-                app.logger.info("SAVE CSV- Item %s already exists in the database. Skipping...", {item['Name']})
+                print("SAVE CSV- Item", {item['name']}, "already exists in the database. Skipping...")
+                app.logger.info("SAVE CSV- Item %s already exists in the database. Skipping...", {item['name']})
 
         socketio.emit('items_updated')
         return jsonify(message='Items saved'), 200
 
     except Exception as e:
-        # Log full exception info
         app.logger.exception("Failed to save items")
         return jsonify(error=str(e)), 400
-
 
 @app.route('/api/inventory', methods=['GET', 'POST'], endpoint='inventory')
 @jwt_required()

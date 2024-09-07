@@ -1,0 +1,110 @@
+{
+  "name": "Paladin",
+  "hit_points": {
+    "base": 10,
+    "level_increment": 6
+  },
+  "primary_ability": "Strength",
+  "saving_throw_proficiencies": ["Wisdom", "Charisma"],
+  "armor_proficiencies": ["All armor", "Shields"],
+  "weapon_proficiencies": ["Simple weapons", "Martial weapons"],
+  "class_features": {
+    "Divine Sense": "The presence of strong evil registers on your senses like a noxious odor, and powerful good rings like heavenly music in your ears.",
+    "Lay on Hands": "Your blessed touch can heal wounds. You have a pool of healing power that replenishes when you take a long rest.",
+    "Fighting Style": "You adopt a particular style of fighting as your specialty. Choose one of the following options: Defense, Dueling, Great Weapon Fighting.",
+    "Divine Smite": "Starting at 2nd level, when you hit a creature with a melee weapon attack, you can expend one spell slot to deal radiant damage to the target.",
+    "Divine Health": "By 3rd level, the divine magic flowing through you makes you immune to disease.",
+    "Sacred Oath": "When you reach 3rd level, you swear the oath that binds you as a paladin forever.",
+    "Aura of Protection": "Starting at 6th level, whenever you or a friendly creature within 10 feet of you must make a saving throw, the creature gains a bonus to the saving throw equal to your Charisma modifier.",
+    "Extra Attack": "Beginning at 5th level, you can attack twice, instead of once, whenever you take the Attack action on your turn.",
+    "Aura of Courage": "Starting at 10th level, you and friendly creatures within 10 feet of you can't be frightened while you are conscious.",
+    "Improved Divine Smite": "At 11th level, whenever you hit a creature with a melee weapon, the creature takes an extra 1d8 radiant damage.",
+    "Cleansing Touch": "Beginning at 14th level, you can use your action to end one spell on yourself or on one willing creature that you touch.",
+    "Aura of the Guardian": "Starting at 15th level, you can shield others from harm at the cost of your own health.",
+    "Ancient Magic": "At 18th level, you have achieved such a communion with nature that your spells are more potent. Natural spell effects—those that use the natural forces of the world to create magical effects—truly blossom when you reach 18th level.",
+    "Sacred Oath Feature": "At 20th level, you gain a special feature based on the oath you have chosen."
+  },
+  "subclasses": ["Oath of Devotion", "Oath of the Ancients", "Oath of Vengeance", "Oathbreaker"],
+  "levels": [
+    {
+      "level": 1,
+      "features": ["Divine Sense", "Lay on Hands", "Fighting Style"]
+    },
+    {
+      "level": 2,
+      "features": ["Divine Smite"]
+    },
+    {
+      "level": 3,
+      "features": ["Divine Health", "Sacred Oath"]
+    },
+    {
+      "level": 4,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 5,
+      "features": ["Extra Attack"]
+    },
+    {
+      "level": 6,
+      "features": ["Aura of Protection"]
+    },
+    {
+      "level": 7,
+      "features": []
+    },
+    {
+      "level": 8,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 9,
+      "features": []
+    },
+    {
+      "level": 10,
+      "features": ["Aura of Courage"]
+    },
+    {
+      "level": 11,
+      "features": ["Improved Divine Smite"]
+    },
+    {
+      "level": 12,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 13,
+      "features": []
+    },
+    {
+      "level": 14,
+      "features": ["Cleansing Touch"]
+    },
+    {
+      "level": 15,
+      "features": ["Aura of the Guardian"]
+    },
+    {
+      "level": 16,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 17,
+      "features": []
+    },
+    {
+      "level": 18,
+      "features": ["Ancient Magic"]
+    },
+    {
+      "level": 19,
+      "features": ["Ability Score Improvement"]
+    },
+    {
+      "level": 20,
+      "features": ["Sacred Oath Feature"]
+    }
+  ]
+}

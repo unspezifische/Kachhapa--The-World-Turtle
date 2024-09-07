@@ -467,7 +467,6 @@ export default function InventoryView({ username, characterName, accountType, he
                 newItem['Speed'] = parseInt(speed);
                 newItem['Units'] = speedUnit;
               } else if (newKey === 'Capacity') {
-                console.log("Capacity of" + item["Name"] + "is" + item[key]);
                 if (item['capacity'] == 'N/A' || item['capacity'] == 'NA' || item['capacity'] == 'n/a' || item['capacity'] == 'na' || item['capacity'] == 'N/a' || item['capacity'] == 'n/A' || item['capacity'] == ' ' || item['capacity'] == '') {
                   newItem[newKey] = 0;
                 } else {

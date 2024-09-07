@@ -1,0 +1,18 @@
+{
+  "Name": "Kalashtar",
+  "Ability Score Increase": {
+    "Wisdom": 2,
+    "Charisma": 1
+  },
+  "Age": "Kalashtar mature and age at the same rate as humans.",
+  "Alignment": "The noble spirit tied to a kalashtar drives it toward lawful and good behavior. Most kalashtar combine strong self-discipline with compassion for all beings, but some kalashtar resist the virtuous influence of their spirit.",
+  "Size": "Medium",
+  "Speed": 30,
+  "Traits": {
+    "Dual Mind": "You have advantage on all Wisdom saving throws.",
+    "Mental Discipline": "You have resistance to psychic damage.",
+    "Mind Link": "You can speak telepathically to any creature you can see, provided the creature is within a number of feet of you equal to 10 times your level. You don't need to share a language with the creature for it to understand your telepathic utterances, but the creature must be able to understand at least one language.",
+    "Severed from Dreams": "Kalashtar sleep, but they don't connect to the plane of dreams as other creatures do. Instead, their minds draw from the memories of their otherworldly spirit while they sleep. As such, you are immune to spells and other magical effects that require you to dream, like dream, but not to spells and other magical effects that put you to sleep, like sleep."
+  },
+  "Languages": "You can speak, read, and write Common, Quori, and one other language of your choice."
+}

@@ -6,6 +6,8 @@ Flask-Migrate==4.0.5
 Flask-MonitoringDashboard==3.3.2
 Flask-SocketIO==5.3.6
 Flask-SQLAlchemy==3.1.1
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.25.1
 kombu==5.3.5
 Markdown==3.5.2
 PyJWT==2.8.0

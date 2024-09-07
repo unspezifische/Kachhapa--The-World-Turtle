@@ -1,0 +1,141 @@
+{
+    "race": {
+        "table": "GameElements",
+        "column": "Race",
+        "userInput": true
+    },
+    "class": {
+        "table": "GameElements",
+        "column": "Class",
+        "userInput": true
+    },
+    "attributes": {
+        "list": [
+            "Strength",
+            "Dexterity",
+            "Constitution",
+            "Intelligence",
+            "Wisdom",
+            "Charisma"
+        ],
+        "userInput": true
+    },
+    "proficiencyBonus": {
+        "formula": "2 + ((Level - 1) / 4)",
+        "userInput": false
+    },
+    "skills": {
+        "list": [
+            "Acrobatics",
+            "Animal Handling",
+            "Arcana",
+            "Athletics",
+            "Deception",
+            "History",
+            "Insight",
+            "Intimidation",
+            "Investigation",
+            "Medicine",
+            "Nature",
+            "Perception",
+            "Performance",
+            "Persuasion",
+            "Religion",
+            "Sleight of Hand",
+            "Stealth",
+            "Survival"
+        ],
+        "userInput": false,
+        "modifiers": {
+            "base": "Attribute modifier",
+            "proficient": "Attribute modifier + Proficiency Bonus"
+        }
+    },
+    "calculations": {
+        "ArmorClass": {
+            "formula": "10 + Dexterity modifier",
+            "modifiers": [
+                "Armor",
+                "Shield"
+            ],
+            "userInput": false
+        },
+        "HitPointMax": {
+            "formula": "Class Hit Die + Constitution modifier per level",
+            "userInput": false
+        }
+    },
+    "equipment": {
+        "userInput": true
+    },
+    "characterTraits": {
+        "list": [
+            "PersonalityTraits",
+            "Ideals",
+            "Bonds",
+            "Flaws"
+        ],
+        "userInput": true
+    },
+    "creationSteps": [
+        {
+            "step": "race",
+            "description": "Choose your character's race, which provides certain bonuses and traits.",
+            "userInput": true,
+            "attributesAffected": [
+                "abilityScores",
+                "speed",
+                "traits",
+                "languages"
+            ]
+        },
+        {
+            "step": "class",
+            "description": "Choose your character's class, determining their abilities, skills, and hit points.",
+            "userInput": true,
+            "attributesAffected": [
+                "HitPointMax",
+                "Proficiencies",
+                "Skills",
+                "Equipment"
+            ]
+        },
+        {
+            "step": "abilityScores",
+            "description": "Assign ability scores to define your character's strengths and weaknesses.",
+            "userInput": true
+        },
+        {
+            "step": "background",
+            "description": "Select a background that gives your character a backstory and additional proficiencies or equipment.",
+            "userInput": true,
+            "attributesAffected": [
+                "Proficiencies",
+                "Equipment",
+                "PersonalityTraits",
+                "Ideals",
+                "Bonds",
+                "Flaws"
+            ]
+        },
+        {
+            "step": "details",
+            "description": "Fill in your character's personal details, such as name, alignment, and physical characteristics.",
+            "userInput": true,
+            "attributesAffected": [
+                "Name",
+                "Alignment",
+                "PhysicalCharacteristics"
+            ]
+        },
+        {
+            "step": "equipment",
+            "description": "Choose your character's starting equipment based on class and background choices.",
+            "userInput": false,
+            "derivedFrom": [
+                "Class",
+                "Background"
+            ]
+        }
+    ]
+}
