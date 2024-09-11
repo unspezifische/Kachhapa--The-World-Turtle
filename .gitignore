@@ -6,7 +6,6 @@ Flask/corrections.py
 Flask/migrate2.py
 
 GameElements/Library/
-Library/
 node_modules/
 
 webapp/build/
