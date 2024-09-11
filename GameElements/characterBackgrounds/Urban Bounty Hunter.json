@@ -12,7 +12,7 @@
   "languages": 0,
   "Equipment": {
     "1": "A set of clothes appropriate to your duties",
-    "4": "20 gp"
+    "2": "20 gp"
   },
   "Feature": {
     "Ear to the Ground": "You are always in tune with the city's underworld. You can gather information about criminal activities, underworld contacts, and hidden safehouses. Additionally, you can use your action to make an Intelligence (Investigation) check to gather information about a specific individual or organization. On a successful check, you gain useful insights that can aid you in your pursuit of justice."

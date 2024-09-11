@@ -30,6 +30,44 @@
       "description": "At 3rd level, you delve into the advanced techniques of a bard college of your choice: the College of Lore or the College of Valor, both detailed at the end of the class description. Your choice grants you features at 3rd level and again at 6th and 14th level."
     }
     },
+    "starter_equipment": {
+        "options": [
+            {
+                "description": "Choose a rapier, a longsword, or any simple weapon",
+                "choices": [
+                    "Rapier",
+                    "Longsword",
+                    "Any simple weapon"
+                ],
+                "requires_selection": true
+            },
+            {
+                "description": "Choose a diplomat's pack or an entertainer's pack",
+                "choices": [
+                    "Diplomat's pack",
+                    "Entertainer's pack"
+                ],
+                "requires_selection": true
+            },
+            {
+                "description": "Choose a lute or any other musical instrument",
+                "choices": [
+                    "Lute",
+                    "Any other musical instrument"
+                ],
+                "requires_selection": true
+            },
+            {
+                "description": "Leather armor, a dagger, and a musical instrument",
+                "choices": [
+                    "Leather armor",
+                    "Dagger",
+                    "Musical instrument"
+                ],
+                "requires_selection": false
+            }
+        ]
+    },
     "levels": [
         {
         "level": 1,

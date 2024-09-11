@@ -40,18 +40,25 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
       localStorage.setItem('characterName', headers['characterName']);
       console.log("Stored header in local storage");
         
+            // Get the current URL components
+      const protocol = window.location.protocol;
+      const host = window.location.host;
+      
+      // Construct the base URL dynamically
+      const baseUrl = `${protocol}//${host}/`;
+      
       // Construct the destination URL without encoding
-      var destinationURL = 'http://raspberrypi.local/' + encodeURIComponent(selectedCampaign.name) + "/Main Page";
+      var destinationURL = baseUrl + encodeURIComponent(selectedCampaign.name) + "/Main Page";
       var destinationPage = encodeURIComponent(selectedCampaign.name) + "/Main Page";
       console.log("Destination URL: " + destinationURL);
       console.log("Destination Page: " + destinationPage);
-        
-        // Encode the entire destination URL
+      
+      // Encode the entire destination URL
       var encodedDestination = encodeURIComponent(destinationPage);
       console.log("Encoded URL: " + encodedDestination);
       
       // Include the encoded destination URL as a query parameter in the login URL
-      var loginUrl = 'http://raspberrypi.local/login?redirect=/wiki/' + encodedDestination;
+      var loginUrl = `${baseUrl}login?redirect=/wiki/${encodedDestination}`;
       console.log("URL with Redirect: " + loginUrl);
       
       // Open the login URL in a new window

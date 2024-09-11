@@ -23,6 +23,43 @@
       "options": []
     }
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a light crossbow and 20 bolts or any simple weapon",
+        "choices": [
+          "Light crossbow and 20 bolts",
+          "Any simple weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a component pouch or an arcane focus",
+        "choices": [
+          "Component pouch",
+          "Arcane focus"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a scholar's pack or a dungeoneer's pack",
+        "choices": [
+          "Scholar's pack",
+          "Dungeoneer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Leather armor, any simple weapon, and two daggers",
+        "choices": [
+          "Leather armor",
+          "Any simple weapon",
+          "Two daggers"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "levels": [
     {
       "level": 1,

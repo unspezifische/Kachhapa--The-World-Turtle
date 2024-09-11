@@ -130,16 +130,33 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     const [classes, setClasses] = useState([]);
     const [backgrounds, setBackgrounds] = useState([]);
 
-    // Add a new state variable for the selected method of ability score generation
+    // A state variable for the selected method of ability score generation
     const [method, setMethod] = useState('Choose');
 
-    // Add a function to handle method changes
+    // Handle method changes
     const handleMethodChange = (event) => {
-        setMethod(event.target.value);
+        const newMethod = event.target.value;
+        setMethod(newMethod);
+
+        // Reset the values used by the various selection methods
+        setStandardArray([15, 14, 13, 12, 10, 8]);
+        setRemainingPoints(27);
+        setCharacter(prevState => ({
+            ...prevState,
+            abilityScores: {
+                strength: 0,
+                dexterity: 0,
+                constitution: 0,
+                intelligence: 0,
+                wisdom: 0,
+                charisma: 0
+            }
+        }));
     };
 
-    // Add a function to handle ability score changes
+    // Handle ability score changes for manual entry
     const handleAbilityScoreChange = (event) => {
+        console.log("Setting Ability Score " + event.target.name + " to " + event.target.value + "  by Dice Roll");
         const selectedValue = parseInt(event.target.value);
         setCharacter(prevState => ({
             ...prevState,
@@ -150,18 +167,26 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
         }));
     };
 
-    // Add new state variables for the ability scores and the standard array
     const [standardArray, setStandardArray] = useState([15, 14, 13, 12, 10, 8]);
+    const [selectedStandardValues, setSelectedStandardValues] = useState({
+        strength: '',
+        dexterity: '',
+        constitution: '',
+        intelligence: '',
+        wisdom: '',
+        charisma: ''
+    });
 
-    // Add a function to handle standard array selections
     const handleStandardArraySelection = (event) => {
-        const ability = event.target.name;
-        const selectedValue = parseInt(event.target.value);
-        const previousValue = character.abilityScores[ability];
+        console.log("Setting Ability Score " + event.target.name + " to " + event.target.value + " by Standard Array");
+        const { name, value } = event.target;
+        const selectedValue = parseInt(value);
+        const previousValue = character.abilityScores[name];
 
         // If the ability score had a previous value, add it back to the standard array
         if (previousValue) {
-            setStandardArray([...standardArray, previousValue]);
+            console.log('Adding previous value back to the standard array:', previousValue);
+            setStandardArray(prevArray => [...prevArray, previousValue]);
         }
 
         // Update the ability score in the character state
@@ -169,12 +194,18 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
             ...prevState,
             abilityScores: {
                 ...prevState.abilityScores,
-                [ability]: selectedValue,
+                [event.target.name]: selectedValue,
             }
         }));
 
+        // Update the selected values state
+        setSelectedStandardValues(prevState => ({
+            ...prevState,
+            [name]: selectedValue
+        }));
+
         // Remove the selected value from the standard array
-        setStandardArray(standardArray.filter(item => item !== selectedValue));
+        setStandardArray(prevArray => prevArray.filter(item => item !== selectedValue));
     };
 
     const [remainingPoints, setRemainingPoints] = useState(27);
@@ -182,6 +213,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
 
     // Add a function to handle point buy selections
     const handlePointBuySelection = (event) => {
+        console.log("Setting Ability Score " + event.target.name + " to " + event.target.value + " by Point Buy");
         const selectedValue = parseInt(event.target.value);
         const previousValue = character.abilityScores[event.target.name] || 8;
         const pointsUsed = pointCosts[selectedValue] - pointCosts[previousValue];
@@ -199,48 +231,38 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
         }
     };
 
-    // Get the list of playable races and classes from the server
+    // Get Race, Class, and Background data from the server
     useEffect(() => {
-        axios.get('/api/races')
-            .then((response) => {
-                console.log("Races-", response.data)
-                const sortedRaces = response.data.sort((a, b) => a.name.localeCompare(b.name));
+        const fetchData = async () => {
+            try {
+                const [racesResponse, classesResponse, backgroundsResponse] = await Promise.all([
+                    axios.get('/api/races'),
+                    axios.get('/api/classes'),
+                    axios.get('/api/backgrounds')
+                ]);
+    
+                console.log("Races-", racesResponse.data);
+                const sortedRaces = racesResponse.data.sort((a, b) => a.name.localeCompare(b.name));
                 setRaces(sortedRaces);
-            })
-            .catch((error) => {
-                console.error(error);
-            });
-    }, []);
-
-    useEffect(() => {
-        axios.get('/api/classes')
-            .then((response) => {
-                console.log("Classes-", response.data);
-                const sortedClasses = response.data.sort((a, b) => a.name.localeCompare(b.name));
+    
+                console.log("Classes-", classesResponse.data);
+                const sortedClasses = classesResponse.data.sort((a, b) => a.name.localeCompare(b.name));
                 setClasses(sortedClasses);
-            })
-            .catch((error) => {
-                console.error(error);
-            });
-    }, []);
-
-    useEffect(() => {
-        axios.get('/api/backgrounds')
-            .then((response) => {
-                console.log("Backgrounds-", response.data);
-                const sortedBackgrounds = response.data.sort((a, b) => a.name.localeCompare(b.name));
+    
+                console.log("Backgrounds-", backgroundsResponse.data);
+                const sortedBackgrounds = backgroundsResponse.data.sort((a, b) => a.name.localeCompare(b.name));
                 setBackgrounds(sortedBackgrounds);
-            })
-            .catch((error) => {
+            } catch (error) {
                 console.error(error);
-            });
+            }
+        };
+    
+        fetchData();
     }, []);
 
     useEffect(() => {
-        backgrounds.forEach((background) => {
-            // console.log("Background Data-", background.data);
-        });
-    }, [backgrounds]);
+        console.log("Updated Character-", character);
+    }, [character]);
 
     // Save the completed character
     const handleCreateCharacter = () => {
@@ -300,10 +322,9 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                 }
                 break;
             case 2: // Attributes step
-                canComplete = attributes !== '';
-                if (canComplete) {
-                    updatedCharacter.abilityScores = attributes;
-                }
+                const allScoresNonZero = Object.values(character.abilityScores).every(score => score !== 0);
+                canComplete = allScoresNonZero;
+                console.log("Saved Ability Scores-", character.abilityScores);
                 break;
             case 3: // Character details step
                 canComplete = selectedBackground !== '';
@@ -316,6 +337,9 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                 if (canComplete) {
                     updatedCharacter.Equipment = equipement;
                 }
+                break;
+            case 5: // Equipment step
+                canComplete = true;
                 break;
             default:
                 break;
@@ -394,7 +418,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
 
 
     return (
-        <Dialog open={show} maxWidth="md" onClose={handleClose}>
+        <Dialog open={show} maxWidth="md" onClose={handleClose} style={{overflow: 'hidden'}}>
             <DialogContent>
                 <AppBar sx={{ position: 'relative' }}>
                     <Toolbar>
@@ -482,7 +506,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                         </Form.Group>
                     </div>
                 )}
-                {/* Attrributes */}
+                {/* Attributes */}
                 {activeStep === 2 && (
                     <div style={{ height: 'calc(100vh - 250px)' }}>
                         <h2>Ability Scores</h2>
@@ -569,7 +593,6 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                     <div style={{ height: 'calc(100vh - 250px)' }}>
                         <h2>Character Equipment</h2>
                         {/* Pick Character Equipment */}
-                        {console.log("Selected Background-", selectedBackground)}
                         {selectedBackground && selectedBackground.data && selectedBackground.data.Equipment && (
                             <div>
                                 {Object.entries(selectedBackground.data.Equipment).map(([key, value]) => (
@@ -598,7 +621,6 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                                 </p>
                             ))}
                         </div>
-                        {/* TODO: Show all character details in a condensed form for verification */}
                     </div>
                 )}
             </DialogContent>

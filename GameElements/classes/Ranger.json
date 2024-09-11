@@ -13,6 +13,42 @@
     "Natural Explorer": "You are particularly familiar with one type of natural environment and are adept at traveling and surviving in such regions. Choose one type of favored terrain: arctic, coast, desert, forest, grassland, mountain, swamp, or the Underdark. When you make an Intelligence or Wisdom check related to your favored terrain, your proficiency bonus is doubled if you are using a skill that you're proficient in.",
     "Spellcasting": "By the time you reach 2nd level, you have learned to use the magical essence of nature to cast spells, much as a druid does."
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose scale mail or leather armor",
+        "choices": [
+          "Scale mail",
+          "Leather armor"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose two shortswords or two simple melee weapons",
+        "choices": [
+          "Two shortswords",
+          "Two simple melee weapons"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a dungeoneer's pack or an explorer's pack",
+        "choices": [
+          "Dungeoneer's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "A longbow and a quiver of 20 arrows",
+        "choices": [
+          "Longbow",
+          "Quiver of 20 arrows"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "subclasses": ["Hunter", "Beast Master"],
   "levels": [
     {

@@ -1,4 +1,4 @@
-from flask import Flask, abort, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_file
 from flask import render_template ## For rendering wiki pages
 from flask import redirect, url_for
 
@@ -19,6 +19,7 @@ from fuzzywuzzy import fuzz, process
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import NotFound
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, decode_token, get_jwt, unset_jwt_cookies
 
@@ -27,6 +28,7 @@ from flask_socketio import SocketIO, send, emit, disconnect
 
 from threading import Thread
 from datetime import datetime, timedelta, timezone
+import io
 import os
 import csv  ## For importing items from CSV
 import json ## For sending JSON data
@@ -70,7 +72,7 @@ admin = Admin(app, name='Kachhapa Admin')
 # handler = logging.StreamHandler()
 # handler.setLevel(logging.INFO)  # set the desired logging level
 # app.logger.addHandler(handler)
-# app.debug = True
+# app.debug = False
 
 # For DEBUG level
 app.logger.setLevel(logging.DEBUG)  # set the desired logging level to DEBUG
@@ -219,7 +221,7 @@ class Campaign(db.Model):
             'dm_id': self.dm.id if self.dm else None,
             'scribes': self.scribes,
         }
-    
+  
 class Page(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     title = db.Column(db.String(80), nullable=False)
@@ -509,6 +511,12 @@ class GameElement(db.Model):
             'data': self.data,
         }
 
+class Document(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    data = db.Column(db.LargeBinary, nullable=False)  # Use LargeBinary for binary data
+    mimetype = db.Column(db.String(50), nullable=False)  # Store the MIME type
+    campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)  # Add campaignID column
 
 ## Add all the models to the admin console
 admin.add_view(ModelView(User, db.session))
@@ -528,7 +536,20 @@ admin.add_view(ModelView(Message, db.session))
 admin.add_view(ModelView(LootBox, db.session))
 admin.add_view(ModelView(NPC, db.session))
 admin.add_view(ModelView(GameElement, db.session))
+admin.add_view(ModelView(Document, db.session))
 
+
+def normalize_keys(d):
+    if isinstance(d, dict):
+        new_dict = {}
+        for k, v in d.items():
+            new_key = k.lower().replace(' ', '_')
+            new_dict[new_key] = normalize_keys(v)
+        return new_dict
+    elif isinstance(d, list):
+        return [normalize_keys(i) for i in d]
+    else:
+        return d
 
 def load_json_files(directory):
     elements = []
@@ -538,33 +559,35 @@ def load_json_files(directory):
                 with open(os.path.join(directory, filename), 'r') as file:
                     try:
                         data = json.load(file)
-                        elements.append((filename.rstrip('.json'), data))
+                        normalized_data = normalize_keys(data)
+                        elements.append((filename.rstrip('.json'), normalized_data))
                     except json.JSONDecodeError:
-                        print(f"Error decoding JSON from file {filename}")
+                        app.logger.error(f"Error decoding JSON from file {filename}")
     return elements
 
 def insert_elements(system, element_type, directory):
     if not os.path.exists(directory):
-        # print(f"Directory {directory} does not exist. Skipping...")
+        app.logger.warn(f"Directory {directory} does not exist. Skipping...")
         return
     elements = load_json_files(directory)
-    # print(f"Elements from {directory}: {elements}")  # Print the elements
-    for name, data in elements:
-        existing_element = GameElement.query.filter_by(name=name).first()
-        if existing_element is None:
-            new_element = GameElement(name=name, system=system, element_type=element_type, data=data, setting='Faerun')
-            # print(f"New element: {new_element}")  # Print the new element
-            db.session.add(new_element)
+    app.logger.debug(f"Loading Elements from {directory}")  # Print the elements
+    with db.session.no_autoflush:
+        for name, data in elements:
+            existing_element = GameElement.query.filter_by(name=name).first()
+            if existing_element is None:
+                new_element = GameElement(name=name, system=system, element_type=element_type, data=data, setting='Faerun')
+                # app.logger.debug(f"New element: {new_element}")  # Print the new element
+                db.session.add(new_element)
     db.session.commit()
+
+def populate_game_elements():
+    insert_elements('D&D 5e', 'race', './GameElements/races')
+    insert_elements('D&D 5e', 'class', './GameElements/classes')
+    insert_elements('D&D 5e', 'character_background', './GameElements/characterBackgrounds')
+    insert_elements('D&D 5e', 'character_sheet', './GameElements/characterSheets')
 
 
 def set_all_users_offline():
-    # insert_elements('D&D 5e', 'class', './classes')
-    # insert_elements('D&D 5e', 'race', './races')
-    # insert_elements('D&D 5e', 'character_background', './characterBackgrounds')
-    # insert_elements('D&D 5e', 'character_sheet', './characterSheets')
-
-
     users = User.query.all()
 
     for user in users:
@@ -572,9 +595,30 @@ def set_all_users_offline():
         # campaign.members.append(user)   ## Temporary
     db.session.commit()
 
+
+## Fuzzy Logic for mapping incoming data to model columns
+def get_table_columns(model):
+    """Get the column names for a given SQLAlchemy model."""
+    return [column.name for column in model.__table__.columns]
+
+def map_fields(data, model):
+    """Map incoming data fields to model columns using fuzzy matching."""
+    valid_fields = get_table_columns(model)
+    mapped_data = {}
+    for key, value in data.items():
+        # Use fuzzy matching to map the field
+        best_match = process.extractOne(key, valid_fields, score_cutoff=80)
+        if best_match:
+            mapped_data[best_match[0]] = value
+        else:
+            mapped_data[key] = value  # Keep it if no match found, you might want to log this case
+    return mapped_data
+
+
 with app.app_context():
     db.create_all()
     set_all_users_offline()
+    populate_game_elements()
 
 migrate = Migrate(app, db)
 
@@ -618,6 +662,20 @@ def handle_exception(e):
     }
     return jsonify(response), 500
 
+@app.errorhandler(NotFound)
+def handle_not_found(e):
+    app.logger.error(f"404 Not Found: {request.url}")
+    app.logger.error(f"Request method: {request.method}")
+    app.logger.error(f"Request headers: {request.headers}")
+    app.logger.error(f"Request data: {request.data}")
+    
+    # Return a JSON response with a 404 error message
+    response = {
+        "error": "The requested URL was not found on the server.",
+        "details": str(e)
+    }
+    return jsonify(response), 404
+
 @app.after_request
 def refresh_expiring_jwts(response):
     try:
@@ -654,12 +712,12 @@ def refresh_expiring_jwts(response):
 ## Verify a user's JWT token
 @app.route('/api/verify', methods=['POST'])
 def verify_token():
-    app.logger.debug("/api/verify: %s", request.json)
+    # app.logger.debug("/api/verify: %s", request.json)
     data = request.get_json()
     origin = request.headers.get('Origin')
     token = data.get('token')
     app.logger.debug("Token: %s", token)
-    app.logger.debug("Origin: %s", origin)
+    # app.logger.debug("Origin: %s", origin)
     try:
         decoded_token = decode_token(token)
         app.logger.debug("Decoded Token:", decoded_token)
@@ -721,7 +779,7 @@ def register():
     ## app.logger.debug(new_user.is_online)
     access_token = create_access_token(identity=new_user.username)
     return jsonify({
-        'message': 'Login successful!', 
+        'message': 'Registration successful!', 
         'access_token': access_token,
         'userID': new_user.id  # Include the user's ID in the response
     })
@@ -804,17 +862,71 @@ def campaigns():
     
         db.session.commit()
         return jsonify(campaign.to_dict()), 201
-    
-@app.route('/api/characters', methods=['GET'])
+
+
+
+@app.route('/api/characters', methods=['GET', 'POST'])
 @jwt_required()
 def get_user_characters():
-    username = get_jwt_identity()
-    user = User.query.filter_by(username=username).first()
-    # print("CHARACTERS- user:", user.to_dict())
-    characters = Character.query.filter_by(userID=user.id).all()
-    character_list = [character.to_dict() for character in characters]
-    # print("CHARACTERS- characters:", [character.to_dict() for character in characters])
-    return jsonify(character_list)
+    if request.method == 'GET':
+        username = get_jwt_identity()
+        user = User.query.filter_by(username=username).first()
+        characters = Character.query.filter_by(userID=user.id).all()
+        character_list = [character.to_dict() for character in characters]
+        return jsonify(character_list)
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        username = get_jwt_identity()
+        user = User.query.filter_by(username=username).first()
+
+        # Map fields for the Character model using fuzzy matching
+        data = map_fields(data, Character)
+
+        # Validate required fields
+        required_fields = ['character_name', 'Class', 'Background', 'Race', 'Alignment', 'ExperiencePoints', 
+                           'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'message': f'{field} is required!'}), 400
+
+        # Create a new character
+        new_character = Character(
+            icon=data.get('icon'),
+            system=data.get('system', 'D&D 5e'),  # Default to 'D&D 5e' if not provided
+            userID=user.id,
+            campaignID=data.get('campaignID'),
+            character_name=data['character_name'],
+            Class=data['Class'],
+            Background=data['Background'],
+            Race=data['Race'],
+            Alignment=data['Alignment'],
+            ExperiencePoints=data['ExperiencePoints'],
+            strength=data['strength'],
+            dexterity=data['dexterity'],
+            constitution=data['constitution'],
+            intelligence=data['intelligence'],
+            wisdom=data['wisdom'],
+            charisma=data['charisma'],
+            PersonalityTraits=data.get('PersonalityTraits'),
+            Ideals=data.get('Ideals'),
+            Bonds=data.get('Bonds'),
+            Flaws=data.get('Flaws'),
+            Feats=json.dumps(data.get('Feats', [])),
+            Proficiencies=json.dumps(data.get('Proficiencies', [])),
+            CurrentHitPoints=data.get('CurrentHitPoints', 0),
+            cp=data.get('cp', 0),
+            sp=data.get('sp', 0),
+            ep=data.get('ep', 0),
+            gp=data.get('gp', 0),
+            pp=data.get('pp', 0)
+        )
+
+        # Add the new character to the session and commit
+        db.session.add(new_character)
+        db.session.commit()
+
+        return jsonify(new_character.to_dict()), 201
 
 
 @app.route('/api/characterSheet')
@@ -825,7 +937,6 @@ def get_characterSheet():
     system = campaign.system if campaign else 'D&D 5e'
 
     characterSheet = GameElement.query.filter_by(element_type='character_sheet', system=system).first()
-    # print("CharacterSheet-", [c.data for c in characterSheet])
     app.logger.debug("CharacterSheet- %s", [c.data for c in characterSheet])
     return jsonify([c.data for c in characterSheet])
 
@@ -875,7 +986,7 @@ def get_race_info(race_name):
     if game_element:
         return jsonify(game_element.data)
     else:
-        abort(404, description="Resource not found")
+        return jsonify({'error': 'Resource not found'}), 404
 
 @app.route('/api/backgrounds', methods=['GET'])
 def get_background_listing():
@@ -898,7 +1009,7 @@ def get_background_info(background_name):
     if game_element:
         return jsonify(game_element.data)
     else:
-        abort(404, description="Resource not found")
+        return jsonify({'error': 'Resource not found'}), 404
 
 
 ## GET Character Profile
@@ -1056,6 +1167,7 @@ def get_players():
 
     return jsonify({'players': players_info if players_info else []})
 
+## GET items for the DM and POST new items
 @app.route('/api/items', methods=['GET', 'POST']) ##, endpoint='items')
 @jwt_required()
 def items():
@@ -1063,7 +1175,6 @@ def items():
         app.logger.info("FLASK- Getting items for the DM")
         try:
             items = Item.query.all()
-            # print("ITEMS- items:", items)
 
             item_data_list = []
 
@@ -1093,7 +1204,7 @@ def items():
 
         except Exception as e:
             app.logger.error(f"Error getting items: {e}")
-            return jsonify({'message': 'Server error'}), 500
+            return jsonify({'error': 'Server error: ' + str(e)}), 500
 
     elif request.method == 'POST':
         data = request.get_json()
@@ -1214,7 +1325,7 @@ def items():
         except Exception as e:
             db.session.rollback()
             app.logger.error(f"Error creating item: {e}")
-            return jsonify({'message': 'Server error: ' + str(e)}), 500
+            return jsonify({'error': 'Server error: ' + str(e)}), 500
 
 
 ## Update details for an Item entry
@@ -1250,7 +1361,7 @@ def delete_item(itemID):
     except Exception as e:
         app.logger.error(f"Error deleting item: {e}")
         db.session.rollback()
-        return jsonify({'message': 'Server error: ' + str(e)}), 500
+        return jsonify({'error': 'Server error: ' + str(e)}), 500
     
 ## Upload CSV for bulk item creation
 @app.route('/api/upload_csv', methods=['POST'])
@@ -1261,23 +1372,7 @@ def upload_csv():
     csv_data = csv.reader(file.stream)
     items = [row for row in csv_data]
 
-def get_table_columns(model):
-    """Get the column names for a given SQLAlchemy model."""
-    return [column.name for column in model.__table__.columns]
-
-def map_fields(data, model):
-    """Map incoming data fields to model columns using fuzzy matching."""
-    valid_fields = get_table_columns(model)
-    mapped_data = {}
-    for key, value in data.items():
-        # Use fuzzy matching to map the field
-        best_match = process.extractOne(key, valid_fields, score_cutoff=80)
-        if best_match:
-            mapped_data[best_match[0]] = value
-        else:
-            mapped_data[key] = value  # Keep it if no match found, you might want to log this case
-    return mapped_data
-
+## Save items from a CSV
 @app.route('/api/save_items', methods=['POST'])
 def save_items():
     data = request.get_json()
@@ -1651,6 +1746,7 @@ def get_equipment():
 @app.route('/api/journal', methods=['POST'])
 @jwt_required()
 def create_journal_entry():
+    # app.logger.debug("JOURNAL- headers: %s", request.headers)
     data = request.get_json()
     if 'title' not in data or 'entry' not in data:
         return jsonify({'message': 'Title and Entry are required!'}), 400
@@ -1665,6 +1761,8 @@ def create_journal_entry():
 
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    else:
+        app.logger.debug("JOURNAL- campaignID: %s", campaignID)
     
     # Find the character associated with the user and the campaign
     stmt = select(campaign_members.c.characterID).where(
@@ -1677,8 +1775,11 @@ def create_journal_entry():
         return jsonify({'error': 'Character not found.'}), 404
 
     characterID = result.characterID if result else None
+    app.logger.debug("JOURNAL- characterID: %s", characterID)
 
     new_journal_entry = Journal(
+        userID=user.id,
+        campaignID=campaignID,
         characterID=characterID,
         title=data['title'],
         entry=data['entry'],
@@ -1689,6 +1790,7 @@ def create_journal_entry():
     db.session.commit()
 
     return jsonify({'message': 'New journal entry created!'})
+
 
 @app.route('/api/journal', methods=['GET'])
 @jwt_required()
@@ -1801,55 +1903,120 @@ def delete_journal_entry(entry_id):
     return jsonify({'message': 'Journal entry deleted'}), 200
 
 
-## Handles the Library stuff
+## Library Stuff
 @app.route('/api/library', methods=['GET', 'POST'])
 def library():
+    campaign_id = request.headers.get('CampaignID')
+    if not campaign_id:
+        return jsonify({'error': 'Campaign ID is required'}), 400
+
     if request.method == 'GET':
-        # Return the list of files
-        files = os.listdir(app.config['UPLOAD_FOLDER'])
+        # Query the database for all documents
+        documents = Document.query.filter_by(campaignID=campaign_id).all()
+        app.logger.debug('Found %d documents in the database', len(documents))
+        
+        # Construct the file information
         file_info = []
-        for file in files:
-            fileName, fileType = os.path.splitext(file)
+        for document in documents:
+            fileName, fileType = os.path.splitext(document.name)
             displayName = fileName.replace("_", " ")
-            file_info.append({'name': displayName, 'type': fileType[1:], 'originalName': file})  # fileType[1:] to remove the leading dot
-        return { 'files': file_info }
+            file_info.append({
+                'name': displayName,
+                'type': fileType[1:],  # fileType[1:] to remove the leading dot
+                'originalName': document.name,
+                'id': document.id  # Include the ID for future reference
+            })
+        
+        return { 'files': file_info }, 200
 
     elif request.method == 'POST':
-        # Save the uploaded file
+        # Save the uploaded file to the Documents table        
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+
         file = request.files['file']
-        filename = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+
+        new_file = Document(
+            name=file.filename,
+            data=file.read(),
+            mimetype=file.mimetype,
+            campaignID=campaign_id
+        )
+        db.session.add(new_file)
+        db.session.commit()
 
         # emit an event to all connected clients
         socketio.emit('library_update')
 
-        return { 'file': { 'name': filename } }
+        return { 'file': { 'name': file.filename } }, 201
 
-@app.route('/api/library/<filename>')
-def get_file(filename):
+@app.route('/api/library/<int:file_id>', methods=['GET'])
+def get_file_by_id(file_id):
+    app.logger.debug("GET FILE BY ID: %s", file_id)
+
+    campaign_id = request.headers.get('CampaignID')
+    app.logger.debug("GET FILE BY ID- headers: %s", request.headers)
+    if not campaign_id:
+        app.logger.error("GET FILE BY ID- Campaign ID is required")
+        return jsonify({'error': 'Campaign ID is required'}), 400
+    else:
+        app.logger.debug("GET FILE BY ID- campaignID: %s", campaign_id)
+
     try:
         # Log the request for the file
-        app.logger.debug('Getting %s from %s', filename, app.config['UPLOAD_FOLDER'])
+        app.logger.debug('Getting file with ID %d from the database', file_id)
 
-        # Construct the full file path
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        app.logger.debug('Constructed file path: %s', file_path)
+        # Query the database for the document
+        document = Document.query.filter_by(id=file_id, campaignID=campaign_id).first()
 
-        # Check if the file exists
-        if not os.path.exists(file_path):
-            app.logger.error('File not found: %s', file_path)
-            abort(404, description="File not found")
+        if document is None:
+            app.logger.error('File not found in the database: %d', file_id)
+            return jsonify({'error': 'File not found'}), 404
 
         # Send the requested file
-        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-    except FileNotFoundError:
-        app.logger.error('File not found: %s', filename)
-        abort(404, description="File not found")
+        return send_file(
+            io.BytesIO(document.data),
+            mimetype=document.mimetype,
+            as_attachment=True,
+            download_name=document.name
+        )
     except Exception as e:
-        app.logger.error('Error getting file %s: %s', filename, str(e))
-        abort(500, description="Internal Server Error")
+        app.logger.error('Error getting file with ID %d: %s', file_id, str(e))
+        return jsonify({'error': 'Server error: ' + str(e)}), 500
+
+@app.route('/api/library/<int:file_id>', methods=['DELETE'])
+def delete_file_by_id(file_id):
+    campaign_id = request.headers.get('CampaignID')
+    if not campaign_id:
+        return jsonify({'error': 'Campaign ID is required'}), 400
+
+    try:
+        # Log the request for the file
+        app.logger.debug('Deleting file with ID %d from the database', file_id)
+
+        # Query the database for the document
+        document = Document.query.filter_by(id=file_id, campaignID=campaign_id).first()
+
+        if document is None:
+            app.logger.error('File not found in the database: %d', file_id)
+            return jsonify({'error': 'File not found'}), 404
+
+        # Delete the document
+        db.session.delete(document)
+        db.session.commit()
+
+        # emit an event to all connected clients
+        socketio.emit('library_update')
+
+        return jsonify({'message': 'File deleted successfully'})
+    except Exception as e:
+        app.logger.error('Error deleting file with ID %d: %s', file_id, str(e))
+        return jsonify({'error': 'Server error: ' + str(e)}), 500
 
 
+## Chat Functions
 @app.route('/api/chat_history', methods=['GET'])
 @jwt_required()
 def get_chat_history():

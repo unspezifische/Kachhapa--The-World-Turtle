@@ -24,41 +24,43 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
   const handleCreateCharacter = () => setShowModalCharacter(true);
 
   const handleCloseModalSelectCharacter = () => setShowModalSelectCharacter(false);
-  
-  // Modified to accept a character object instead of a list
-  const handleSelectCharacter = (character) => {
-    console.log("AccountProfile- selected character:", character);
-    setCharacterName(character.name); // Set the character name
-    setCharacterID(character.id); // Set the character ID
-    setShowModalSelectCharacter(true);
-  }
 
-  // Get campaigns for user
+  // Get camapigns and characters
   useEffect(() => {
     const fetchData = async () => {
-      axios.get('/api/campaigns', { headers })
-        .then(response => {
-          setCampaigns(response.data)
-        })
-        .catch(error => {
-          console.error('Error fetching campaigns:', error)
-        });
+      try {
+        const [campaignsResponse, charactersResponse] = await Promise.all([
+          axios.get('/api/campaigns', { headers }),
+          axios.get('/api/characters', { headers })
+        ]);
+
+        setCampaigns(campaignsResponse.data);
+        setCharacters(charactersResponse.data);
+
+        console.log("AccountProfile- api/characters:", charactersResponse.data);
+      } catch (error) {
+        console.error('Error fetching data:', error);
       }
+    };
+
     fetchData();
   }, [headers]);
 
-  // Get user's characters
-  useEffect(() => {
-    axios.get('/api/characters', { headers })
-      .then(response => {
-        setCharacters(response.data)
-        console.log("AccountProfile- api/characters:", response.data);
-      })
-      .catch(error => {
-        console.error('Error fetching characters:', error)
-      });
-  }, [headers]);
 
+  // Modified to accept a character object instead of a list
+  const handleSelectCharacter = (character) => {
+    if (character) {
+      console.log("AccountProfile- selected character:", character);
+      setAccountType('Player');
+      setCharacterName(character.name); // Set the character name
+      setSelectedCampaign(character.campaign);
+      setCharacterID(character.id); // Set the character ID
+      // setShowModalSelectCharacter(true);
+      navigate('/characterSheet');
+    } else {
+      console.log("Profile- no character selected");
+    }
+  };
 
   const handleCampaignSelection = (campaign) => {
     console.log("header- AccountProfile", headers);
@@ -324,22 +326,22 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
               </Accordion.Header>
               <Accordion.Body>
                 {characters.map((character) => (
-                  <Col sm={4} key={character.id}>
-                    <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}>
-                      <Row>
-                        <Col xs={4}>
-                          <Card.Img fluid src={process.env.PUBLIC_URL + '/avatars/' + character.icon || campaignIcon} />
-                        </Col>
-                        <Col xs={8}>
-                          <Card.Body>
-                            <Card.Title>{character.name}</Card.Title>
-                            <Card.Subtitle className="mb-2 text-muted">{character.Class}</Card.Subtitle>
-                            {/* Add more details here */}
-                          </Card.Body>
-                        </Col>
-                      </Row>
-                    </Card>
-                  </Col>
+                  <Card
+                    key={character.id}
+                    style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}
+                    onClick={() => handleSelectCharacter(character)}
+                  >
+                    <Row>
+                      <Col xs={4}>
+                        <Card.Img variant="top" src={character.icon} />
+                      </Col>
+                      <Col xs={8}>
+                        <Card.Body>
+                          <Card.Title>{character.name}</Card.Title>
+                        </Card.Body>
+                      </Col>
+                    </Row>
+                  </Card>
                 ))}
                 <Col sm={4}>
                   <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={handleCreateCharacter}>

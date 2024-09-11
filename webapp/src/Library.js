@@ -12,33 +12,61 @@ function Library({ headers, socket }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortDirection, setSortDirection] = useState('asc');  // 'asc' for ascending, 'desc' for descending
 
+  // useEffect(() => {
+  //     console.log("Library headers:", headers);
+  // }, [headers]);
+
+  // useEffect(() => {
+  //   console.log("Library file:", files);
+  // }, [files])
+
   // Listen for page updates
   useEffect(() => {
     // Fetch the list of files from the server
     axios.get('api/library', { headers })
       .then(response => {
-        console.log("LIBRARY- response.data:", response.data);
         setFiles(response.data.files);
       });
 
     // Listen for the library_update event
-    socket.on('library_update', data => {
+    if (socket) {
+      socket.on('library_update', data => {
         axios.get('api/library', { headers })
           .then(response => {
-            console.log("LIBRARY- response.data:", response.data);
+            // console.log("LIBRARY- response.data:", response.data);
             setFiles(response.data.files);
           });
-    });
+      });
+    } else {
+      console.error('Socket is not valid.');
+    }
 
     // Make sure to clean up the listener when the component unmounts
     return () => {
+      if (socket) {
         socket.off('library_update');
+      }
     };
   }, [headers, socket]);
 
+  // Fetch image data for preview
   useEffect(() => {
-    console.log("Library file:", files);
-  }, [files])
+    files.forEach(file => {
+      if (!file.previewUrl) {
+        axios.get(`api/library/${file.id}`, {
+          headers,
+          responseType: 'blob'  // Important to set the response type to 'blob'
+        })
+        .then(response => {
+          const previewUrl = window.URL.createObjectURL(new Blob([response.data], { type: response.headers['content-type'] }));
+          setFiles(prevFiles => prevFiles.map(f => f.id === file.id ? { ...f, previewUrl } : f));
+        })
+        .catch(error => {
+          console.error('Error fetching file preview:', error.response ? error.response.data : error.message);
+        });
+      }
+    });
+  }, [files, headers]);
 
   const handleFileChange = (event) => {
     setSelectedFile(event.target.files[0]);
@@ -53,16 +81,25 @@ function Library({ headers, socket }) {
         // Add the new file to the list of files
         setFiles(prevFiles => [...prevFiles, response.data.file]);
         setShowUploadModal(false);
+      })
+      .catch(error => {
+        console.error('Error uploading file:', error.response.data);
       });
   };
 
   const handleFileClick = (file) => {
-    if (file.type === 'pdf') {
-        window.open(`api/library/${file.originalName}`);
-    } else {
-        setCurrentFile(file);
-        setShowFileModal(true);
-    }
+    axios.get(`api/library/${file.id}`, {
+      headers,
+      responseType: 'blob'  // Important to set the response type to 'blob'
+    })
+    .then(response => {
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: response.headers['content-type'] }));
+      setCurrentFile({ ...file, url });
+      setShowFileModal(true);
+    })
+    .catch(error => {
+      console.error('Error fetching file:', error.response ? error.response.data : error.message);
+    });
   };
 
 
@@ -96,7 +133,7 @@ function Library({ headers, socket }) {
             <Col sm={6} md={4} lg={3} key={index}>
               <div onClick={() => handleFileClick(file)}>
                 <Card>
-                  <Card.Img variant="top" src={`api/library/${file.originalName}`} />
+                  <Card.Img variant="top" src={file.previewUrl} />
                   <Card.Body>
                     <Card.Title>{file.name}</Card.Title>
                   </Card.Body>
@@ -122,13 +159,14 @@ function Library({ headers, socket }) {
           <Button variant="primary" onClick={handleFileUpload}>Upload</Button>
         </Modal.Footer>
       </Modal>
+
       {/* File Viewing Modal */}
       <Modal show={showFileModal} onHide={() => setShowFileModal(false)}>
         <Modal.Header closeButton>
           <Modal.Title>{currentFile?.name}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          <Image src={`api/library/${currentFile?.originalName}`} fluid />
+          <Image src={currentFile?.url} fluid />
         </Modal.Body>
       </Modal>
     </Container>

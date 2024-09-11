@@ -33,6 +33,41 @@
     "Spell Mastery": "At 18th level, you have achieved such mastery over certain spells that you can cast them at will. Choose a 1st-level wizard spell and a 2nd-level wizard spell that are in your spellbook. You can cast those spells at their lowest level without expending a spell slot whenever you have them prepared.",
     "Signature Spell": "At 20th level, you gain the ability to invest a spell with a portion of your soul. When you cast a wizard spell of 1st through 5th level that deals damage, you can deal maximum damage with that spell."
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a quarterstaff or a dagger",
+        "choices": [
+          "Quarterstaff",
+          "Dagger"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a component pouch or an arcane focus",
+        "choices": [
+          "Component pouch",
+          "Arcane focus"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a scholar's pack or an explorer's pack",
+        "choices": [
+          "Scholar's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "A spellbook",
+        "choices": [
+          "Spellbook"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "subclasses": ["School of Abjuration", "School of Conjuration", "School of Divination", "School of Enchantment", "School of Evocation", "School of Illusion", "School of Necromancy", "School of Transmutation"],
   "levels": [
     {

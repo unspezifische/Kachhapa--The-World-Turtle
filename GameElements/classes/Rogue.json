@@ -23,6 +23,44 @@
       "options": []
     }
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a rapier or a shortsword",
+        "choices": [
+          "Rapier",
+          "Shortsword"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a shortbow and quiver of 20 arrows or a shortsword",
+        "choices": [
+          "Shortbow and quiver of 20 arrows",
+          "Shortsword"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a burglar's pack, a dungeoneer's pack, or an explorer's pack",
+        "choices": [
+          "Burglar's pack",
+          "Dungeoneer's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Leather armor, two daggers, and thieves' tools",
+        "choices": [
+          "Leather armor",
+          "Two daggers",
+          "Thieves' tools"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "levels": [
     {
       "level": 1,

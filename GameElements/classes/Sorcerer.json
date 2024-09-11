@@ -6,9 +6,18 @@
     "level_increment": 4
   },
   "Primary Ability": "Charisma",
-  "Saving Throw Proficiencies": ["Constitution", "Charisma"],
+  "Saving Throw Proficiencies": [
+    "Constitution",
+    "Charisma"
+  ],
   "Armor Proficiencies": [],
-  "Weapon Proficiencies": ["Daggers", "Darts", "Slings", "Quarterstaffs", "Light crossbows"],
+  "Weapon Proficiencies": [
+    "Daggers",
+    "Darts",
+    "Slings",
+    "Quarterstaffs",
+    "Light crossbows"
+  ],
   "class Features": {
     "Spellcasting": {
       "description": "An event in your past, or in the life of a parent or ancestor, left an indelible mark on you, infusing you with arcane magic. This font of magic, whatever its origin, fuels your spells. See chapter 10 for the general rules of spellcasting and chapter 11 for the sorcerer spell list.",
@@ -16,12 +25,51 @@
     },
     "Sorcerous Origin": {
       "description": "Choose a sorcerous origin, which describes the source of your innate magical power, such as Draconic Bloodline or Wild Magic, both detailed at the end of the class description. Your choice grants you features at 1st level and again at 6th, 14th, and 18th level.",
-      "options": []
+      "options": [
+        "Draconic Bloodline",
+        "Wild Magic"
+      ],
+      "requires_selection": true
     },
     "Font of Magic": {
       "description": "At 2nd level, you tap into a deep wellspring of magic within yourself. This wellspring is represented by sorcery points, which allow you to create a variety of magical effects. See chapter 10 for the sorcerer class table.",
       "options": []
     }
+  },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a light crossbow and 20 bolts or any simple weapon",
+        "choices": [
+          "Light crossbow and 20 bolts",
+          "Any simple weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a component pouch or an arcane focus",
+        "choices": [
+          "Component pouch",
+          "Arcane focus"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a dungeoneer's pack or an explorer's pack",
+        "choices": [
+          "Dungeoneer's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Two daggers",
+        "choices": [
+          "Two daggers"
+        ],
+        "requires_selection": false
+      }
+    ]
   },
   "levels": [
     {
