@@ -37,6 +37,42 @@
     "Indomitable (2)": "Starting at 13th level, you can use Indomitable twice between rests.",
     "Extra Attack (3)": "At 20th level, you can attack four times, instead of three times, whenever you take the Attack action on your turn."
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose chain mail or leather armor, longbow, and 20 arrows",
+        "choices": [
+          "Chain mail",
+          "Leather armor, longbow, and 20 arrows"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a martial weapon and a shield or two martial weapons",
+        "choices": [
+          "Martial weapon and a shield",
+          "Two martial weapons"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a light crossbow and 20 bolts or two handaxes",
+        "choices": [
+          "Light crossbow and 20 bolts",
+          "Two handaxes"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a dungeoneer's pack or an explorer's pack",
+        "choices": [
+          "Dungeoneer's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      }
+    ]
+  },
   "subclasses": ["Champion", "Battle Master", "Eldritch Knight"],
   "levels": [
     {

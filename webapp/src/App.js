@@ -53,7 +53,7 @@ function App() {
     'username': username,
     'characterID': characterID,
     'campaignID': selectedCampaign.id,
-  }), [token, userID, username, selectedCampaign.id, characterID]);
+  }), [token, userID, username, selectedCampaign, characterID]);
 
   useEffect(() => {
     console.log('headers:', headers);
@@ -233,9 +233,9 @@ function App() {
                   <Route path="/" element={<Navigate to="/accountProfile" />} />
                   <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} />} />
                   <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
-                    <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
+                  <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
-                  <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} />} />
+                  <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
                   <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID}/>} />
 

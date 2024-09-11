@@ -27,6 +27,33 @@
     "Empty Body": "Beginning at 18th level, you can use your action to spend 4 ki points to become invisible for 1 minute.",
     "Perfect Self": "At 20th level, when you roll for initiative and have no ki points remaining, you regain 4 ki points."
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a shortsword or any simple weapon",
+        "choices": [
+          "Shortsword",
+          "Any simple weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a dungeoneer's pack or an explorer's pack",
+        "choices": [
+          "Dungeoneer's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "10 darts",
+        "choices": [
+          "10 darts"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "subclasses": ["Way of the Open Hand", "Way of Shadow", "Way of the Four Elements"],
   "levels": [
     {

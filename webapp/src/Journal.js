@@ -7,7 +7,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import 'easymde/dist/easymde.min.css';
 import './Journal.css';
 
-function Journal({ headers, characterName }) {
+function Journal({ headers, characterName, campaignID }) {
   const editorRef = useRef(null);
 
   const [title, setTitle] = useState('');
@@ -206,24 +206,25 @@ function Journal({ headers, characterName }) {
 
   const saveEntry = async () => {
     const entryContent = editorRef.current.value();
-      if (selectedEntry) { // If an existing entry is selected, update it
+    if (selectedEntry) { // If an existing entry is selected, update it
         axios.put(`/api/journal/${selectedEntry.id}`, { entry: entryContent, title: title }, { headers })
-        .then(response =>
-          console.log(response.data)
-        )
-        .catch(error =>
-          console.error('Error saving journal entry:', error.response.data)
-        );
-      } else { // Otherwise, create a new entry
+        .then(response => {
+            console.log(response.data);
+            fetchEntries(); // Refetch entries after saving
+        })
+        .catch(error => {
+            console.error('Error saving journal entry:', error.response.data);
+        });
+    } else { // Otherwise, create a new entry
         axios.post('/api/journal', { entry: entryContent, title: title }, { headers })
-        .then(response =>
-          console.log(response.data)
-        )
-        .catch(error =>
-          console.error('Error creating journal entry:', error.response.data)
-        );
-      }
-      fetchEntries(); // Refetch entries after saving
+        .then(response => {
+            console.log(response.data);
+            fetchEntries(); // Refetch entries after saving
+        })
+        .catch(error => {
+            console.error('Error creating journal entry:', error.response.data);
+        });
+    }
   };
 
   const deleteEntry = async (event, entryId) => {

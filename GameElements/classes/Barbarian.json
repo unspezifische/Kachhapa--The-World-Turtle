@@ -41,6 +41,34 @@
       }
     }
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a great axe or any martial melee weapon",
+        "choices": [
+          "Great axe",
+          "Any martial melee weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose two handaxes or any simple weapon",
+        "choices": [
+          "Two handaxes",
+          "Any simple weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose an explorer's pack or four javelins",
+        "choices": [
+          "Explorer's pack",
+          "Four javelins"
+        ],
+        "requires_selection": true
+      }
+    ]
+  },
   "levels": [
     {
       "level": 1,

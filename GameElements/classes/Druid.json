@@ -36,6 +36,35 @@
       "options": []
     }
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a wooden shield or any simple weapon",
+        "choices": [
+          "Wooden shield",
+          "Any simple weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a scimitar or any simple melee weapon",
+        "choices": [
+          "Scimitar",
+          "Any simple melee weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Leather armor, an explorer's pack, and a druidic focus",
+        "choices": [
+          "Leather armor",
+          "Explorer's pack",
+          "Druidic focus"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "Subclasses": ["Circle of the Land", "Circle of the Moon"],
   "levels": [
     {

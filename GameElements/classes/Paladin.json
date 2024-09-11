@@ -24,6 +24,42 @@
     "Ancient Magic": "At 18th level, you have achieved such a communion with nature that your spells are more potent. Natural spell effects—those that use the natural forces of the world to create magical effects—truly blossom when you reach 18th level.",
     "Sacred Oath Feature": "At 20th level, you gain a special feature based on the oath you have chosen."
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a martial weapon and a shield or two martial weapons",
+        "choices": [
+          "Martial weapon and a shield",
+          "Two martial weapons"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose five javelins or any simple melee weapon",
+        "choices": [
+          "Five javelins",
+          "Any simple melee weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a priest's pack or an explorer's pack",
+        "choices": [
+          "Priest's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Chain mail and a holy symbol",
+        "choices": [
+          "Chain mail",
+          "Holy symbol"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "subclasses": ["Oath of Devotion", "Oath of the Ancients", "Oath of Vengeance", "Oathbreaker"],
   "levels": [
     {

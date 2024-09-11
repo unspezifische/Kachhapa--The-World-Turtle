@@ -471,9 +471,10 @@ function CharacterSheet({ headers, characterName }) {
 
   function formatFeatures(features, classData) {
     // console.log('formatFeatures- Features:', features);
-    // console.log('formatFeatures- Class Data:', classData);
+    console.log('formatFeatures- Class Data:', classData);
     return features.map(feature => {
       const trait = classData.class_features[feature];
+      console.log('Trait:', trait);
       return {
         name: feature,
         description: typeof trait === 'string'

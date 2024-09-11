@@ -48,7 +48,7 @@ echo "Finished copying the static directory"
 scp myapp.service $DESTINATION:/home/ijohnson/Kachhapa/Flask
 
 # Push updated Nginx configuration to the Pi & restart Nginx
-scp nginx/nginx.conf $DESTINATION:/etc/nginx/nginx.conf
+scp nginx.conf $DESTINATION:/etc/nginx/nginx.conf
 ssh $DESTINATION "sudo nginx -t"
 # echo "Finished updating Nginx configuration"
 

@@ -12,10 +12,21 @@ services:
     networks:
       - Kachhapa-network
 
+  rabbitmq:
+    image: rabbitmq:latest
+    ports:
+      - "5672:5672"  # RabbitMQ default port
+      - "15672:15672"  # RabbitMQ Management Plugin port
+    networks:
+      - Kachhapa-network
+
   flask:
-    build: ./Flask
+    build:
+      context: .
+      dockerfile: Flask/Dockerfile
     depends_on:
       - postgres
+      - rabbitmq
     volumes:
       - myapp_socket:/tmp
     ports:

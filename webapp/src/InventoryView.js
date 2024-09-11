@@ -1367,137 +1367,161 @@ export default function InventoryView({ username, characterName, accountType, he
         </Modal.Footer>
       </Modal>
 
-      {/* View ItemDetails Modal */}
+            {/* View ItemDetails Modal */}
       <Modal show={showViewItemDetails} onHide={handleCloseItemDetails} centered scrollable>
         <Modal.Header closeButton>
-          <Modal.Title >
-            <Col>
-              <Form.Control
-                type="text"
-                value={selectedItem?.name}
-                onChange={e => setSelectedItem({ ...selectedItem, name: e.target.value })}
-              />
-            </Col>
-            <Col>
-              {accountType === 'DM' && (
-                <Button variant="primary" onClick={() => {
-                  setShowEditItemDetails(true);
-                  setShowViewItemDetails(false);
-                }}>
-                  <EditIcon />
-                </Button>
-              )}
-              {accountType === 'Player' && (
-                <Form.Check
-                  key={'equip-checkbox'}
-                  type="checkbox"
-                  label={
-                    <span style={{ fontSize: '1rem', color: selectedItem?.equipped ? 'green' : 'red' }}>
-                      {selectedItem?.equipped ? 'Equipped!' : 'Equip?'}
-                    </span>
-                  }
-                  checked={selectedItem?.equipped}
-                  onChange={e => setSelectedItem({ ...selectedItem, equipped: !selectedItem?.equipped })}
+          <Modal.Title>
+            <Row>
+              <Col>
+                <Form.Control
+                  type="text"
+                  value={selectedItem?.name}
+                  onChange={e => setSelectedItem({ ...selectedItem, name: e.target.value })}
                 />
-              )}
-            </Col>
+              </Col>
+              <Col className="text-right">
+                {accountType === 'DM' && (
+                  <Button variant="primary" onClick={() => {
+                    setShowEditItemDetails(true);
+                    setShowViewItemDetails(false);
+                  }}>
+                    <EditIcon />
+                  </Button>
+                )}
+                {accountType === 'Player' && (
+                  <Form.Check
+                    key={'equip-checkbox'}
+                    type="checkbox"
+                    label={
+                      <span style={{ fontSize: '1rem', color: selectedItem?.equipped ? 'green' : 'red' }}>
+                        {selectedItem?.equipped ? 'Equipped!' : 'Equip?'}
+                      </span>
+                    }
+                    checked={selectedItem?.equipped}
+                    onChange={e => setSelectedItem({ ...selectedItem, equipped: !selectedItem?.equipped })}
+                  />
+                )}
+              </Col>
+            </Row>
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
           <Container>
-            <Row>
+            <Row className="mb-2">
               <Col>{selectedItem?.type}</Col>
               <Col className="text-right">{selectedItem?.cost} {selectedItem?.currency}</Col>
             </Row>
-            <Row>
-            <Col>Weight: {selectedItem?.weight} {selectedItem?.weight === null ? '' : 'pound'}{selectedItem?.weight > 1 ? 's' : ''}</Col>
+            <Row className="mb-2">
+              <Col>Weight: {selectedItem?.weight} {selectedItem?.weight === null ? '' : 'pound'}{selectedItem?.weight > 1 ? 's' : ''}</Col>
             </Row>
-            <Row>
             {accountType === 'Player' && (
-              <Col>Quantity: {selectedItem?.quantity}</Col>
+              <Row className="mb-2">
+                <Col>Quantity: {selectedItem?.quantity}</Col>
+              </Row>
             )}
-            </Row>
-            <Row>
-              {selectedItem?.type === 'Mounts and Vehicles' && (
-                <>
-                  <Col>Vehicle Type: {selectedItem?.vehicle_type}</Col>
-                  <Col>Speed: {selectedItem?.speed}</Col>
-                  <Col>Capacity: {selectedItem?.capacity}</Col>
-                </>
-              )}
-              {selectedItem?.type === 'Weapon' && (
-                <>
-                  <Col>Type: {selectedItem?.weapon_type}</Col>
-                  <Col>Damage: {selectedItem?.damage} {selectedItem?.damage_type}</Col>
-                  <Col>Range: {selectedItem?.weapon_range} feet</Col>
-                </>
-              )}
-              {selectedItem?.type === 'Armor' && (
+            {selectedItem?.type === 'Mounts and Vehicles' && (
+              <Row className="mb-2">
+                <Col>Vehicle Type: {selectedItem?.vehicle_type}</Col>
+                <Col>Speed: {selectedItem?.speed}</Col>
+                <Col>Capacity: {selectedItem?.capacity}</Col>
+              </Row>
+            )}
+            {selectedItem?.type === 'Weapon' && (
+              <Row className="mb-2">
+                <Col>Type: {selectedItem?.weapon_type}</Col>
+                <Col>Damage: {selectedItem?.damage} {selectedItem?.damage_type}</Col>
+                <Col>Range: {selectedItem?.weapon_range} feet</Col>
+              </Row>
+            )}
+            {selectedItem?.type === 'Armor' && (
               <>
-                <Row>
-                  AC: {selectedItem?.armor_class}
-                  {selectedItem?.armor_type === 'Light Armor' && ' + Dex Mod'}
-                  {selectedItem?.armor_type === 'Medium Armor' && ' + Dex Mod (max 2)'}
+                <Row className="mb-2">
+                  <Col>AC: {selectedItem?.armor_class}
+                    {selectedItem?.armor_type === 'Light Armor' && ' + Dex Mod'}
+                    {selectedItem?.armor_type === 'Medium Armor' && ' + Dex Mod (max 2)'}
+                  </Col>
                 </Row>
-                <Row>
-                  Type: {selectedItem?.armor_type}
+                <Row className="mb-2">
+                  <Col>Type: {selectedItem?.armor_type}</Col>
                 </Row>
-                <Row>
-                  {selectedItem?.strength_needed === null ? '' : `Strength Needed: ${selectedItem?.strength_needed}`}
+                <Row className="mb-2">
+                  <Col>{selectedItem?.strength_needed === null ? '' : `Strength Needed: ${selectedItem?.strength_needed}`}</Col>
                 </Row>
-                <Row>Stealth Disadvantage: {selectedItem?.stealthDisadvantage ? "Yes" : "No"}</Row>
+                <Row className="mb-2">
+                  <Col>Stealth Disadvantage: {selectedItem?.stealthDisadvantage ? "Yes" : "No"}</Col>
+                </Row>
               </>
             )}
-            </Row>
-            <Row>
+            <Row className="mb-2">
               <Col>Description: {selectedItem?.description}</Col>
             </Row>
           </Container>
         </Modal.Body>
         <Modal.Footer>
-          <select
-            defaultValue=""
-            onChange={e => {
-              const playerIndex = e.target.value;
-              if (playerIndex !== "") {
-                setSelectedPlayer(players[playerIndex]);
-              } else {
-                setSelectedPlayer(null);  // Or some default value
-              }
-            }}
-            >
-            <option value="" disabled>Select a player</option>
-            {players.map((player, index) => (
-              <option key={index} value={index}>{player.character_name}</option>
-            ))}
-          </select>
-          <input
-            type="number"
-            placeholder="Quantity"
-            value={quantity}
-            onChange={e => setQuantity(e.target.value)}
-          />
-          {accountType === 'DM' && (
-            <Row>
-              <Button variant="primary" onClick={issueItemToPlayer}>
-                Issue to Player
-              </Button>
+          <Container>
+            <Row className="mb-2">
+              <Col>
+                <Form.Group>
+                  <Form.Label>Select a player</Form.Label>
+                  <Form.Control
+                    as="select"
+                    defaultValue=""
+                    onChange={e => {
+                      const playerIndex = e.target.value;
+                      if (playerIndex !== "") {
+                        setSelectedPlayer(players[playerIndex]);
+                      } else {
+                        setSelectedPlayer(null);  // Or some default value
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Select a player</option>
+                    {players.map((player, index) => (
+                      <option key={index} value={index}>{player.character_name}</option>
+                    ))}
+                  </Form.Control>
+                </Form.Group>
+              </Col>
+              <Col>
+                <Form.Group>
+                  <Form.Label>Quantity</Form.Label>
+                  <Form.Control
+                    type="number"
+                    placeholder="Quantity"
+                    value={quantity}
+                    onChange={e => setQuantity(e.target.value)}
+                  />
+                </Form.Group>
+              </Col>
             </Row>
-          )}
-          {accountType === 'Player' && (
-            <>
-              <Row>
-                <Button variant="primary" onClick={giveItemToAnotherPlayer}>
-                  Give to Teammate
-                </Button>
+            {accountType === 'DM' && (
+              <Row className="mb-2">
+                <Col>
+                  <Button variant="primary" onClick={issueItemToPlayer}>
+                    Issue to Player
+                  </Button>
+                </Col>
               </Row>
-              <Row>
-                <Button variant="danger" onClick={() => dropItem(selectedItem, quantity)}>
-                  Drop Item
-                </Button>
-              </Row>
-            </>
-          )}
+            )}
+            {accountType === 'Player' && (
+              <>
+                <Row className="mb-2">
+                  <Col>
+                    <Button variant="primary" onClick={giveItemToAnotherPlayer}>
+                      Give to Teammate
+                    </Button>
+                  </Col>
+                </Row>
+                <Row className="mb-2">
+                  <Col>
+                    <Button variant="danger" onClick={() => dropItem(selectedItem, quantity)}>
+                      Drop Item
+                    </Button>
+                  </Col>
+                </Row>
+              </>
+            )}
+          </Container>
         </Modal.Footer>
       </Modal>
 

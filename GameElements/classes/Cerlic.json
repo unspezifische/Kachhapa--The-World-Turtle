@@ -24,6 +24,51 @@
       "options": []
     }
   },
+  "starter_equipment": {
+    "options": [
+      {
+        "description": "Choose a mace or a warhammer (if proficient)",
+        "choices": [
+          "Mace",
+          "Warhammer (if proficient)"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose scale mail, leather armor, or chain mail (if proficient)",
+        "choices": [
+          "Scale mail",
+          "Leather armor",
+          "Chain mail (if proficient)"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a light crossbow and 20 bolts or any simple weapon",
+        "choices": [
+          "Light crossbow and 20 bolts",
+          "Any simple weapon"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "Choose a priest's pack or an explorer's pack",
+        "choices": [
+          "Priest's pack",
+          "Explorer's pack"
+        ],
+        "requires_selection": true
+      },
+      {
+        "description": "A shield and a holy symbol",
+        "choices": [
+          "Shield",
+          "Holy symbol"
+        ],
+        "requires_selection": false
+      }
+    ]
+  },
   "Divine Domains": ["Knowledge", "Life", "Light", "Nature", "Tempest", "Trickery", "War"],
   "levels": [
     {
