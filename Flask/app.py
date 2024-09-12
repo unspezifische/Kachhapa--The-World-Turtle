@@ -1957,7 +1957,7 @@ def get_file_by_id(file_id):
     app.logger.debug("GET FILE BY ID: %s", file_id)
 
     campaign_id = request.headers.get('CampaignID')
-    app.logger.debug("GET FILE BY ID- headers: %s", request.headers)
+    # app.logger.debug("GET FILE BY ID- headers: %s", request.headers)
     if not campaign_id:
         app.logger.error("GET FILE BY ID- Campaign ID is required")
         return jsonify({'error': 'Campaign ID is required'}), 400
