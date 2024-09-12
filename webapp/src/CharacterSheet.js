@@ -365,9 +365,9 @@ function CharacterSheet({ headers, characterName }) {
 
 
   function handleEdit(event, tileId) {
-    console.log('handleEdit called');
-    console.log('event:', event);
-    console.log('tileId:', tileId);
+    // console.log('handleEdit called');
+    // console.log('event:', event);
+    // console.log('tileId:', tileId);
     event.stopPropagation();
     console.log('Editing tile:', tileId);
     setEditingTileId(tileId);
@@ -376,7 +376,7 @@ function CharacterSheet({ headers, characterName }) {
 
   // This function will be called whenever the layout changes
   const handleLayoutChange = (layout, layouts) => {
-    // console.log(layout);
+    console.log(layout);
     localStorage.setItem('tileLayout', JSON.stringify(layouts));
   };
 

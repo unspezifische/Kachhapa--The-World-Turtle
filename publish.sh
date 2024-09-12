@@ -22,6 +22,19 @@ echo "Finished installing Python dependencies"
 rsync -avz Flask/app.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying app.py"
 
+# Copy GameElements
+rsync -avz GameElements/characterBackgrounds $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/characterBackgrounds
+echo "Finished copying character Backgrounds"
+
+rsync -avz GameElements/characterSheets $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/characterSheets
+echo "Finished copying character sheets"
+
+rsync -avz GameElements/classes $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/classes
+echo "Finished copying classes"
+
+rsync -avz GameElements/races $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/races
+echo "Finished copying races"
+
 # Restart Flask
 ssh $DESTINATION "sudo systemctl restart myapp"
 echo "Finished restarting Flask"
@@ -34,15 +47,23 @@ echo "Finished copying the templates directory"
 rsync -avz Flask/static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static
 echo "Finished copying the static directory"
 
-# # Copy the PostgreSQL database
-# pg_dump -U admin -W -F c db > database_backup.dump
-# scp database_backup.dump $DESTINATION
-# echo "Finished copying the database"
+# Define variables
+PI_DB="db"
+PI_DUMP_FILE="database_backup.dump"
+LOCAL_DB="local_db"
 
-# # Restore the database on the Raspberry Pi
-# ssh $DESTINATION "pg_restore -U admin -d db -1 database_backup.dump"
-# # ssh $DESTINATION "pg_restore --clean -U admin -d db -1 database_backup.dump"
-# echo "Finished restoring the database on the Raspberry Pi"
+# Dump the PostgreSQL database on the Raspberry Pi
+ssh $DESTINATION "pg_dump -U admin -W -F c $PI_DB > $PI_DUMP_FILE"
+echo "Finished dumping the database on the Raspberry Pi"
+
+# Copy the dump file from the Raspberry Pi to the local machine
+scp $DESTINATION:$PI_DUMP_FILE .
+echo "Finished copying the database dump to the local machine"
+
+# Restore the database on the local machine
+# pg_restore -U admin -d $LOCAL_DB -1 $PI_DUMP_FILE
+# pg_restore --clean -U admin -d $LOCAL_DB -1 $PI_DUMP_FILE
+echo "Finished restoring the database on the local machine"
 
 # Restart Flask on the Pi
 scp myapp.service $DESTINATION:/home/ijohnson/Kachhapa/Flask
