@@ -28,7 +28,7 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 
 
 function App() {
-  const SOCKET_URL = 'ws://app.raspberrypi.local';
+  const SOCKET_URL = window.location.hostname === 'localhost' ? 'ws://localhost' : 'ws://app.raspberrypi.local';
 
   const [token, setToken] = useState(localStorage.getItem('token') || '');
 
@@ -38,9 +38,15 @@ function App() {
   const [characterID, setCharacterID] = useState(null);
   const [accountType, setAccountType] = useState('');
 
-  useEffect(() => {
-    console.log('characterName:', characterName);
-  }, [characterName]);
+
+  // // Debugging
+  // useEffect(() => {
+  //   console.log('characterName:', characterName);
+  // }, [characterName]);
+
+  // useEffect(() => {
+  //   console.log('headers:', headers);
+  // }, [headers]);
 
   // State variables from useAuthHandler
   const [isLoading, setIsLoading] = useState(false);
@@ -55,12 +61,7 @@ function App() {
     'campaignID': selectedCampaign.id,
   }), [token, userID, username, selectedCampaign, characterID]);
 
-  useEffect(() => {
-    console.log('headers:', headers);
-  }, [headers]);
-
   // Socket Stuff
-  // const [socket, setSocket] = useState(null);
   const socketRef = useRef(null);
   const [socketLoading, setSocketLoading] = useState(true);
 
@@ -76,7 +77,7 @@ function App() {
   }, [isLoggedIn, socketRef.current, username]);
 
 
-  // Web Socket stuff
+  // Web Socket setup and maintance
   useEffect(() => {
     if (!token) return;
 
@@ -86,7 +87,7 @@ function App() {
     const newSocket = io(SOCKET_URL, {
       path: '/socket.io/',
       transports: ['websocket'],
-      query: { token },
+      query: { token, campaignID: selectedCampaign.id },
       reconnectionAttempts: 5,
       reconnectionDelay: 2000
     });
@@ -104,7 +105,7 @@ function App() {
     newSocket.on('token_expired', () => {
       console.log("Token Expired");
       localStorage.removeItem('token');
-      // Handle token expiration
+      // Handle token expiration clientside?
     });
 
     newSocket.on('disconnect', (reason) => {
@@ -119,9 +120,10 @@ function App() {
         socketRef.current.disconnect();
       }
     };
-  }, [token]);
+  }, [token, selectedCampaign.id]);
 
 
+  // Web Socket event listeners for Initative Tracking
   useEffect(() => {
     if (!socketRef.current) return;
 

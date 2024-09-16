@@ -67,34 +67,34 @@ const skillAbilities = {
 // ];
 
 const tiles = [
-  { "w": 2, "h": 4, "x": 0, "y": 0, "i": "Name"},
-  { "w": 1, "h": 3, "x": 2, "y": 0, "i": "Class"},
-  { "w": 1, "h": 3, "x": 2, "y": 3, "i": "Race"},
-  { "w": 1, "h": 4, "x": 3, "y": 0, "i": "Alignment"},
-  { "w": 1, "h": 20, "x": 0, "y": 4, "i": "Ability Scores"},
-  { "w": 1, "h": 3, "x": 1, "y": 4, "i": "Proficiency Bonus"},
-  { "w": 1, "h": 12, "x": 1, "y": 7, "i": "Saving Throws"},
-  { "w": 2, "h": 19, "x": 3, "y": 15, "i": "Skills"},
-  { "w": 2, "h": 4, "x": 5, "y": 23, "i": "PersonalityTraits"},
-  { "w": 2, "h": 4, "x": 0, "y": 31, "i": "Ideals"},
-  { "w": 2, "h": 4, "x": 0, "y": 35, "i": "Bonds"},
-  { "w": 2, "h": 5, "x": 3, "y": 34, "i": "Flaws"},
-  { "w": 2, "h": 9, "x": 5, "y": 0, "i": "Feats"},
-  { "w": 1, "h": 1, "x": 0, "y": 39, "i": "Attacks"},
-  { "w": 1, "h": 1, "x": 0, "y": 40, "i": "Actions"},
-  { "w": 2, "h": 7, "x": 5, "y": 16, "i": "Spells"},
-  { "w": 2, "h": 7, "x": 5, "y": 9, "i": "Equipment"},
-  { "w": 2, "h": 12, "x": 1, "y": 19, "i": "Proficiencies"},
-  { "w": 1, "h": 7, "x": 2, "y": 12, "i": "Wealth"},
-  { "w": 1, "h": 3, "x": 3, "y": 7, "i": "Initiative"},
-  { "w": 1, "h": 3, "x": 4, "y": 4, "i": "Speed"},
-  { "w": 1, "h": 3, "x": 2, "y": 6, "i": "Armor Class"},
-  { "w": 1, "h": 3, "x": 3, "y": 4, "i": "Background"},
-  { "w": 1, "h": 4, "x": 4, "y": 0, "i": "ExperiencePoints"},
-  { "w": 2, "h": 2, "x": 3, "y": 13, "i": "PassivePerception"},
-  { "w": 1, "h": 3, "x": 2, "y": 9, "i": "HitPointMax"},
-  { "w": 1, "h": 3, "x": 3, "y": 10, "i": "CurrentHitPoints"},
-  { "w": 1, "h": 3, "x": 4, "y": 7, "i": "TemporaryHitPoints"}
+  { "w": 2, "h": 4, "x": 0, "y": 0, "i": "Name" },
+  { "w": 1, "h": 3, "x": 2, "y": 0, "i": "Class" },
+  { "w": 1, "h": 3, "x": 2, "y": 3, "i": "Race" },
+  { "w": 1, "h": 4, "x": 3, "y": 0, "i": "Alignment" },
+  { "w": 1, "h": 20, "x": 0, "y": 4, "i": "Ability Scores" },
+  { "w": 1, "h": 3, "x": 1, "y": 4, "i": "Proficiency Bonus" },
+  { "w": 1, "h": 12, "x": 1, "y": 7, "i": "Saving Throws" },
+  { "w": 2, "h": 19, "x": 3, "y": 14, "i": "Skills" },
+  { "w": 2, "h": 4, "x": 3, "y": 38, "i": "PersonalityTraits" },
+  { "w": 2, "h": 4, "x": 1, "y": 31, "i": "Ideals" },
+  { "w": 2, "h": 4, "x": 1, "y": 35, "i": "Bonds" },
+  { "w": 2, "h": 5, "x": 3, "y": 33, "i": "Flaws" },
+  { "w": 2, "h": 9, "x": 5, "y": 0, "i": "Feats" },
+  { "w": 2, "h": 11, "x": 5, "y": 16, "i": "Attacks" },
+  { "w": 2, "h": 13, "x": 5, "y": 27, "i": "Actions" },
+  { "w": 2, "h": 7, "x": 5, "y": 40, "i": "Spells" },
+  { "w": 2, "h": 7, "x": 5, "y": 9, "i": "Equipment" },
+  { "w": 2, "h": 12, "x": 1, "y": 19, "i": "Proficiencies" },
+  { "w": 1, "h": 7, "x": 2, "y": 12, "i": "Wealth" },
+  { "w": 1, "h": 3, "x": 3, "y": 8, "i": "Initiative" },
+  { "w": 1, "h": 3, "x": 4, "y": 4, "i": "Speed" },
+  { "w": 1, "h": 3, "x": 2, "y": 6, "i": "Armor Class" },
+  { "w": 1, "h": 4, "x": 3, "y": 4, "i": "Background" },
+  { "w": 1, "h": 4, "x": 4, "y": 0, "i": "ExperiencePoints" },
+  { "w": 1, "h": 4, "x": 4, "y": 10, "i": "PassivePerception" },
+  { "w": 1, "h": 3, "x": 2, "y": 9, "i": "HitPointMax" },
+  { "w": 1, "h": 3, "x": 3, "y": 11, "i": "CurrentHitPoints" },
+  { "w": 1, "h": 3, "x": 4, "y": 7, "i": "TemporaryHitPoints" }
 ]
 
 const defaultLayout = {
@@ -469,12 +469,21 @@ function CharacterSheet({ headers, characterName }) {
     setSelectedEquipment(selectedItem);
   };
 
+    // Function to normalize feature names
+  function normalizeFeatureName(featureName) {
+    return featureName.toLowerCase().replace(/\s+/g, '_');
+  }
+  
+  // Updated formatFeatures function
   function formatFeatures(features, classData) {
-    // console.log('formatFeatures- Features:', features);
+    console.log('formatFeatures- Features:', features);
     console.log('formatFeatures- Class Data:', classData);
+    
     return features.map(feature => {
-      const trait = classData.class_features[feature];
+      const normalizedFeature = normalizeFeatureName(feature);
+      const trait = classData.class_features[normalizedFeature];
       console.log('Trait:', trait);
+      
       return {
         name: feature,
         description: typeof trait === 'string'
@@ -500,7 +509,9 @@ function CharacterSheet({ headers, characterName }) {
           newCharacterState.HitPointMax = classData.hit_points.base + (character.Level * (classData.hit_points.level_increment + getModifier(character.abilityScores.constitution)));
   
           const features = [];
+          console.log("Character Level:", character.Level);
           for (let i = 0; i < character.Level; i++) {
+            console.log("Level:", i);
             features.push(...classData.levels[i].features);
           }
           newCharacterState.Feats = formatFeatures(features, classData);
@@ -615,7 +626,7 @@ function CharacterSheet({ headers, characterName }) {
     }
   }
 
-    useEffect(() => {
+  useEffect(() => {
     // Calculate Armor Class if equipment or Dexterity changes
     const armorClass = calculateArmorClass();
     console.log('Armor Class:', armorClass);
@@ -1169,6 +1180,7 @@ function CharacterSheet({ headers, characterName }) {
         return null;
     }
   }
+
 
   return (
     <>

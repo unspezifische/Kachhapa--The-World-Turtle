@@ -11,6 +11,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   const [messages, setMessages] = useState([]);
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [users, setUsers] = useState([]);
+  const userID = headers.userID;
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [error, setError] = useState('');
 
@@ -49,7 +50,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
 
   useEffect(() => {
     const handleMessage = (message) => {
-      console.log("Receiving " + message);
+      console.log("Receivied message:", message);
       console.log("Checking message from: " + message.sender);
       console.log("Checking message to: " + message.recipients);
       if (message.sender === characterName || message.recipients.includes(characterName)) {
@@ -61,8 +62,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   
     const handleActiveUsers = (active_users) => {
       console.log("CHAT- active_users", active_users);
-      console.log("CHAT- your characterName:", characterName);
-      const otherUsers = active_users.filter(user => user.character_name !== characterName);
+      // console.log("CHAT- your characterName:", characterName);
+      const otherUsers = active_users.filter(user => user.username !== username);
       setUsers(otherUsers);
     }
   
@@ -70,7 +71,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     socket.on('active_users', handleActiveUsers);
   
     // Emit an event to request the current list of active users
-    socket.emit('request_active_users');
+    socket.emit('request_active_users', { campaignID: campaignID });
   
     return () => {
       socket.off('message', handleMessage);
@@ -105,11 +106,26 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   };
 
   const handleChange = (selected) => {
+    console.log("Selected users:", selected);
     setSelectedUsers(selected);
   };
 
-  const replyAll = (message) => {
-    setSelectedUsers([message.sender, ...message.recipients].filter(user => user !== characterName));
+    const replyAll = (message) => {
+    console.log("Replying to message:", message);
+    
+    // Extract userID values from group_id
+    const allUserIDs = message.group_id.split('-');
+    console.log("SELECTED MESSAGE- All user IDs:", allUserIDs);
+
+    // Get userID from header
+    console.log("SELECTED MESSAGE- Your userID:", headers.userID);
+    
+    // Filter out the current user's userID
+    const filteredUserIDs = allUserIDs.filter(userID => userID !== headers.userID);
+    console.log("SELECTED MESSAGE- Filtered user IDs:", filteredUserIDs);
+    
+    // Update the selectedUsers state with filtered user IDs
+    setSelectedUsers(filteredUserIDs);
   };
 
   const renderMessage = (message, i, isSameGroup) => (
@@ -159,7 +175,6 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
           </Row>
           
           {/* Displays previous messages */}
-          {/* for Col:  */}
           <Row>
             <Col ref={messageContainerRef} className="messageContainer">
               {messages.slice().map((message, i) => {
@@ -170,7 +185,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
             </Col>
           </Row>
           
-          {/* Display active users- className="usersList" */}
+          {/* Display active users */}
           <Row>
             <Col>
               <ToggleButtonGroup
@@ -191,8 +206,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
                 ) : (
                   users.map((user, i) => (
                     <ToggleButton
-                      id={user.username}
-                      value={user.username}
+                      id={user.userID}
+                      value={user.userID}
                       key={i}
                       variant="outline-primary"
                     >
@@ -203,7 +218,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
               </ToggleButtonGroup>
             </Col>
           </Row>
-          {/* Message Text Field- className="send-interface" */}
+          {/* Text Field for composing messages */}
           <Row>
             <Col>
               <Form onSubmit={sendMessage}>
@@ -223,7 +238,6 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
             </Col>
           </Row>
         </Stack>
-      {/* </div> */}
     </>
   );
 }

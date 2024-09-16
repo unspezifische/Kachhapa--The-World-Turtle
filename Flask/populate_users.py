@@ -63,15 +63,40 @@ if admin_user:
 else:
     print("Admin user registration failed, cannot register campaign")
 
+
 if admin_user and new_campaign:
-    # Add the user and character to the campaign_members table
+    character_data = {
+        # "icon": "icon_url",
+        "system": "D&D 5E",
+        "character_name": "Admin"
+    }
+
+    new_character = Character(
+        # icon=character_data['icon'],
+        system=character_data['system'],
+        userID=admin_user.id,
+        campaignID=new_campaign.id,
+        character_name=character_data['character_name'],
+    )
+
+    db.session.add(new_character)
+    db.session.commit()
+    print("Successfully created character for User and registered it for the campaign:")
+    print(new_character.to_dict())
+
+    # Add the admin and character named "Admin" to the campaign_members table
     db.session.execute(
         campaign_members.insert().values(
             userID=admin_user.id,
-            campaignID=new_campaign.id
+            campaignID=new_campaign.id,
+            characterID=new_character.id
         )
     )
     db.session.commit()
+    print("Successfully added user and character to the campaign_members table")
+
+else:
+    print("User 'admin' or campaign creation failed, cannot create character")
 
 # Create a character for the user user and register it for the campaign
 if user_user and new_campaign:
@@ -151,4 +176,4 @@ if user_user and new_campaign:
     db.session.commit()
     print("Successfully added user and character to the campaign_members table")
 else:
-    print("User user or campaign creation failed, cannot create character")
+    print("User 'user' or campaign creation failed, cannot create character")
