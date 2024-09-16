@@ -20,31 +20,31 @@ function Library({ headers, socket }) {
   //   console.log("Library file:", files);
   // }, [files])
 
-  // Listen for page updates
   useEffect(() => {
-    // Fetch the list of files from the server
-    axios.get('api/library', { headers })
-      .then(response => {
-        setFiles(response.data.files);
-      });
+    // Fetch the initial list of files from the server
+    const fetchFiles = () => {
+      axios.get('api/library', { headers })
+        .then(response => {
+          setFiles(response.data.files);
+        })
+        .catch(error => {
+          console.error('Error fetching files:', error);
+        });
+    };
+
+    fetchFiles();
 
     // Listen for the library_update event
     if (socket) {
-      socket.on('library_update', data => {
-        axios.get('api/library', { headers })
-          .then(response => {
-            // console.log("LIBRARY- response.data:", response.data);
-            setFiles(response.data.files);
-          });
-      });
+      socket.on('library_update', fetchFiles);
     } else {
       console.error('Socket is not valid.');
     }
 
-    // Make sure to clean up the listener when the component unmounts
+    // Clean up the listener when the component unmounts
     return () => {
       if (socket) {
-        socket.off('library_update');
+        socket.off('library_update', fetchFiles);
       }
     };
   }, [headers, socket]);
@@ -78,8 +78,8 @@ function Library({ headers, socket }) {
 
     axios.post('api/library', formData, { headers })
       .then(response => {
-        // Add the new file to the list of files
-        setFiles(prevFiles => [...prevFiles, response.data.file]);
+        // Add the new file to the list of files- do NOT do this. Let the library_update event handle it.
+        // setFiles(prevFiles => [...prevFiles, response.data.file]);
         setShowUploadModal(false);
       })
       .catch(error => {

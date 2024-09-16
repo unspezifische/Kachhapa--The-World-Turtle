@@ -9,9 +9,10 @@ from flask_admin.contrib.sqla import ModelView
 
 ## For database stuff
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import select, Numeric, text, func
+from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
-from sqlalchemy import select, Numeric, text, func
 
 from flask_migrate import Migrate   ## For database migrations
 
@@ -563,6 +564,8 @@ def load_json_files(directory):
                         elements.append((filename.rstrip('.json'), normalized_data))
                     except json.JSONDecodeError:
                         app.logger.error(f"Error decoding JSON from file {filename}")
+                    except UnicodeDecodeError:
+                        app.logger.error(f"Error decoding Unicode from file {filename}")    
     return elements
 
 def insert_elements(system, element_type, directory):
@@ -752,7 +755,8 @@ def login():
 
     user.is_online = True
     db.session.commit()
-    # emit_active_users()()
+    # campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
+    # emit_active_users(campaign_id)
     return jsonify({
         'message': 'Login successful!', 
         'access_token': access_token,
@@ -2575,17 +2579,58 @@ def edit_page(campaign_name, page_title):
 ## **  SocketIO Stuff  ** ##
 ##************************##
 
-@socketio.on("request_active_users")
-def emit_active_users():
-    app.logger.debug("FLASK- Emitting Active Users")
-    active_users = db.session.query(User, Character).join(Character, User.id == Character.userID).filter(User.is_online == True).all()
-    active_user_info = [{'username': user.username, 'character_name': character.character_name} for user, character in active_users]
-    app.logger.debug("FLASK- active_user_info: %s", active_user_info)
+def emit_active_users(campaign_id):
+    app.logger.debug("ONLINE USERS- Emitting Active Users")
+    app.logger.debug("ONLINE USERS- campaign_id: %s", campaign_id)
+    
+    # Query to get all user/character pairs for the given campaign
+    stmt = select(
+        campaign_members.c.userID, 
+        campaign_members.c.characterID
+    ).where(
+        campaign_members.c.campaignID == campaign_id
+    )
+    
+    result = db.session.execute(stmt).fetchall()
+
+    app.logger.debug("ONLINE USERS- online users for campaign: %s", result)
+    
+    # Create a dictionary to store one character name by user
+    user_characters = {}
+    for row in result:
+        user_id = row.userID
+        character_id = row.characterID
+        character = Character.query.filter_by(id=character_id).first()
+        if character:
+            user_characters[user_id] = character.character_name
+    
+    # Query users who are online and part of the campaign
+    active_users = db.session.query(User).filter(
+        User.is_online == True,
+        User.id.in_(user_characters.keys())
+    ).all()
+    
+    # Aggregate character names by user
+    active_user_info = []
+    for user in active_users:
+        character_name = user_characters.get(user.id)
+        active_user_info.append({
+            'username': user.username,
+            'character_name': character_name,
+            'userID': user.id
+        })
+    
+    app.logger.debug("ONLINE USERS- active_user_info: %s", active_user_info)
     socketio.emit('active_users', active_user_info)
 
 
+@socketio.on("request_active_users")
+def handle_request_active_users(data):
+    campaign_id = data.get('campaignID')
+    emit_active_users(campaign_id)
+
 @socketio.on("connect")
-def connected():
+def connected(data):
     """event listener when client connects to the server"""
     app.logger.info("Socket Connection Triggered")
     try:
@@ -2610,8 +2655,8 @@ def connected():
                 app.logger.info("CONNECT- setting %s to online", user)
                 user.is_online = True
                 user.sid = request.sid  # Update the SID associated with this user
-                db.session.commit()
-                emit_active_users()
+                campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
+                emit_active_users(campaign_id)
             else:
                 app.logger.error("CONNECT- User not found")
                 socketio.disconnect()
@@ -2641,12 +2686,14 @@ def handle_user_connected(data):
             user.is_online = True
             user.sid = request.sid  # Set the sid field
             db.session.commit()
-            emit_active_users()
+            campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
+            emit_active_users(campaign_id)
             app.logger.info("HANDLE CONNETION- %s is now online", user.username)
         else:
             user.sid = request.sid  # Set the sid field
             db.session.commit()
-            emit_active_users()
+            campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
+            emit_active_users(campaign_id)
             app.logger.info("HANDLE CONNETION- %s is already online", user.username)
             # print("HANDLE CONNETION-", user.username, "is already online")
 
@@ -2674,10 +2721,10 @@ def handle_send_message(messageObj):
     for recipient in recipients:
         try:
             app.logger.debug("MESSAGE- Trying: %s", recipient["username"])
-            recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.username == recipient["username"], campaign_members.c.campaignID == campaignID).first()
+            recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.id == recipient["username"], campaign_members.c.campaignID == campaignID).first()
         except:
             app.logger.debug("MESSAGE- Using: %s", recipient)
-            recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.username == recipient, campaign_members.c.campaignID == campaignID).first()
+            recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.id == recipient, campaign_members.c.campaignID == campaignID).first()
         if recipient_character:
             recipient_characters.append(recipient_character)
     
@@ -2946,7 +2993,8 @@ def handle_disconnect():
             app.logger.info(f"Active connections: {active_connections}")
         user.is_online = False
         db.session.commit()
-        emit_active_users()
+        campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
+        emit_active_users(campaign_id)
         socketio.emit("disconnect",f"user {user.username} disconnected", room='/')
         app.logger.info("DISCONNECT- %s disconnected", user.username)
         # print("DISCONNECT-", user.username, "disconnected")

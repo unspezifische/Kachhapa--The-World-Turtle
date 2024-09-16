@@ -3,10 +3,6 @@
 # Define the destination (replace with your Raspberry Pi's IP address and destination directory)
 DESTINATION="ijohnson@raspberrypi.local"
 
-# # Remove "http://127.0.0.1:5001" from all "/api/*" occurrences in .js files in the src directory
-# find ./webapp/src -name "*.js" -exec sed -i '' 's|http://127.0.0.1:5001||g' {} \;
-# echo "Finished removing 'http://127.0.0.1:5001' from .js files in the src directory"
-
 # Create `requirements.txt` file
 # pip freeze > Flask/requirements.txt
 
@@ -14,30 +10,26 @@ DESTINATION="ijohnson@raspberrypi.local"
 rsync -avz Flask/requirements.txt $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying requirements.txt"
 
-# Install Python dependencies on the Raspberry Pi
+# # Install Python dependencies on the Raspberry Pi
 # ssh $DESTINATION "pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
-echo "Finished installing Python dependencies"
+# echo "Finished installing Python dependencies"
 
 # Copy the Flask app
 rsync -avz Flask/app.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying app.py"
 
-# Copy GameElements
-rsync -avz GameElements/characterBackgrounds $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/characterBackgrounds
-echo "Finished copying character Backgrounds"
+# # Copy GameElement directories
+# rsync -avz GameElements/characterBackgrounds $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/
+# echo "Finished copying character Backgrounds"
 
-rsync -avz GameElements/characterSheets $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/characterSheets
-echo "Finished copying character sheets"
+# rsync -avz GameElements/characterSheets $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/
+# echo "Finished copying character sheets"
 
-rsync -avz GameElements/classes $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/classes
-echo "Finished copying classes"
+# rsync -avz GameElements/classes $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/
+# echo "Finished copying classes"
 
-rsync -avz GameElements/races $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/races
-echo "Finished copying races"
-
-# Restart Flask
-ssh $DESTINATION "sudo systemctl restart myapp"
-echo "Finished restarting Flask"
+# rsync -avz GameElements/races $DESTINATION:/home/ijohnson/Kachhapa/Flask/GameElements/
+# echo "Finished copying races"
 
 # Copy the templates directory for wiki pages
 rsync -avz Flask/templates/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/templates
@@ -46,6 +38,10 @@ echo "Finished copying the templates directory"
 # Copy the static directory for the server (libraries for wiki stuff)
 rsync -avz Flask/static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static
 echo "Finished copying the static directory"
+
+# Now that all files are up to date on the Pi, restart Flask in the background
+ssh $DESTINATION "sudo systemctl restart myapp" &
+echo "Triggered Flask restart"
 
 # Define variables
 PI_DB="db"
@@ -59,11 +55,6 @@ echo "Finished dumping the database on the Raspberry Pi"
 # Copy the dump file from the Raspberry Pi to the local machine
 scp $DESTINATION:$PI_DUMP_FILE .
 echo "Finished copying the database dump to the local machine"
-
-# Restore the database on the local machine
-# pg_restore -U admin -d $LOCAL_DB -1 $PI_DUMP_FILE
-# pg_restore --clean -U admin -d $LOCAL_DB -1 $PI_DUMP_FILE
-echo "Finished restoring the database on the local machine"
 
 # Restart Flask on the Pi
 scp myapp.service $DESTINATION:/home/ijohnson/Kachhapa/Flask
@@ -93,6 +84,5 @@ echo "Finished copying the src directory"
 rsync -avz webapp/public/ $DESTINATION:/home/ijohnson/Kachhapa/webapp/public
 echo "Finished copying the public directory"
 
-# Switch everything back over to the development version of the files
-# find ./webapp/src -name "*.js" -exec sed -i '' 's|/api/|http://127.0.0.1:5001/api/|g' {} \;
-# echo "Finished switching back to the development version of the files"
+# Check the status of the Flask service
+ssh $DESTINATION "sudo systemctl status myapp"

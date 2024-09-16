@@ -1,7 +1,6 @@
 .tile {
   position: relative;
   /* make sure the tile is positioned */
-  /* filter: drop-shadow(1px 2px 4px hsl(0, 0%, 0%)); */
 }
 
 .edit-icon {
@@ -9,13 +8,16 @@
   /* position the icon absolutely within the tile */
   top: 0;
   right: 0;
-  display: none;
-  /* hide the icon by default */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  /* hide the icon by default and make it non-interactive */
 }
 
 .tile:hover .edit-icon {
-  display: block;
-  /* show the icon when the user hovers over the tile */
+  opacity: 1;
+  pointer-events: auto;
+  /* show the icon and make it interactive when the user hovers over the tile */
 }
 
 .skill-row {
