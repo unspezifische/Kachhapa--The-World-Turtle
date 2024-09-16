@@ -206,8 +206,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
                 ) : (
                   users.map((user, i) => (
                     <ToggleButton
-                      id={user.userID}
-                      value={user.userID}
+                      id={user.character_name }
+                      value={user.character_name}
                       key={i}
                       variant="outline-primary"
                     >
