@@ -51,9 +51,9 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   useEffect(() => {
     const handleMessage = (message) => {
       console.log("Receivied message:", message);
-      console.log("Checking message from: " + message.sender);
-      console.log("Checking message to: " + message.recipients);
-      if (message.sender === characterName || message.recipients.includes(characterName)) {
+      console.log("Checking message from: " + message.sender_character_name);
+      console.log("Checking message to: " + message.recipient_character_names);
+      if (message.sender === headers.userID || message.recipients.includes(headers.userID)) {
         console.log("It's a match")
         setUnreadMessages(prevUnreadMessages => prevUnreadMessages + 1);
         setMessages(prevMessages => [...prevMessages, message]);
@@ -90,12 +90,12 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     if (message) {
       const messageObj = {
         type: item ? 'item_transfer' : 'text_message',
-        sender: username,
+        sender: headers.userID,
         campaignID: campaignID,
         text: message,
         recipients: selectedUsers,
         item: item,
-        group_id: [username, ...selectedUsers].sort().join("-")
+        group_id: [headers.userID, ...selectedUsers].sort().join("-")
       };
 
       socket.emit('sendMessage', messageObj, () => setMessage(''));
@@ -110,19 +110,25 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     setSelectedUsers(selected);
   };
 
-    const replyAll = (message) => {
+  const replyAll = (message) => {
     console.log("Replying to message:", message);
     
-    // Extract userID values from group_id
-    const allUserIDs = message.group_id.split('-');
+    // Extract userID values from recipients
+    const allUserIDs = message.recipients;
     console.log("SELECTED MESSAGE- All user IDs:", allUserIDs);
 
-    // Get userID from header
+    // Get userID from headers
     console.log("SELECTED MESSAGE- Your userID:", headers.userID);
     
-    // Filter out the current user's userID
+    // Filter out the current user's userID from recipients
     const filteredUserIDs = allUserIDs.filter(userID => userID !== headers.userID);
     console.log("SELECTED MESSAGE- Filtered user IDs:", filteredUserIDs);
+    
+    // Check if the sender's userID does not match the current user's userID
+    if (message.sender !== headers.userID) {
+        filteredUserIDs.push(message.sender);
+    }
+    console.log("SELECTED MESSAGE- Final user IDs:", filteredUserIDs);
     
     // Update the selectedUsers state with filtered user IDs
     setSelectedUsers(filteredUserIDs);
@@ -131,22 +137,40 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   const renderMessage = (message, i, isSameGroup) => (
     <div
       key={i}
-      className={`${message.sender === characterName ? "message sent" : "message received"} ${message.sender === characterName ? "grouped" : ""} ${isSameGroup ? "" : "new-group"}`}
+      className={`${(message.sender_character_name ? message.sender_character_name : message.sender) === characterName ? "message sent" : "message received"} ${(message.sender_character_name ? message.sender_character_name : message.sender) === characterName ? "grouped" : ""} ${isSameGroup ? "" : "new-group"}`}
       onClick={() => replyAll(message)}
       ref={i === messages.length - 1 ? messageContainerRef : null}
     >
       <div className="message-text">
-        {message.sender === characterName ? (
+        {message.sender === headers.userID ? (
           <>
-            {message.type !== 'item_transfer' && <p className="sender">To: {message.recipients.join(' ')}</p>}
-            {message.type === 'item_transfer' ? `${message.sender} gave you ${message.item.quantity} ${message.item.name}` : message.text}
-            {message.type !== 'item_transfer' && <p className="sender">{message.sender}</p>}
+            {message.type !== 'item_transfer' && (
+              <p className="sender">
+                To: {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
+              </p>
+            )}
+            {message.type === 'item_transfer' 
+              ? `${message.sender_character_name ? message.sender_character_name : message.sender} gave you ${message.item.quantity} ${message.item.name}` 
+              : message.text}
+            {message.type !== 'item_transfer' && (
+              <p className="sender">
+                {message.sender_character_name ? message.sender_character_name : message.sender}
+              </p>
+            )}
           </>
-        ) : (
+          ) : (
           <>
-            <p className="sender">From: {message.sender}</p>
-            {message.type === 'item_transfer' ? `${message.sender} gave you ${message.item.quantity} ${message.item.name}` : message.text}
-            {message.type !== 'item_transfer' && <p className="sender"> {message.recipients.join(' ')}</p>}
+            <p className="sender">
+              From: {message.sender_character_name ? message.sender_character_name : message.sender}
+            </p>
+            {message.type === 'item_transfer' 
+              ? `${message.sender_character_name ? message.sender_character_name : message.sender} gave you ${message.item.quantity} ${message.item.name}` 
+              : message.text}
+            {message.type !== 'item_transfer' && (
+              <p className="sender">
+                {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
+              </p>
+            )}
           </>
         )}
       </div>
@@ -166,7 +190,6 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   return (
     <>
       {/* Show the Chat Widget */}
-      {/* <div className="chat-widget d-none d-md-flex"> */}
         <Stack>
           <Row>
             <Col>
@@ -206,8 +229,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
                 ) : (
                   users.map((user, i) => (
                     <ToggleButton
-                      id={user.character_name }
-                      value={user.character_name}
+                      id={user.userID }
+                      value={user.userID}
                       key={i}
                       variant="outline-primary"
                     >

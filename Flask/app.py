@@ -2703,7 +2703,7 @@ def handle_send_message(messageObj):
     app.logger.debug("MESSAGE- messageObj: %s", messageObj)
 
     message = messageObj['text']
-    sender = messageObj['sender']
+    sender = messageObj['sender']   # 'sender' should be the userID
     recipients = messageObj['recipients']
 
     campaignID = messageObj['campaignID']
@@ -2713,15 +2713,15 @@ def handle_send_message(messageObj):
     app.logger.debug("MESSAGE- recipients: %s", recipients)
 
     recipient_characters = []
-
+    
     if isinstance(recipients, dict):
         print("** Wrapping 'recipients' in a list **")
         recipients = [recipients]
-
+    
     for recipient in recipients:
         try:
-            app.logger.debug("MESSAGE- Trying: %s", recipient["username"])
-            recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.id == recipient["username"], campaign_members.c.campaignID == campaignID).first()
+            app.logger.debug("MESSAGE- Trying: %s", recipient["userID"])
+            recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.id == recipient["userID"], campaign_members.c.campaignID == campaignID).first()
         except:
             app.logger.debug("MESSAGE- Using: %s", recipient)
             recipient_character = Character.query.join(User, User.id == Character.userID).join(campaign_members, Character.id == campaign_members.c.characterID).filter(User.id == recipient, campaign_members.c.campaignID == campaignID).first()
@@ -2730,18 +2730,18 @@ def handle_send_message(messageObj):
     
     app.logger.debug("MESSAGE- sender: %s", sender)
     
-    # Step 1: Get the userID from the User table using the sender's username
-    user = User.query.filter_by(username=sender.lower()).first()
-    if not user:
-        app.logger.error("MESSAGE- sender user not found")
-        return jsonify({'message': 'Sender user not found'}), 404
+    # # Step 1: Get the userID from the User table using the sender's username
+    # user = User.query.filter_by(username=sender.lower()).first()
+    # if not user:
+    #     app.logger.error("MESSAGE- sender user not found")
+    #     return jsonify({'message': 'Sender user not found'}), 404
     
-    app.logger.debug("MESSAGE- Sending user found in database: %s", user.to_dict())
+    # app.logger.debug("MESSAGE- Sending user found in database: %s", user.to_dict())
     
-    # Step 2: Get the characterID from the campaign_members table using userID and campaignID
-    app.logger.debug("User ID- %s", user.id)
-    app.logger.debug("campaignID- %s", campaignID)
-    campaign_member = db.session.query(campaign_members).filter_by(userID=user.id, campaignID=campaignID).first()
+    # # Step 2: Get the characterID from the campaign_members table using userID and campaignID
+    # app.logger.debug("User ID- %s", user.id)
+    # app.logger.debug("campaignID- %s", campaignID)
+    campaign_member = db.session.query(campaign_members).filter_by(userID=sender, campaignID=campaignID).first()
     if not campaign_member:
         app.logger.error("MESSAGE- sender character not found in campaign")
         return jsonify({'message': 'Sender character not found in campaign'}), 404
@@ -2749,7 +2749,7 @@ def handle_send_message(messageObj):
     # Step 3: Get the Character entry using the characterID
     stmt = select(campaign_members.c.characterID).where(
         campaign_members.c.campaignID == campaignID, 
-        campaign_members.c.userID == user.id
+        campaign_members.c.userID == sender
     )
 
     result = db.session.execute(stmt).first()
@@ -2766,14 +2766,14 @@ def handle_send_message(messageObj):
     app.logger.debug("MESSAGE- sender_character: %s", sender_character.to_dict())
     
 
-    sender_user = User.query.filter_by(id=sender_character.userID).first()
+    sender_user = User.query.filter_by(id=sender).first()
     app.logger.debug("MESSAGE- sender_user: %s", sender_user.to_dict())
 
 
     # Update the messageObj with character names before emitting
     recipient_character_names = [character.character_name for character in recipient_characters]
-    messageObj['recipients'] = recipient_character_names
-    messageObj['sender'] = sender_character.character_name
+    messageObj['recipient_character_names'] = recipient_character_names
+    messageObj['sender_character_name'] = sender_character.character_name
 
     if messageObj['type'] == 'item_transfer':
         handle_item_transfer(messageObj, recipients, sender_character)
@@ -2782,10 +2782,12 @@ def handle_send_message(messageObj):
         handle_spell_transfer(messageObj, recipients, sender_character)
 
     else:
-        recipient_ids = [str(character.id) for character in recipient_characters]
-        group_id = "-".join(sorted([str(sender_character.id)] + recipient_ids, key=int))
+        recipient_ids = [character.user.id for character in recipient_characters]
+        recipient_ids_str = [str(id) for id in recipient_ids]
 
-        new_message = Message(sender_id=sender_character.id, recipient_ids=",".join(recipient_ids), message_type=messageObj['type'], message_text=messageObj['text'], group_id=group_id)
+        group_id = "-".join(sorted([str(sender)] + recipient_ids_str, key=int))
+
+        new_message = Message(sender_id=sender, recipient_ids=",".join(recipient_ids_str), message_type=messageObj['type'], message_text=messageObj['text'], group_id=group_id)
         db.session.add(new_message)
         db.session.commit()
 
