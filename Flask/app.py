@@ -444,20 +444,25 @@ class Journal(db.Model):
 
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    sender_id = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     recipient_ids = db.Column(db.String, nullable=False)  # This would be a comma-separated string of IDs.
     group_id = db.Column(db.String, nullable=False)  # New field: group_id
     message_type = db.Column(db.String(50), nullable=False)  # e.g. 'item_transfer', 'chat', etc.
+    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=True)
+    item = db.relationship('Item', backref='messages', lazy=True)  # Add for ORM relationship
     message_text = db.Column(db.Text, nullable=False)  # The actual message text.
     timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     def to_dict(self):
         return {
             'id': self.id,
+            'campaign_id': self.campaign_id,
             'sender_id': self.sender_id,
             'group_id': self.group_id,
             'recipient_ids': self.recipient_ids.split(','),
             'message_type': self.message_type,
+            'item_id': self.item_id,
             'message_text': self.message_text,
             'timestamp': self.timestamp.isoformat(),
         }
@@ -2026,44 +2031,63 @@ def delete_file_by_id(file_id):
 def get_chat_history():
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
-    # app.logger.debug("GET CHAT HISTORY- headers: %s", request.headers)
     campaignID = request.headers.get('CampaignID')
 
+    # Get the character ID for the user in the specified campaign
     stmt = select(campaign_members.c.characterID).where(
         campaign_members.c.campaignID == campaignID, 
         campaign_members.c.userID == user.id
     )
 
     result = db.session.execute(stmt).first()
-
     characterID = result.characterID if result else None
 
     if characterID is None:
         return jsonify({'message': 'Character not found'}), 404
 
+    # Create a dictionary mapping user IDs to character IDs for the specified campaign
+    user_to_character_map = {}
+    campaign_memberships = db.session.execute(
+        select(campaign_members.c.userID, campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID
+        )
+    ).fetchall()
+
+    for membership in campaign_memberships:
+        user_to_character_map[membership.userID] = membership.characterID
+
     def message_to_client_format(message):
         # Get sender's character name
-        sender_character = Character.query.filter_by(id=message.sender_id).first()
+        sender_character = Character.query.filter_by(id=user_to_character_map.get(message.sender_id)).first()
         sender_name = sender_character.character_name if sender_character else 'Unknown'
-
+    
         # Get recipients' character names
         recipient_ids = message.recipient_ids.split(',')
         recipient_names = []
         for id in recipient_ids:
             if id:
-                recipient_character = Character.query.filter_by(id=int(id)).first()
+                recipient_character = Character.query.filter_by(id=user_to_character_map.get(int(id))).first()
                 recipient_names.append(recipient_character.character_name if recipient_character else 'Unknown')
-
+    
+        # Get item details
+        item = Item.query.filter_by(id=message.item_id).first() if message.item_id else None
+        item_details = {'id': item.id, 'name': item.name} if item else None
+    
         return {
-            'sender': sender_name,
-            'text': message.message_text,
-            'recipients': recipient_names,
+            'campaignID': campaignID,
             'group_id': message.group_id,
+            'item': item_details,
+            'recipient_character_names': recipient_names,
+            'recipients': [int(id) for id in recipient_ids if id],
+            'sender': message.sender_id,
+            'sender_character_name': sender_name,
+            'text': message.message_text,
+            'type': message.message_type,
         }
-
-    # Fetch the messages sent by the character and received by the character
-    sent_messages = Message.query.filter_by(sender_id=characterID).all()
-    received_messages = Message.query.filter(Message.recipient_ids.contains(str(characterID))).all()
+    
+    # Fetch all messages for the user from the specified campaign
+    sent_messages = Message.query.filter_by(sender_id=user.id, campaign_id=campaignID).all()
+    received_messages = Message.query.filter(Message.recipient_ids.contains(str(user.id)), Message.campaign_id == campaignID).all()
 
     # Combine, sort by timestamp, and convert to JSON-friendly format
     messages = sorted(sent_messages + received_messages, key=lambda msg: msg.timestamp)
@@ -2447,20 +2471,6 @@ def search(campaign_name):
 
     return jsonify(results)   
 
-# @app.route('/<campaign_name>', methods=['GET'])
-# def index(campaign_name):
-#     app.logger.info("campaign_name Main Page: %s", campaign_name)
-#     page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title=="Main Page", Campaign.name==campaign_name).first()
-#     if not page:
-#         return render_template('index.html')
-
-#     # Preprocess the Markdown
-#     preprocessed_content = page.content.replace('](/', f'](/{campaign_name}/')
-
-#     html_content = markdown.markdown(preprocessed_content)
-
-#     return render_template('page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
-
 import re
 
 def preprocess_content(content):
@@ -2707,7 +2717,7 @@ def handle_send_message(messageObj):
     recipients = messageObj['recipients']
 
     campaignID = messageObj['campaignID']
-    # campaignID = request.headers.get('Character-ID')
+    # campaignID = request.headers.get('CampaignID')
     app.logger.debug("MESSAGE- campaignID: %s", campaignID)
 
     app.logger.debug("MESSAGE- recipients: %s", recipients)
@@ -2715,7 +2725,6 @@ def handle_send_message(messageObj):
     recipient_characters = []
     
     if isinstance(recipients, dict):
-        print("** Wrapping 'recipients' in a list **")
         recipients = [recipients]
     
     for recipient in recipients:
@@ -2787,7 +2796,15 @@ def handle_send_message(messageObj):
 
         group_id = "-".join(sorted([str(sender)] + recipient_ids_str, key=int))
 
-        new_message = Message(sender_id=sender, recipient_ids=",".join(recipient_ids_str), message_type=messageObj['type'], message_text=messageObj['text'], group_id=group_id)
+        new_message = Message(
+            sender_id=sender,
+            campaign_id=campaignID,
+            recipient_ids=",".join(recipient_ids_str),
+            message_type=messageObj['type'],
+            message_text=messageObj['text'],
+            group_id=group_id,
+            item_id=messageObj['item']['id'] if messageObj['item'] else None,  # Store item_id
+        )
         db.session.add(new_message)
         db.session.commit()
 
@@ -2800,32 +2817,31 @@ def handle_send_message(messageObj):
 def handle_item_transfer(messageObj, recipient_users, sender):
     # Assuming recipient_users contains only one recipient for an item_transfer
     recipient = recipient_users[0]
-    app.logger.info("MESSAGE- ITEM TRANSFER- recipient: %s", recipient)
+    app.logger.debug("MESSAGE- ITEM TRANSFER- recipient: %s", recipient)
     recipient_user = User.query.filter_by(username=recipient['username']).first()
-    app.logger.info("MESSAGE- ITEM TRANSFER- recipient_user: %s", recipient_user)
+    app.logger.debug("MESSAGE- ITEM TRANSFER- recipient_user: %s", recipient_user)
 
     sender_user = User.query.filter_by(id=sender.userID).first()
-    app.logger.info("MESSAGE- ITEM TRANSFER- sender_user: %s", sender_user.to_dict())
+    app.logger.debug("MESSAGE- ITEM TRANSFER- sender_user: %s", sender_user.to_dict())
     item = messageObj['item']
     quantity = item['quantity']
 
-    # app.logger.info("MESSAGE- ITEM TRANSFER- recipient_user: %s", recipient_user.to_dict())
+    # app.logger.debug("MESSAGE- ITEM TRANSFER- recipient_user: %s", recipient_user.to_dict())
 
     # Update recipient's inventory here
     if recipient_user is None:
         return jsonify({'message': 'User not found'}), 404
-    elif recipient_user == "Magic Ian" and item['name'] == "poop":
-        return jsonify({'message': 'Ian does not want your poop'}), 404
+    # elif recipient_user == "Magic Ian" and item['name'] == "poop":
+    #     return jsonify({'message': 'Ian does not want your poop'}), 404
 
     # Query for the sender user
-    ## app.logger.info("MESSAGE- ITEM TRANSFER- sender.character_name: %s", sender.character_name)
-    app.logger.info("MESSAGE- ITEM TRANSFER- sender.character_name: %s", sender.character_name)
+    app.logger.debug("MESSAGE- ITEM TRANSFER- sender.character_name: %s", sender.character_name)
 
 
     # db_item = Item.query.get(item['id'])
     db_item = Item.query.filter_by(id=item['id']).first()
-    app.logger.info("MESSAGE- item: %s", db_item.name)
-    # print("MESSAGE- item:", db_item.name)
+    app.logger.debug("MESSAGE- item: %s", db_item.name)
+
     if db_item is None:
         return jsonify({'message': 'Item not found'}), 404
 

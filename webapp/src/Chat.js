@@ -29,15 +29,21 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
         .then(response => {
           const data = response.data;
           // console.log("CHAT HISTORY- response:", data)
-
-          setMessages(data);
+  
+          // Ensure each message has an item property, even if it's null
+          const formattedMessages = data.map(message => ({
+            ...message,
+            item: message.item || null
+          }));
+  
+          setMessages(formattedMessages);
         })
         .catch(error => {
           console.error("CHAT- Error fetching chat history:", error);
         })
       }
     };
-
+  
     // Fetch chat history when the component mounts
     fetchChatHistory();
   }, [characterName]);
@@ -179,12 +185,12 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
 
   // Scrolls to the bottom when a new message is recieved.
   useEffect(() => {
-      if (messageContainerRef.current) {
-        const scrollElement = messageContainerRef.current;
-        setTimeout(() => {
-          scrollElement.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
-      }
+    if (messageContainerRef.current) {
+      const scrollElement = messageContainerRef.current;
+      setTimeout(() => {
+        scrollElement.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
   }, [messages]);
 
   return (
