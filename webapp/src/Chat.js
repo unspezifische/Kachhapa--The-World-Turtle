@@ -63,6 +63,9 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
         console.log("It's a match")
         setUnreadMessages(prevUnreadMessages => prevUnreadMessages + 1);
         setMessages(prevMessages => [...prevMessages, message]);
+      } else if (message.type === 'item_transfer' && message.recipients.includes(headers.userID)) {
+        setUnreadMessages(prevUnreadMessages => prevUnreadMessages + 1);
+        setMessages(prevMessages => [...prevMessages, message]);
       }
     };
   

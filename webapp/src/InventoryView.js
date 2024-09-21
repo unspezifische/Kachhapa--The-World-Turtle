@@ -751,8 +751,9 @@ export default function InventoryView({ username, characterName, accountType, he
     const messageObj = {
       type: 'item_transfer',
       sender: headers['username'],
+      campaignID: campaignID,
       text: `${characterName} gave you ${quantity} ${selectedItem.name}`,
-      recipients: [selectedPlayer],
+      recipients: [selectedPlayer.userID],
       item: { ...selectedItem, quantity: quantity },
       campaignID: campaignID,
     };
@@ -796,16 +797,16 @@ export default function InventoryView({ username, characterName, accountType, he
   const issueItemToPlayer = () => {
     console.log("issueItemToPlayer- selectedPlayer:", selectedPlayer);
     console.log("issueItemToPlayer- selectedItem:", selectedItem);
-    // console.log("issueItemToPlayer- Campaign ID:", headers['campaignID']);
 
     // Issue an item via messageObj
     const messageObj = {
       type: 'item_transfer',
-      sender: headers['username'],
+      sender: headers.userID,  // Ensure sender is userID
+      campaignID: campaignID,
       text: `You received ${quantity} ${selectedItem.name}`,
-      recipients: [selectedPlayer],
-      campaignID: headers['campaignID'],
+      recipients: [selectedPlayer.userID],  // Use only the userID
       item: { ...selectedItem, quantity: quantity },
+      group_id: [headers.userID, selectedPlayer.id].sort().join("-")  // Ensure group_id is consistent
     };
 
     console.log("Sending messageObj:", messageObj);
