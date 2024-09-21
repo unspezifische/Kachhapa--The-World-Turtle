@@ -468,30 +468,72 @@ class Message(db.Model):
         }
 
 
-class LootBox(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80), nullable=False) ## Which lootbox the item is in
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'name': self.name,
-        }
-
 class NPC(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
     name = db.Column(db.String(80), nullable=False)
-    ac = db.Column(db.Integer, nullable=False)
-    hp = db.Column(db.Integer, nullable=False)
-    attack_stats = db.Column(db.String(120), nullable=False)
+    size = db.Column(db.String(20), nullable=False)  # Example: "Medium"
+    creature_type = db.Column(db.String(50), nullable=False)  # Example: "humanoid"
+    creature_subtype = db.Column(db.String(50), nullable=True)  # Example: "goblinoid"
+    alignment = db.Column(db.String(50), nullable=False)  # Example: "chaotic evil"
+    
+    ac = db.Column(db.String(50), nullable=False)  # Armor Class
+    hp = db.Column(db.String(50), nullable=False)  # Hit Points
+    speed = db.Column(db.Integer, nullable=False)  # Speed (in feet)
+    
+    # Stats
+    strength = db.Column(db.Integer, nullable=False)
+    dexterity = db.Column(db.Integer, nullable=False)
+    constitution = db.Column(db.Integer, nullable=False)
+    intelligence = db.Column(db.Integer, nullable=False)
+    wisdom = db.Column(db.Integer, nullable=False)
+    charisma = db.Column(db.Integer, nullable=False)
+    
+    # Skills and Senses
+    saving_throws = db.Column(db.String(120), nullable=True)  # Example: "Int +5, Wis +3"
+    skills = db.Column(db.String(120), nullable=True)  # Example: "Stealth +6, Survival +2"
+    immunities = db.Column(db.String(120), nullable=True)
+    resistance = db.Column(db.String(120), nullable=True)
+    senses = db.Column(db.String(120), nullable=True)  # Example: "darkvision 60 ft, passive Perception 10"
+    languages = db.Column(db.String(120), nullable=True)  # Example: "Common, Goblin"
+    challenge = db.Column(db.String(50), nullable=True)  # Challenge Rating and XP
 
+    # Traits
+    traits = db.Column(db.String(1000), nullable=True)  # Example: "Brute, Surprise Attack"
+    
+    # Actions (simple example with a single attack, but can be more complex)
+    actions = db.Column(db.String(1000), nullable=True)  # Example: "Morningstar: +4 to hit, 11 (2d8+2) piercing damage"
+
+    description = db.Column(db.Text, nullable=False)
+    
     def to_dict(self):
         return {
             'id': self.id,
+            'campaign_id': self.campaign_id,
             'name': self.name,
+            'size': self.size,
+            'creature_type': self.creature_type,
+            'creature_subtype': self.creature_subtype,
+            'alignment': self.alignment,
             'ac': self.ac,
             'hp': self.hp,
-            'attack_stats': self.attack_stats,
+            'speed': self.speed,
+            'strength': self.strength,
+            'dexterity': self.dexterity,
+            'constitution': self.constitution,
+            'intelligence': self.intelligence,
+            'wisdom': self.wisdom,
+            'charisma': self.charisma,
+            'saving_throws': self.saving_throws,
+            'skills': self.skills,
+            'immunities': self.immunities,
+            'resistance': self.resistance,
+            'senses': self.senses,
+            'languages': self.languages,
+            'challenge': self.challenge,
+            'traits': self.traits,
+            'actions': self.actions,
+            'description': self.description,
         }
 
 class GameElement(db.Model):
@@ -523,6 +565,48 @@ class Document(db.Model):
     data = db.Column(db.LargeBinary, nullable=False)  # Use LargeBinary for binary data
     mimetype = db.Column(db.String(50), nullable=False)  # Store the MIME type
     campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)  # Add campaignID column
+
+class LootBox(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False) ## Which lootbox the item is in
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+        }
+
+class RandomTable(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)  # Table Name
+    description = db.Column(db.Text, nullable=True)  # Optional description of table
+    dice_type = db.Column(db.String(20), nullable=False)  # Example: "1d100"
+    table_entries = db.relationship('TableEntry', backref='random_table', lazy=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'dice_type': self.dice_type,
+            'table_entries': [entry.to_dict() for entry in self.table_entries]
+        }
+
+class TableEntry(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    table_id = db.Column(db.Integer, db.ForeignKey('random_table.id'), nullable=False)
+    min_roll = db.Column(db.Integer, nullable=False)  # Minimum roll value for this entry
+    max_roll = db.Column(db.Integer, nullable=False)  # Maximum roll value for this entry
+    result = db.Column(db.Text, nullable=False)  # The result of the roll
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'table_id': self.table_id,
+            'min_roll': self.min_roll,
+            'max_roll': self.max_roll,
+            'result': self.result
+        }
 
 ## Add all the models to the admin console
 admin.add_view(ModelView(User, db.session))
@@ -630,24 +714,6 @@ with app.app_context():
 
 migrate = Migrate(app, db)
 
-# @event.listens_for(Engine, "connect")
-# def create_full_text_search_trigger(dbapi_connection, connection_record):
-#     cursor = dbapi_connection.cursor()
-#     cursor.execute("""
-#     CREATE OR REPLACE FUNCTION update_page_tsv() RETURNS trigger AS $$
-#     BEGIN
-#         NEW.tsv :=
-#             setweight(to_tsvector('pg_catalog.english', coalesce(NEW.title, '')), 'A') ||
-#             setweight(to_tsvector('pg_catalog.english', coalesce(NEW.content, '')), 'B');
-#         RETURN NEW;
-#     END
-#     $$ LANGUAGE plpgsql;
-
-#     CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE
-#     ON page FOR EACH ROW EXECUTE FUNCTION update_page_tsv();
-#     """)
-#     dbapi_connection.commit()
-#     cursor.close()
 
 @app.route('/')
 def index():
@@ -1122,7 +1188,7 @@ def update_character():
 @jwt_required()
 def get_users():
     campaignID = request.headers.get('CampaignID')
-    users = User.query.join(campaign_members, User.id == campaign_members.userID).filter(campaign_members.campaignID == campaignID).all()
+    users = User.query.join(campaign_members, User.id == campaign_members.c.userID).filter(campaign_members.c.campaignID == campaignID).all()
     return jsonify({'users': [user.character_name for user in users]})
 
 @app.route('/api/players', methods=['GET'])
@@ -1148,16 +1214,11 @@ def get_players():
     # Separate the character IDs and user IDs into two lists
     characterIDs, userIDs = zip(*result)
 
-    # app.logger.debug("Character IDs: %s", characterIDs)
-    # app.logger.debug("User IDs: %s", userIDs)
-
     # Get the DM's user ID
     dm_id = Campaign.query.filter_by(id=campaignID).first().dm_id
-    # app.logger.debug("DM is %s", dm_id)
 
     # Filter out invalid character IDs
     valid_characterIDs = [characterID for characterID in characterIDs if characterID != user.id and characterID != dm_id and characterID is not None]
-    # app.logger.debug("valid character IDs: %s", valid_characterIDs)
 
     # Get the players for the valid character IDs
     players = [User.query.get(userID) for userID in userIDs]
@@ -1170,9 +1231,12 @@ def get_players():
             # app.logger.debug("player: %s", player.to_dict())
             character = Character.query.filter_by(id=characterID).first()
             character_name = character.character_name if character else "DM"
-            players_info.append({'username': player.username, 'character_name': character_name, 'id': characterID})
-    
-    # app.logger.info("player_info: %s", players_info)
+            players_info.append({
+                'username': player.username,
+                'character_name': character_name,
+                'id': characterID,
+                'userID': player.id  # Add userID to the response
+            })
 
     return jsonify({'players': players_info if players_info else []})
 
@@ -1751,6 +1815,7 @@ def get_equipment():
 
     return jsonify({'equipment': equippedItems})
 
+
 ## These functions do Journal stuff
 @app.route('/api/journal', methods=['POST'])
 @jwt_required()
@@ -1799,7 +1864,6 @@ def create_journal_entry():
     db.session.commit()
 
     return jsonify({'message': 'New journal entry created!'})
-
 
 @app.route('/api/journal', methods=['GET'])
 @jwt_required()
@@ -2025,218 +2089,9 @@ def delete_file_by_id(file_id):
         return jsonify({'error': 'Server error: ' + str(e)}), 500
 
 
-## Chat Functions
-@app.route('/api/chat_history', methods=['GET'])
-@jwt_required()
-def get_chat_history():
-    username = get_jwt_identity()
-    user = User.query.filter_by(username=username).first()
-    campaignID = request.headers.get('CampaignID')
-
-    # Get the character ID for the user in the specified campaign
-    stmt = select(campaign_members.c.characterID).where(
-        campaign_members.c.campaignID == campaignID, 
-        campaign_members.c.userID == user.id
-    )
-
-    result = db.session.execute(stmt).first()
-    characterID = result.characterID if result else None
-
-    if characterID is None:
-        return jsonify({'message': 'Character not found'}), 404
-
-    # Create a dictionary mapping user IDs to character IDs for the specified campaign
-    user_to_character_map = {}
-    campaign_memberships = db.session.execute(
-        select(campaign_members.c.userID, campaign_members.c.characterID).where(
-            campaign_members.c.campaignID == campaignID
-        )
-    ).fetchall()
-
-    for membership in campaign_memberships:
-        user_to_character_map[membership.userID] = membership.characterID
-
-    def message_to_client_format(message):
-        # Get sender's character name
-        sender_character = Character.query.filter_by(id=user_to_character_map.get(message.sender_id)).first()
-        sender_name = sender_character.character_name if sender_character else 'Unknown'
-    
-        # Get recipients' character names
-        recipient_ids = message.recipient_ids.split(',')
-        recipient_names = []
-        for id in recipient_ids:
-            if id:
-                recipient_character = Character.query.filter_by(id=user_to_character_map.get(int(id))).first()
-                recipient_names.append(recipient_character.character_name if recipient_character else 'Unknown')
-    
-        # Get item details
-        item = Item.query.filter_by(id=message.item_id).first() if message.item_id else None
-        item_details = {'id': item.id, 'name': item.name} if item else None
-    
-        return {
-            'campaignID': campaignID,
-            'group_id': message.group_id,
-            'item': item_details,
-            'recipient_character_names': recipient_names,
-            'recipients': [int(id) for id in recipient_ids if id],
-            'sender': message.sender_id,
-            'sender_character_name': sender_name,
-            'text': message.message_text,
-            'type': message.message_type,
-        }
-    
-    # Fetch all messages for the user from the specified campaign
-    sent_messages = Message.query.filter_by(sender_id=user.id, campaign_id=campaignID).all()
-    received_messages = Message.query.filter(Message.recipient_ids.contains(str(user.id)), Message.campaign_id == campaignID).all()
-
-    # Combine, sort by timestamp, and convert to JSON-friendly format
-    messages = sorted(sent_messages + received_messages, key=lambda msg: msg.timestamp)
-    messages_json = [message_to_client_format(message) for message in messages]
-
-    return jsonify(messages_json), 200
-
-@app.route('/api/lootboxes', methods=['GET'])
-def get_all_loot_boxes():
-    loot_boxes = LootBox.query.all()
-    return jsonify({'lootBoxes': [box.to_dict() for box in loot_boxes]})
-
-@app.route('/api/lootboxes', methods=['POST'])
-def create_loot_box():
-    data = request.get_json()
-    loot_box_name = data['name']
-    items = data['items']  # This is now a list of dictionaries
-
-    # Create the LootBox
-    loot_box = LootBox(name=loot_box_name)
-    db.session.add(loot_box)
-    db.session.commit()
-
-    for item in items:
-        itemID = item['id']
-        quantity = item['quantity']
-        # itemDB = Item.query.get(itemID)
-        itemDB = Item.query.filter_by(id=itemID).first()
-        if itemDB:
-            association = loot_box_items.insert().values(loot_box_id=loot_box.id, itemID=itemDB.id, quantity=quantity)
-            db.session.execute(association)
-            db.session.commit()  # Commit after each iteration
-
-    return jsonify({'message': 'Loot box created successfully'})
-
-## Save a Loot Box
-@app.route('/api/lootboxes/<int:box_id>', methods=['PUT'])
-def update_loot_box(box_id):
-    data = request.get_json()
-    # print("data:", data)
-    app.logger.info("data: %s", data)
-    loot_box_name = data['name']
-    items = data['items']
-
-    # Get the LootBox
-    # loot_box = LootBox.query.get(box_id)
-    loot_box = LootBox.query.filter_by(id=box_id).first()
-    if loot_box is None:
-        return jsonify({'message': 'Loot box not found'}), 404
-
-    # Update the name
-    loot_box.name = loot_box_name
-
-    # Clear the current items
-    loot_box.items = []
-
-    db.session.execute(loot_box_items.delete().where(loot_box_items.c.loot_box_id == box_id))
-    db.session.commit()
-
-    # Add the new items
-    for item in items:
-        itemID = item['id']
-        quantity = item['quantity']
-        # itemDB = Item.query.get(itemID)
-        itemDB = Item.query.filter_by(id=itemID).first()
-        if itemDB:
-            association = loot_box_items.insert().values(loot_box_id=loot_box.id, itemID=itemDB.id, quantity=quantity)
-            db.session.execute(association)
-            db.session.commit()  # Commit after each iteration
-
-    return jsonify({'message': 'Loot box updated successfully'})
-
-@app.route('/api/lootboxes/<int:box_id>', methods=['DELETE'])
-def delete_loot_box(box_id):
-    # Get the LootBox
-    loot_box = LootBox.query.filter_by(id=box_id).first()
-    if loot_box is None:
-        return jsonify({'message': 'Loot box not found'}), 404
-
-    db.session.delete(loot_box)
-    db.session.commit()
-
-    return jsonify({'message': 'Loot box deleted successfully'})
-
-## Get list of loot in a lootbox
-@app.route('/api/lootboxes/<int:box_id>', methods=['GET'])
-def get_loot_box(box_id):
-    # loot_box = LootBox.query.get(box_id)
-    loot_box = LootBox.query.filter_by(id=box_id).first()
-    if loot_box:
-        # Use the association table to get the items in this loot box along with their quantities
-        items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
-            loot_box_items.c.loot_box_id == loot_box.id,
-            loot_box_items.c.itemID == Item.id
-        ).all()
-        return jsonify({'items': [{'id': item.id, 'name': item.name, 'quantity': quantity} for item, quantity in items_with_quantities]})
-    else:
-        return jsonify({'message': 'Loot box not found'}), 404
-
-## Issue loot box to player
-@app.route('/api/lootboxes/<int:box_id>', methods=['POST'])
-@jwt_required()
-def issue_loot_box(box_id):
-    player_username = request.json.get('player')
-    campaignID = request.headers.get('CampaignID')
-    # recipient_user = User.query.filter_by(username=player_username).first()
-    recipient_user = User.query.join(campaign_members, User.id == campaign_members.userID).filter(campaign_members.campaignID == campaignID).first()
-    if recipient_user is None:
-        return jsonify({'message': 'User not found'}), 404
-
-    # Get the LootBox instance
-    # loot_box = LootBox.query.get(box_id)
-    loot_box = LootBox.query.filter_by(id=box_id).first()
-    if loot_box is None:
-        return jsonify({'message': 'Loot box not found.'}), 404
-
-    # Use the association table to get the items in this loot box along with their quantities
-    items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
-        loot_box_items.c.loot_box_id == box_id,
-        loot_box_items.c.itemID == Item.id
-    ).all()
-
-    for item, quantity in items_with_quantities:
-        # Update recipient's inventory
-        recipient_inventory_item = InventoryItem.query.filter_by(userID=recipient_user.id, itemID=item.id).first()
-        if recipient_inventory_item:
-            recipient_inventory_item.quantity += quantity
-        else:
-            new_inventory_item = InventoryItem(userID=recipient_user.id, itemID=item.id, name=item.name, quantity=quantity)
-            db.session.add(new_inventory_item)
-
-    db.session.commit()
-
-    # Emit an inventory_update event to the recipient
-    socketio.emit('inventory_update', {'character_name': recipient_user.character_name, 'items': [item.to_dict() for item, _ in items_with_quantities]}, to=recipient_user.sid)
-
-    # Send a message to the recipient that they got a new loot box
-    reception_message = {
-        'type': 'text_message',
-        'text': f'You received {loot_box.name}!',
-        'sender': 'System',
-        'recipients': [f'{recipient_user.character_name}'],
-    }
-    socketio.emit('message', reception_message, to=recipient_user.sid)
-
-    return jsonify({'message': 'Loot box issued successfully.'})
-
-
-## Spell stuff. Finally!
+##************************##
+## **      Spells      ** ##
+##************************##
 @app.route('/api/spellbook', methods=['GET'])
 @jwt_required()
 def get_spellbook():
@@ -2452,9 +2307,259 @@ def update_spellbook_item(spellID):
 
 
 ##************************##
-## **    Wiki Stuff    ** ##
+## **    Loot Boxes    ** ##
+##************************##
+@app.route('/api/lootboxes', methods=['GET'])
+def get_all_loot_boxes():
+    loot_boxes = LootBox.query.all()
+    return jsonify({'lootBoxes': [box.to_dict() for box in loot_boxes]})
+
+@app.route('/api/lootboxes', methods=['POST'])
+def create_loot_box():
+    data = request.get_json()
+    loot_box_name = data['name']
+    items = data['items']  # This is now a list of dictionaries
+
+    # Create the LootBox
+    loot_box = LootBox(name=loot_box_name)
+    db.session.add(loot_box)
+    db.session.commit()
+
+    for item in items:
+        itemID = item['id']
+        quantity = item['quantity']
+        # itemDB = Item.query.get(itemID)
+        itemDB = Item.query.filter_by(id=itemID).first()
+        if itemDB:
+            association = loot_box_items.insert().values(loot_boxID=loot_box.id, itemID=itemDB.id, quantity=quantity)
+            db.session.execute(association)
+            db.session.commit()  # Commit after each iteration
+
+    return jsonify({'message': 'Loot box created successfully'})
+
+## Save a Loot Box
+@app.route('/api/lootboxes/<int:box_id>', methods=['PUT'])
+def update_loot_box(box_id):
+    data = request.get_json()
+    # print("data:", data)
+    app.logger.info("data: %s", data)
+    loot_box_name = data['name']
+    items = data['items']
+
+    # Get the LootBox
+    # loot_box = LootBox.query.get(box_id)
+    loot_box = LootBox.query.filter_by(id=box_id).first()
+    if loot_box is None:
+        return jsonify({'message': 'Loot box not found'}), 404
+
+    # Update the name
+    loot_box.name = loot_box_name
+
+    # Clear the current items
+    loot_box.items = []
+
+    db.session.execute(loot_box_items.delete().where(loot_box_items.c.loot_boxID == box_id))
+    db.session.commit()
+
+    # Add the new items
+    for item in items:
+        itemID = item['id']
+        quantity = item['quantity']
+        # itemDB = Item.query.get(itemID)
+        itemDB = Item.query.filter_by(id=itemID).first()
+        if itemDB:
+            association = loot_box_items.insert().values(loot_boxID=loot_box.id, itemID=itemDB.id, quantity=quantity)
+            db.session.execute(association)
+            db.session.commit()  # Commit after each iteration
+
+    return jsonify({'message': 'Loot box updated successfully'})
+
+@app.route('/api/lootboxes/<int:box_id>', methods=['DELETE'])
+def delete_loot_box(box_id):
+    # Get the LootBox
+    loot_box = LootBox.query.filter_by(id=box_id).first()
+    if loot_box is None:
+        return jsonify({'message': 'Loot box not found'}), 404
+
+    db.session.delete(loot_box)
+    db.session.commit()
+
+    return jsonify({'message': 'Loot box deleted successfully'})
+
+## Get list of loot in a lootbox
+@app.route('/api/lootboxes/<int:box_id>', methods=['GET'])
+def get_loot_box(box_id):
+    # loot_box = LootBox.query.get(box_id)
+    loot_box = LootBox.query.filter_by(id=box_id).first()
+    if loot_box:
+        # Use the association table to get the items in this loot box along with their quantities
+        items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
+            loot_box_items.c.loot_boxID == loot_box.id,
+            loot_box_items.c.itemID == Item.id
+        ).all()
+        return jsonify({'items': [{'id': item.id, 'name': item.name, 'quantity': quantity} for item, quantity in items_with_quantities]})
+    else:
+        return jsonify({'message': 'Loot box not found'}), 404
+
+## Issue loot box to player
+@app.route('/api/lootboxes/<int:box_id>', methods=['POST'])
+@jwt_required()
+def issue_loot_box(box_id):
+    app.logger.debug("ISSUE LOOT BOX- box_id: %s", box_id)
+    app.logger.debug("ISSUE LOOT BOX- request json: %s", request.json)
+    
+    selectedPlayer = request.json.get('player')
+    character_id = selectedPlayer.get('id')
+    character_name = selectedPlayer.get('character_name')
+    username = selectedPlayer.get('username')
+    campaignID = request.headers.get('CampaignID')
+
+    # Get the LootBox instance
+    loot_box = LootBox.query.filter_by(id=box_id).first()
+    if loot_box is None:
+        return jsonify({'message': 'Loot box not found.'}), 404
+
+    # Use the association table to get the items in this loot box along with their quantities
+    items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
+        loot_box_items.c.loot_boxID == box_id,
+        loot_box_items.c.itemID == Item.id
+    ).all()
+
+    for item, quantity in items_with_quantities:
+        # Update recipient's inventory
+        recipient_inventory_item = InventoryItem.query.filter_by(characterID=character_id, itemID=item.id).first()
+        if recipient_inventory_item:
+            recipient_inventory_item.quantity += quantity
+        else:
+            new_inventory_item = InventoryItem(characterID=character_id, itemID=item.id, name=item.name, quantity=quantity)
+            db.session.add(new_inventory_item)
+
+    db.session.commit()
+
+    # Emit an inventory_update event to the recipient
+    socketio.emit('inventory_update', {'character_name': character_name, 'items': [item.to_dict() for item, _ in items_with_quantities]}, to=selectedPlayer.get('sid'))
+
+    # Send a message to the recipient that they got a new loot box
+    reception_message = {
+        'type': 'text_message',
+        'text': f'You received {loot_box.name}!',
+        'sender': 'System',
+        'recipients': [character_name],
+    }
+    socketio.emit('message', reception_message, to=selectedPlayer.get('sid'))
+
+    return jsonify({'message': 'Loot box issued successfully.'})
+
+
+##************************##
+## **       NPCs       ** ##
+##************************##
+@app.route('/api/npcs', methods=['POST'])
+@jwt_required()
+def create_npc():
+    data = request.json
+    campaignID = request.headers.get('CampaignID')
+    # app.logger.debug("CREATE NPC- campaignID from headers: %s", campaignID)
+    
+    name = data.get('name')
+    description = data.get('description')
+    size = data.get('size')
+    creature_type = data.get('creatureType')
+    creature_subtype = data.get('creatureSubtype')
+    alignment = data.get('alignment')
+    ac = data.get('ac')
+    hp = data.get('hp')
+    speed = data.get('speed')
+    strength = data.get('strength')
+    dexterity = data.get('dexterity')
+    constitution = data.get('constitution')
+    intelligence = data.get('intelligence')
+    wisdom = data.get('wisdom')
+    charisma = data.get('charisma')
+    saving_throws = data.get('saving_throws')
+    skills = data.get('skills')
+    immunities = data.get('immunities')
+    resistance = data.get('resistance')
+    senses = data.get('senses')
+    languages = data.get('languages')
+    challenge = data.get('challenge')
+    traits = data.get('traits')
+    actions = data.get('actions')
+
+    new_npc = NPC(
+        campaign_id=campaignID,
+        name=name,
+        description=description,
+        size=size,
+        creature_type=creature_type,
+        creature_subtype=creature_subtype,
+        alignment=alignment,
+        ac=ac,
+        hp=hp,
+        speed=speed,
+        strength=strength,
+        dexterity=dexterity,
+        constitution=constitution,
+        intelligence=intelligence,
+        wisdom=wisdom,
+        charisma=charisma,
+        saving_throws=saving_throws,
+        skills=skills,
+        immunities=immunities,
+        resistance=resistance,
+        senses=senses,
+        languages=languages,
+        challenge=challenge,
+        traits=traits,
+        actions=actions
+    )
+    db.session.add(new_npc)
+    db.session.commit()
+
+    return jsonify(new_npc.to_dict()), 201
+
+@app.route('/api/npcs', methods=['GET'])
+@jwt_required()
+def get_npcs():
+    campaignID = request.headers.get('CampaignID')
+    npcs = NPC.query.filter_by(campaign_id=campaignID).all()
+    return jsonify([npc.to_dict() for npc in npcs]), 200
+
+##************************##
+## **  Random Tables   ** ##
 ##************************##
 
+@app.route('/api/random_tables', methods=['POST'])
+@jwt_required()
+def create_random_table():
+    data = request.json
+    name = data.get('name')
+    description = data.get('description')
+    dice_type = data.get('dice_type')
+
+    if not name or not dice_type:
+        return jsonify({'error': 'Name and dice_type are required'}), 400
+
+    new_random_table = RandomTable(
+        name=name,
+        description=description,
+        dice_type=dice_type
+    )
+    db.session.add(new_random_table)
+    db.session.commit()
+
+    return jsonify(new_random_table.to_dict()), 201
+
+@app.route('/api/random_tables', methods=['GET'])
+@jwt_required()
+def get_random_tables():
+    random_tables = RandomTable.query.all()
+    return jsonify([table.to_dict() for table in random_tables]), 200
+
+
+##************************##
+## **    Wiki Stuff    ** ##
+##************************##
 @app.route('/<campaign_name>/search', methods=['GET'])
 def search(campaign_name):
     app.logger.debug("campaign_name: %s", campaign_name)
@@ -2583,6 +2688,77 @@ def edit_page(campaign_name, page_title):
     elif request.method == "GET":
         html_content = markdown.markdown(page.content)
         return render_template('edit_page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
+
+
+## Chat Function (more in SocketIO stuff)
+@app.route('/api/chat_history', methods=['GET'])
+@jwt_required()
+def get_chat_history():
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+    campaignID = request.headers.get('CampaignID')
+
+    # Get the character ID for the user in the specified campaign
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
+    )
+
+    result = db.session.execute(stmt).first()
+    characterID = result.characterID if result else None
+
+    if characterID is None:
+        return jsonify({'message': 'Character not found'}), 404
+
+    # Create a dictionary mapping user IDs to character IDs for the specified campaign
+    user_to_character_map = {}
+    campaign_memberships = db.session.execute(
+        select(campaign_members.c.userID, campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID
+        )
+    ).fetchall()
+
+    for membership in campaign_memberships:
+        user_to_character_map[membership.userID] = membership.characterID
+
+    def message_to_client_format(message):
+        # Get sender's character name
+        sender_character = Character.query.filter_by(id=user_to_character_map.get(message.sender_id)).first()
+        sender_name = sender_character.character_name if sender_character else 'Unknown'
+    
+        # Get recipients' character names
+        recipient_ids = message.recipient_ids.split(',')
+        recipient_names = []
+        for id in recipient_ids:
+            if id:
+                recipient_character = Character.query.filter_by(id=user_to_character_map.get(int(id))).first()
+                recipient_names.append(recipient_character.character_name if recipient_character else 'Unknown')
+    
+        # Get item details
+        item = Item.query.filter_by(id=message.item_id).first() if message.item_id else None
+        item_details = {'id': item.id, 'name': item.name} if item else None
+    
+        return {
+            'campaignID': campaignID,
+            'group_id': message.group_id,
+            'item': item_details,
+            'recipient_character_names': recipient_names,
+            'recipients': [int(id) for id in recipient_ids if id],
+            'sender': message.sender_id,
+            'sender_character_name': sender_name,
+            'text': message.message_text,
+            'type': message.message_type,
+        }
+    
+    # Fetch all messages for the user from the specified campaign
+    sent_messages = Message.query.filter_by(sender_id=user.id, campaign_id=campaignID).all()
+    received_messages = Message.query.filter(Message.recipient_ids.contains(str(user.id)), Message.campaign_id == campaignID).all()
+
+    # Combine, sort by timestamp, and convert to JSON-friendly format
+    messages = sorted(sent_messages + received_messages, key=lambda msg: msg.timestamp)
+    messages_json = [message_to_client_format(message) for message in messages]
+
+    return jsonify(messages_json), 200
 
 
 ##************************##
@@ -2747,9 +2923,7 @@ def handle_send_message(messageObj):
     
     # app.logger.debug("MESSAGE- Sending user found in database: %s", user.to_dict())
     
-    # # Step 2: Get the characterID from the campaign_members table using userID and campaignID
-    # app.logger.debug("User ID- %s", user.id)
-    # app.logger.debug("campaignID- %s", campaignID)
+    # Step 2: Get the characterID from the campaign_members table using userID and campaignID
     campaign_member = db.session.query(campaign_members).filter_by(userID=sender, campaignID=campaignID).first()
     if not campaign_member:
         app.logger.error("MESSAGE- sender character not found in campaign")
@@ -2785,10 +2959,10 @@ def handle_send_message(messageObj):
     messageObj['sender_character_name'] = sender_character.character_name
 
     if messageObj['type'] == 'item_transfer':
-        handle_item_transfer(messageObj, recipients, sender_character)
+        handle_item_transfer(messageObj, recipient_character, sender_character)
 
     elif messageObj['type'] == 'spell_transfer':
-        handle_spell_transfer(messageObj, recipients, sender_character)
+        handle_spell_transfer(messageObj, recipient_character, sender_character)
 
     else:
         recipient_ids = [character.user.id for character in recipient_characters]
@@ -2814,69 +2988,68 @@ def handle_send_message(messageObj):
         # Emit the message back to the sender
         socketio.emit('message', messageObj, to=sender_user.sid)
 
-def handle_item_transfer(messageObj, recipient_users, sender):
-    # Assuming recipient_users contains only one recipient for an item_transfer
-    recipient = recipient_users[0]
-    app.logger.debug("MESSAGE- ITEM TRANSFER- recipient: %s", recipient)
-    recipient_user = User.query.filter_by(username=recipient['username']).first()
-    app.logger.debug("MESSAGE- ITEM TRANSFER- recipient_user: %s", recipient_user)
+def handle_item_transfer(messageObj, recipient_character, sender_character):
+    app.logger.debug("MESSAGE- ITEM TRANSFER- messageObj: %s", messageObj)
+    campaignID = messageObj['campaignID']
 
-    sender_user = User.query.filter_by(id=sender.userID).first()
-    app.logger.debug("MESSAGE- ITEM TRANSFER- sender_user: %s", sender_user.to_dict())
+    app.logger.debug("MESSAGE- ITEM TRANSFER- recipient_character: %s", recipient_character.character_name)
+    recipient_user = User.query.filter_by(id=recipient_character.userID).first()
+    app.logger.debug("MESSAGE- ITEM TRANSFER- recipient_user: %s", recipient_user.username)
+
+    app.logger.debug("MESSAGE- ITEM TRANSFER- sender_character: %s", sender_character.character_name)
+    sender_user = User.query.filter_by(id=sender_character.userID).first()
+    app.logger.debug("MESSAGE- ITEM TRANSFER- sender_user: %s", sender_user.username)
+    
     item = messageObj['item']
     quantity = item['quantity']
-
-    # app.logger.debug("MESSAGE- ITEM TRANSFER- recipient_user: %s", recipient_user.to_dict())
+    # recipient_character_name = recipient_character.character_name
+    # sender_character_name = sender_character.character_name
 
     # Update recipient's inventory here
     if recipient_user is None:
         return jsonify({'message': 'User not found'}), 404
-    # elif recipient_user == "Magic Ian" and item['name'] == "poop":
-    #     return jsonify({'message': 'Ian does not want your poop'}), 404
 
-    # Query for the sender user
-    app.logger.debug("MESSAGE- ITEM TRANSFER- sender.character_name: %s", sender.character_name)
-
-
-    # db_item = Item.query.get(item['id'])
     db_item = Item.query.filter_by(id=item['id']).first()
-    app.logger.debug("MESSAGE- item: %s", db_item.name)
-
+    app.logger.debug("ITEM TRANSFER- Item located in database: %s", db_item.to_dict())
+    
     if db_item is None:
         return jsonify({'message': 'Item not found'}), 404
-
+    
     # Update recipient's inventory
-    recipient_inventory_item = InventoryItem.query.filter_by(characterID=recipient['id'], itemID=db_item.id).first()
-    app.logger.info("MESSAGE- recipient_inventory_item: %s", recipient_inventory_item)
-
+    recipient_inventory_item = InventoryItem.query.filter_by(characterID=recipient_character.id, itemID=db_item.id).first()
+    app.logger.debug("ITEM TRANSFER- recipient_inventory_item: %s", recipient_inventory_item)
+    
     if recipient_inventory_item:
-        print("MESSAGE- old quantity:", recipient_inventory_item.quantity)
+        app.logger.debug("ITEM TRANSFER- old quantity: %s", recipient_inventory_item.quantity)
         recipient_inventory_item.quantity += int(quantity)
-        print("MESSAGE- new quantity:", recipient_inventory_item.quantity)
-
-    else:
-        new_inventory_item = InventoryItem(characterID=recipient['id'], itemID=db_item.id, name=db_item.name, quantity=int(quantity))
-        print("new_inventory_item:", new_inventory_item)
+        app.logger.debug("ITEM TRANSFER- new quantity: %s", recipient_inventory_item.quantity)
+    else: 
+        # app.logger.debug("ITEM TRANSFER- Creating new inventory item")
+        # app.logger.debug("ITEM TRANSFER- recipient_character.id: %s", recipient_character.id)
+        # app.logger.debug("ITEM TRANSFER- db_item.id: %s", db_item.id)
+        # app.logger.debug("ITEM TRANSFER- quantity: %s", quantity)
+        new_inventory_item = InventoryItem(characterID=recipient_character.id, itemID=db_item.id, name=db_item.name, quantity=int(quantity), item=db_item)
         db.session.add(new_inventory_item)
-
+        app.logger.debug("new_inventory_item: %s", new_inventory_item.to_dict())
+    
     db.session.commit()
 
     # Emit an inventory_update event to the recipient
-    socketio.emit('inventory_update', {'character_name': recipient['character_name'], 'item': item}, to=recipient_user.sid)
+    socketio.emit('inventory_update', {'character_name': recipient_character.character_name, 'item': item}, to=recipient_user.sid)
 
     # Send a message to the recipient that they got a new item
     reception_message = {
         'type': 'text_message',
-        'text': f'{sender.character_name} gave you {quantity} {db_item.name}',
+        'text': f'{sender_character.character_name} gave you {quantity} {db_item.name}',
         'sender': 'System',
-        'recipients': [f"{recipient['character_name']}"],
+        'recipient_character_names': [recipient_character.character_name],
+        'recipients': [recipient_user.id],
     }
     socketio.emit('message', reception_message, to=recipient_user.sid)
 
     # Update sender's inventory only if the sender is not a DM
-    ## TODO- Change this check to actually compare against the campaign's DM or Owner IDs
-    if sender.character_name != 'DM':
-        sender_inventory_item = InventoryItem.query.filter_by(characterID=sender.id, itemID=db_item.id).first()
+    if sender_character.character_name != 'DM' and sender_character.character_name != 'Admin':
+        sender_inventory_item = InventoryItem.query.filter_by(characterID=sender_character.id, itemID=db_item.id).first()
         if sender_inventory_item and sender_inventory_item.quantity > int(quantity):
             sender_inventory_item.quantity -= int(quantity)
         elif sender_inventory_item.quantity == int(quantity):
@@ -2887,32 +3060,47 @@ def handle_item_transfer(messageObj, recipient_users, sender):
         db.session.commit()
 
         # Emit an inventory_update event to the sender
-        socketio.emit('inventory_update', {'character_name': sender.character_name, 'item': item}, to=sender_user.sid)
+        socketio.emit('inventory_update', {'character_name': sender_character.character_name, 'item': item}, to=sender_user.sid)
 
-        ## Notify the DMs, by getting their user IDs
-        dm_users = User.query.filter_by(account_type='DM').all()
-
-        # If any DM users are found, send them a message
-        if dm_users:
-            for dm_user in dm_users:
+        # Notify the DMs and owners, by getting their user IDs from the campaign
+        campaign = Campaign.query.filter_by(id=campaignID).first()
+        
+        if campaign:
+            dm_id = campaign.dm_id
+            owner_id = campaign.owner_id
+        
+            # Get the DM and owner users
+            dm_user = User.query.filter_by(id=dm_id).first()
+            owner_user = User.query.filter_by(id=owner_id).first()
+        
+            # If any DM or owner users are found, send them a message
+            if dm_user or owner_user:
                 notification_message = {
                     'type': 'text_message',
-                    'text': f"{sender.character_name} gave {recipient['character_name']} {quantity} {db_item.name}",
+                    'text': f"{sender_character.character_name} gave {recipient_character.character_name} {quantity} {db_item.name}",
                     'sender': 'System',
-                    'recipients': ['DM'],
+                    'recipients': []
                 }
-                socketio.emit('message', notification_message, to=dm_user.sid)
+        
+                if dm_user:
+                    notification_message['recipients'].append(dm_user.id)
+                if owner_user and owner_user.id != dm_user.id:
+                    notification_message['recipients'].append(owner_user.id)
+        
+                socketio.emit('message', notification_message)
 
+    else:
+        app.logger.info("MESSAGE- ITEM TRANSFER- Sender is DM or Admin")
 
     # Send a confirmation message to the sender.
     confirmation_message = {
         'type': 'text_message',
-        'text': f"You gave {recipient['character_name']} {quantity} {db_item.name}",
+        'text': f"You gave {recipient_character.character_name} {quantity} {db_item.name}",
         'sender': 'System',
-        'recipients': [f'{sender.character_name}'],
+        'recipient_character_names': [sender_character.character_name],
+        'recipients': [sender_user.id],
     }
     socketio.emit('message', confirmation_message, to=sender_user.sid)
-
 
 def handle_spell_transfer(messageObj, recipient_users, sender):
     # Assuming recipient_users contains only one recipient for a spell_transfer

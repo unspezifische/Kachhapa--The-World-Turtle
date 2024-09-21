@@ -30,6 +30,7 @@ const skillAbilities = {
     'Survival': 'wisdom'
 };
 
+const alignments = ['Any Alignment', 'Lawful Good', 'Neutral Good', 'Chaotic Good', 'Lawful Neutral', 'Neutral', 'Chaotic Neutral', 'Lawful Evil', 'Neutral Evil', 'Chaotic Evil'];
 
 const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     const [activeStep, setActiveStep] = useState(0);
@@ -586,6 +587,20 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                                 ))}
                             </div>
                         )}
+                        <Form.Group>
+                            <Form.Label>Alignment</Form.Label>
+                            <Form.Control
+                                as="select"
+                                value={character.Alignment}
+                                onChange={handleInputChange}
+                                name="alignment"
+                            >
+                                <option value="" disabled>Select alignment</option>
+                                {alignments.map(alignment => (
+                                    <option key={alignment} value={alignment}>{alignment}</option>
+                                ))}
+                            </Form.Control>
+                        </Form.Group>
                     </div>
                 )}
                 {/* Equipment */}
