@@ -24,7 +24,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     const fetchChatHistory = async () => {
       // Check if characterName has been initialized
       if (characterName) {
-        console.log("CHAT- Getting message history for " + characterName);
+        // console.log("CHAT- Getting message history for " + characterName);
         axios.get('/api/chat_history', { headers: headers })
         .then(response => {
           const data = response.data;
@@ -50,8 +50,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
 
 
   useEffect(() => {
-    console.log("CHAT- users:", users);
-    console.log("CHAT- campaignID", campaignID)
+    // console.log("CHAT- users:", users);
+    // console.log("CHAT- campaignID", campaignID)
   }, [users, campaignID]);
 
   useEffect(() => {

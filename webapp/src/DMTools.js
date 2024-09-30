@@ -65,8 +65,6 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
   const [selectedNpc, setSelectedNpc] = useState(null);
 
-  const [randomTables, setRandomTables] = useState([]);
-
 
   // Define a function to fetch players
   const fetchPlayers = () => {
@@ -372,9 +370,9 @@ function DMTools({ headers, socket, characterName, accountType }) {
     });
   };
   
-  useEffect(() => {
-    console.log('NPC Data:', npcData);
-  }, [npcData]);
+  // useEffect(() => {
+  //   console.log('NPC Data:', npcData);
+  // }, [npcData]);
   
   const handleSaveNpc = () => {
     console.log('Saving NPC:', npcData);
@@ -432,18 +430,25 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
 
   // Random Tables to Roll On
-  const [randomTableModalOpen, setRandomTableModalOpen] = useState(false);
+  const [randomTables, setRandomTables] = useState([]);
   const [randomTableData, setRandomTableData] = useState({
     name: '',
     description: '',
     diceType: '',
     entries: []
   });
+  const [randomTableModalOpen, setRandomTableModalOpen] = useState(false);
+  const [viewTableModalOpen, setViewTableModalOpen] = useState(false);
+  const [selectedTable, setSelectedTable] = useState(null);
+  const [selectedTableEntries, setSelectedTableEntries] = useState([]);
+  const [isEditing, setIsEditing] = useState(false);
 
   const [entryMinRoll, setEntryMinRoll] = useState('');
   const [entryMaxRoll, setEntryMaxRoll] = useState('');
   const [entryResult, setEntryResult] = useState('');
 
+
+  // Fetch random tables from Flask and the database
   const fetchRandomTables = () => {
     axios.get('/api/random_tables', { headers: headers })
       .then(response => {
@@ -462,32 +467,83 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
   const handleTableSelect = (table) => {
     console.log("selected: ", table.name);
+    axios.get(`/api/random_tables/${table.id}`, { headers: headers })
+      .then(response => {
+        setSelectedTable(response.data);
+        setSelectedTableEntries(response.data.table_entries);
+        setViewTableModalOpen(true);
+      })
+      .catch(error => {
+        console.error('Failed to fetch table entries:', error);
+      });
   };
 
-  const handleCreateTable = () => {
+  const openCreateTableModal = () => {
     setRandomTableModalOpen(true);
   };
 
-  // Update the entries in randomTableData directly
+  // Fetch tables on component mount
+  useEffect(() => {
+    fetchRandomTables();
+  }, []);
+
+  // Function to handle table creation or update
+  const handleSaveRandomTable = () => {
+    if (isEditing) {
+      // Update existing table
+      axios.put(`/api/random_tables/${selectedTable.id}`, randomTableData, { headers: headers })
+        .then(response => {
+          console.log('Table updated successfully:', response.data);
+          fetchRandomTables();
+          setRandomTableModalOpen(false);
+          setRandomTableData({
+            name: '',
+            description: '',
+            diceType: '',
+            entries: []
+          });
+          setIsEditing(false);
+        })
+        .catch(error => {
+          console.error('Error updating table:', error);
+        });
+    } else {
+      // Create new table
+      axios.post('/api/random_tables', randomTableData, { headers: headers })
+        .then(response => {
+          console.log('Table created successfully:', response.data);
+          fetchRandomTables();
+          setRandomTableModalOpen(false);
+          setRandomTableData({
+            name: '',
+            description: '',
+            diceType: '',
+            entries: []
+          });
+        })
+        .catch(error => {
+          console.error('Error creating table:', error);
+        });
+    }
+  };
+
+  // Function to handle adding an entry
   const handleAddEntry = () => {
     const newEntry = {
       min_roll: entryMinRoll,
       max_roll: entryMaxRoll,
       result: entryResult
     };
-
     setRandomTableData(prevData => ({
       ...prevData,
       entries: [...prevData.entries, newEntry]
     }));
-
-    // Clear the entry fields after adding
     setEntryMinRoll('');
     setEntryMaxRoll('');
     setEntryResult('');
   };
 
-  // Remove entry by index in the entries array
+  // Function to handle removing an entry
   const handleRemoveEntry = (index) => {
     setRandomTableData(prevData => ({
       ...prevData,
@@ -495,27 +551,34 @@ function DMTools({ headers, socket, characterName, accountType }) {
     }));
   };
 
-  const handleSaveRandomTable = () => {
-    const newTable = {
-      campaign_id: headers['CampaignID'],
-      ...randomTableData,
-    };
+  // Function to handle editing a table
+  const editRandomTable = () => {
+    setViewTableModalOpen(false);
+    setRandomTableData({
+      name: selectedTable.name,
+      description: selectedTable.description,
+      diceType: selectedTable.dice_type,
+      entries: selectedTable.table_entries
+    });
+    setIsEditing(true);
+    setRandomTableModalOpen(true);
+  };
 
-    axios.post('/api/random_tables', newTable, { headers: headers })
+  // Function to handle table deletion
+  const deleteRandomTable = (tableId) => {
+    axios.delete(`/api/random_tables/${tableId}`, { headers: headers })
       .then(response => {
-        console.log('Table created successfully:', response.data);
+        console.log('Table deleted successfully:', response.data);
 
-        // Reset the form and close the modal
-        setRandomTableModalOpen(false);
-        setRandomTableData({
-          name: '',
-          description: '',
-          diceType: '',
-          entries: []
-        });
+        // Fetch the updated list of tables
+        fetchRandomTables();
+
+        // Close the view table modal
+        setViewTableModalOpen(false);
+        setSelectedTable(null);
       })
       .catch(error => {
-        console.error('Failed to create table:', error.response.data);
+        console.error('Error deleting table:', error);
       });
   };
 
@@ -695,7 +758,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
             {currentContent === 'Random Tables' && (
               <>
                 <h2>Random Roll Tables</h2>
-                <Button onClick={handleCreateTable}>Add a Roll Table</Button>
+                <Button onClick={openCreateTableModal}>Add a Roll Table</Button>
                 <Table striped bordered hover>
                   <thead>
                     <tr>
@@ -1154,10 +1217,10 @@ function DMTools({ headers, socket, characterName, accountType }) {
         </Modal>)
       }
 
-      {/* Random Tables to Roll On */}
+      {/* Modal for creating/editing a random table */}
       <Modal show={randomTableModalOpen} onHide={() => setRandomTableModalOpen(false)} centered>
         <Modal.Header closeButton>
-          <Modal.Title>Create Random Table</Modal.Title>
+          <Modal.Title>{isEditing ? 'Edit Random Table' : 'Create Random Table'}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           <Form>
@@ -1173,7 +1236,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
             {/* Description */}
             <InputFormGroup
               label="Description"
-              type="text"
+              type="textarea"
               placeholder="Description"
               value={randomTableData.description}
               onChange={(e) => setRandomTableData(prevData => ({ ...prevData, description: e.target.value }))}
@@ -1215,6 +1278,12 @@ function DMTools({ headers, socket, characterName, accountType }) {
                   placeholder="Result"
                   value={entryResult}
                   onChange={(e) => setEntryResult(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault(); // Prevent default behaviour
+                      handleAddEntry();
+                    }
+                  }}
                 />
               </Col>
               <Col>
@@ -1233,23 +1302,75 @@ function DMTools({ headers, socket, characterName, accountType }) {
                 </tr>
               </thead>
               <tbody>
-                {randomTableData.entries.map((entry, index) => (
-                  <tr key={index}>
-                    <td>{entry.min_roll}</td>
-                    <td>{entry.max_roll}</td>
-                    <td>{entry.result}</td>
-                    <td>
-                      <Button variant="danger" onClick={() => handleRemoveEntry(index)}>Remove</Button>
-                    </td>
-                  </tr>
-                ))}
+                {randomTableData.entries
+                  .sort((a, b) => a.min_roll - b.min_roll)
+                  .map((entry, index) => (
+                    <tr key={index}>
+                      <td>{entry.min_roll}</td>
+                      <td>{entry.max_roll}</td>
+                      <td>{entry.result}</td>
+                      <td>
+                        <Button variant="danger" onClick={() => handleRemoveEntry(index)}>Remove</Button>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </Table>
           </Form>
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={() => setRandomTableModalOpen(false)}>Close</Button>
-          <Button variant="primary" onClick={handleSaveRandomTable}>Save Table</Button>
+          <Button variant="primary" onClick={handleSaveRandomTable}>{isEditing ? 'Save Changes' : 'Save Table'}</Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* View Random Table Modal */}
+      <Modal show={viewTableModalOpen} onHide={() => setViewTableModalOpen(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <Row>
+              <Col>
+                {selectedTable?.name}
+              </Col>
+              <Col>
+                <Button variant="primary" onClick={editRandomTable}>
+                  <EditIcon />
+                </Button>
+                <Col>
+                  <Button variant="danger" onClick={() => deleteRandomTable(selectedTable.id)}>
+                    <DeleteIcon />
+                  </Button>
+                </Col>
+              </Col>
+            </Row>
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p>{selectedTable?.description}</p>
+          <p>Dice Type: {selectedTable?.dice_type}</p>
+          <Table striped bordered hover>
+            <thead>
+              <tr>
+                <th>Min Roll</th>
+                <th>Max Roll</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selectedTable?.table_entries
+                .sort((a, b) => a.min_roll - b.min_roll)
+                .map((entry, index) => (
+                  <tr key={index}>
+                    <td>{entry.min_roll}</td>
+                    <td>{entry.max_roll}</td>
+                    <td>{entry.result}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </Table>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setViewTableModalOpen(false)}>Close</Button>
         </Modal.Footer>
       </Modal>
     </>

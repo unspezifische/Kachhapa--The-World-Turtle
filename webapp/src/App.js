@@ -108,6 +108,16 @@ function App() {
       // Handle token expiration clientside?
     });
 
+    newSocket.on('request_campaignID', () => {
+      console.log('Server is requesting campaign ID');
+      if (selectedCampaign.id) {
+        newSocket.emit('send_campaignID', { campaign_id: selectedCampaign.id });
+      } else {
+        // Handle the case where campaignID is not available
+        console.error('Campaign ID is not available');
+      }
+    });
+
     newSocket.on('disconnect', (reason) => {
       console.warn("Socket Disconnected:", reason);
       if (reason === 'io server disconnect') {
