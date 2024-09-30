@@ -596,7 +596,7 @@ class TableEntry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     table_id = db.Column(db.Integer, db.ForeignKey('random_table.id'), nullable=False)
     min_roll = db.Column(db.Integer, nullable=False)  # Minimum roll value for this entry
-    max_roll = db.Column(db.Integer, nullable=False)  # Maximum roll value for this entry
+    max_roll = db.Column(db.Integer, nullable=True)  # Maximum roll value for this entry
     result = db.Column(db.Text, nullable=False)  # The result of the roll
 
     def to_dict(self):
@@ -923,6 +923,15 @@ def campaigns():
                     # Pre-populate the wiki with the module's information
                     wiki = Page(title=page.data.title, content=page.data.content, campaignID=campaign.id)
                     db.session.add(wiki)
+            # Create the Main Page entry indicating the use of a module
+            main_page_content = f"This campaign is using the {data['module']} module."
+        else:
+            # Create a generic Main Page entry using the campaign's description
+            main_page_content = campaign.description or "Welcome to the campaign!"
+    
+        # Add the Main Page entry to the Page table
+        main_page = Page(title="Main Page", content=main_page_content, campaignID=campaign.id)
+        db.session.add(main_page)
     
         # Add the campaign creator as a member of their own campaign
         app.logger.debug("Adding user %s to campaign %s", user.id, campaign.id)
@@ -1758,9 +1767,37 @@ def update_inventoryItem(itemID):
 @app.route('/api/inventory/<int:itemID>', methods=['DELETE'])
 @jwt_required()
 def drop_item(itemID):
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+    
+    app.logger.info("DROP ITEM- user from JWT: %s", user.to_dict())
+
     campaignID = request.headers.get('CampaignID')
-    userID = request.headers.get('userID')
-    characterID = request.headers.get('CharacterID')
+
+    if campaignID is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    app.logger.info("DROP ITEM- campaignID: %s", campaignID)
+    
+    # Find the character associated with the user and the campaign
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.userID == user.id
+    )
+    result = db.session.execute(stmt).first()
+
+    if result is None:
+        return jsonify({'error': 'Character not found.'}), 404
+
+    characterID = result.characterID if result else None
+
+    app.logger.debug("DROP ITEM- characterID based on JWT: %s", characterID)
+    
+    app.logger.debug("DROP ITEM- campaignID: %s", campaignID)
+    app.logger.debug("DROP ITEM- characterID: %s", characterID)
     
     # Query the campaign_members table and join with the Character table
     # character = db.session.query(Character).join(campaign_members, campaign_members.c.characterID == Character.id).filter(
@@ -1773,7 +1810,7 @@ def drop_item(itemID):
     if not character:
         return jsonify({'message': 'Character not found!'}), 404
     
-    inventory_item = InventoryItem.query.filter_by(characterID=character.id, itemID=itemID).first()
+    inventory_item = InventoryItem.query.filter_by(characterID=characterID, itemID=itemID).first()
     if not inventory_item:
         return jsonify({'message': 'Item not found in inventory!'}), 404
 
@@ -2529,13 +2566,16 @@ def get_npcs():
 ## **  Random Tables   ** ##
 ##************************##
 
+## Create a new table
 @app.route('/api/random_tables', methods=['POST'])
 @jwt_required()
 def create_random_table():
     data = request.json
+    app.logger.debug("CREATE RANDOM TABLE- data: %s", data)
     name = data.get('name')
     description = data.get('description')
-    dice_type = data.get('dice_type')
+    dice_type = data.get('diceType')
+    entries_data = data.get('entries', [])
 
     if not name or not dice_type:
         return jsonify({'error': 'Name and dice_type are required'}), 400
@@ -2546,21 +2586,116 @@ def create_random_table():
         dice_type=dice_type
     )
     db.session.add(new_random_table)
+    db.session.flush()  # Ensure new_random_table.id is available
+
+    # Create and add table entries
+    for entry_data in entries_data:
+        min_roll = entry_data.get('min_roll')
+        max_roll = entry_data.get('max_roll')
+        result = entry_data.get('result')
+
+        if min_roll is None or max_roll is None or result is None:
+            return jsonify({'error': 'Each table entry must have min_roll, max_roll, and result'}), 400
+
+        new_entry = TableEntry(
+            table_id=new_random_table.id,
+            min_roll=min_roll,
+            max_roll=max_roll,
+            result=result
+        )
+        db.session.add(new_entry)
+
     db.session.commit()
 
+    app.logger.debug("New Table created: %s", new_random_table.to_dict())
     return jsonify(new_random_table.to_dict()), 201
+
+## Update existing table
+@app.route('/api/random_tables/<int:table_id>', methods=['PUT'])
+@jwt_required()
+def update_random_table(table_id):
+    data = request.json
+    app.logger.debug("UPDATE RANDOM TABLE- data: %s", data)
+    name = data.get('name')
+    description = data.get('description')
+    dice_type = data.get('diceType')
+    entries_data = data.get('entries', [])
+
+    if not name or not dice_type:
+        return jsonify({'error': 'Name and dice_type are required'}), 400
+
+    # Fetch the existing table
+    random_table = RandomTable.query.get_or_404(table_id)
+    random_table.name = name
+    random_table.description = description
+    random_table.dice_type = dice_type
+
+    # Clear existing entries
+    TableEntry.query.filter_by(table_id=table_id).delete()
+
+    # Create and add new table entries
+    for entry_data in entries_data:
+        min_roll = entry_data.get('min_roll')
+        max_roll = entry_data.get('max_roll')
+        result = entry_data.get('result')
+    
+        if min_roll is None or result is None:
+            return jsonify({'error': 'Each table entry must have min_roll, max_roll, and result'}), 400
+        
+        # Set max_roll to None if it is an empty string
+        if max_roll == '':
+            max_roll = None
+    
+        new_entry = TableEntry(
+            table_id=table_id,
+            min_roll=min_roll,
+            max_roll=max_roll,
+            result=result
+        )
+        db.session.add(new_entry)
+
+    db.session.commit()
+
+    app.logger.debug("Table updated: %s", random_table.to_dict())
+    return jsonify(random_table.to_dict()), 200
 
 @app.route('/api/random_tables', methods=['GET'])
 @jwt_required()
 def get_random_tables():
     random_tables = RandomTable.query.all()
-    return jsonify([table.to_dict() for table in random_tables]), 200
+    return jsonify([{
+        'id': table.id,
+        'name': table.name,
+        'description': table.description,
+        'dice_type': table.dice_type
+    } for table in random_tables]), 200
 
+@app.route('/api/random_tables/<int:table_id>', methods=['GET'])
+@jwt_required()
+def get_random_table_entries(table_id):
+    random_table = RandomTable.query.get_or_404(table_id)
+    return jsonify(random_table.to_dict()), 200
+
+@app.route('/api/random_tables/<int:table_id>', methods=['DELETE'])
+@jwt_required()
+def delete_random_table(table_id):
+    random_table = RandomTable.query.get_or_404(table_id)
+    app.logger.debug("DELETE RANDOM TABLE- table_id: %s", table_id)
+
+    # Delete associated table entries
+    TableEntry.query.filter_by(table_id=table_id).delete()
+
+    # Delete the random table
+    db.session.delete(random_table)
+    db.session.commit()
+
+    app.logger.debug("Table deleted: %s", random_table.to_dict())
+    return jsonify({'message': 'Table deleted successfully'}), 200
 
 ##************************##
 ## **    Wiki Stuff    ** ##
 ##************************##
-@app.route('/<campaign_name>/search', methods=['GET'])
+@app.route('/wiki/<campaign_name>/search', methods=['GET'])
 def search(campaign_name):
     app.logger.debug("campaign_name: %s", campaign_name)
     app.logger.debug("request: %r", request)
@@ -2588,20 +2723,20 @@ def preprocess_content(content):
     # Use the sub function to replace each match
     return re.sub(pattern, replacer, content)
 
-@app.route('/<campaign_name>/<page_title>', methods=['GET'])
+@app.route('/wiki/<campaign_name>/<page_title>', methods=['GET'])
 def wiki_page(campaign_name, page_title):
     app.logger.debug("campaign_name: %s", campaign_name)
     app.logger.debug("page_title: %s", page_title)
 
     # Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
-    app.logger.debug("campaign ID: %s", campaign)
+    app.logger.debug("campaign ID: %s", campaign.id)
 
     # Get the page using the Campaign ID and the page title
     page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title == page_title, Campaign.name == campaign_name).first()
 
     if page is None:
-        app.logger.info("Page %s not found", page_title)
+        app.logger.error("Page %s not found", page_title)
         # Call the create_page function directly
         return create_page(campaign_name, page_title)
 
@@ -2610,16 +2745,17 @@ def wiki_page(campaign_name, page_title):
 
     return render_template('page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
 
-@app.route('/<campaign_name>/<page_title>/create', methods=['GET', 'POST'])
+@app.route('/wiki/<campaign_name>/<page_title>/create', methods=['GET', 'POST'])
 def create_page(campaign_name, page_title):
+    app.logger.debug("Creating %s page for %s wiki", page_title, campaign_name)
     # Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
 
-    # Ensure the sequence is correctly set
-    max_id_result = db.session.execute(text("SELECT MAX(id) FROM page"))
-    max_id = max_id_result.scalar()
-    db.session.execute(text(f"SELECT setval('page_id_seq', {max_id + 1})"))
-    db.session.commit()
+    # # Ensure the sequence is correctly set
+    # max_id_result = db.session.execute(text("SELECT MAX(id) FROM page"))
+    # max_id = max_id_result.scalar()
+    # db.session.execute(text(f"SELECT setval('page_id_seq', {max_id + 1})"))
+    # db.session.commit()
 
     if request.method == 'POST':
         content = request.form['content']
@@ -2643,13 +2779,13 @@ def create_page(campaign_name, page_title):
         db.session.commit()
 
         # Redirect to the edit page
-        app.logger.info("Redirecting to edit page")
+        app.logger.info("Redirecting client to edit page")
         return render_template('edit_page.html', campaign_name=campaign_name, content=f"<h1>{page_title}</h1><p><br></p>", page_title=page_title)
     except SQLAlchemyError as e:
         db.session.rollback()
         return f"An error occurred while creating the page: {str(e)}", 500
     
-@app.route('/<campaign_name>/<page_title>/edit', methods=['GET', 'POST'])
+@app.route('/wiki/<campaign_name>/<page_title>/edit', methods=['GET', 'POST'])
 def edit_page(campaign_name, page_title):
     page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
     if not page:
@@ -2813,10 +2949,11 @@ def emit_active_users(campaign_id):
 @socketio.on("request_active_users")
 def handle_request_active_users(data):
     campaign_id = data.get('campaignID')
+    app.logger.debug("Request Active Users: %s", campaign_id)
     emit_active_users(campaign_id)
 
 @socketio.on("connect")
-def connected(data):
+def connected():
     """event listener when client connects to the server"""
     app.logger.info("Socket Connection Triggered")
     try:
@@ -2842,7 +2979,13 @@ def connected(data):
                 user.is_online = True
                 user.sid = request.sid  # Update the SID associated with this user
                 campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
-                emit_active_users(campaign_id)
+
+                if not campaign_id:
+                    app.logger.info("CONNECT- No campaign ID provided, requesting from client")
+                    socketio.emit('request_campaignID')
+                else:
+                    app.logger.debug("CONNECT- campaign_id: %s", campaign_id)
+                    emit_active_users(campaign_id)
             else:
                 app.logger.error("CONNECT- User not found")
                 socketio.disconnect()
@@ -2853,7 +2996,6 @@ def connected(data):
     except Exception as e:
         app.logger.error(f"CONNECT- An error occurred: {e}")
         socketio.disconnect()
-
 
 @socketio.on('user_connected')
 def handle_user_connected(data):
@@ -2882,6 +3024,24 @@ def handle_user_connected(data):
             emit_active_users(campaign_id)
             app.logger.info("HANDLE CONNETION- %s is already online", user.username)
             # print("HANDLE CONNETION-", user.username, "is already online")
+
+
+@socketio.on('send_campaignID')
+def handle_send_campaignID(data):
+    campaign_id = data.get('campaign_id')
+    app.logger.info(f"Received campaign ID from client: {campaign_id}")
+
+    if campaign_id:
+        user = User.query.filter_by(sid=request.sid).first()
+        if user:
+            app.logger.info(f"Updating campaign ID for user: {user.username}")
+            emit_active_users(campaign_id)
+        else:
+            app.logger.error("User not found for the given SID")
+            socketio.disconnect()
+    else:
+        app.logger.error("No campaign ID received from client")
+        socketio.disconnect()
 
 
 @socketio.on('sendMessage')

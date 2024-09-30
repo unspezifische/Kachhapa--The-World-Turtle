@@ -762,34 +762,33 @@ export default function InventoryView({ username, characterName, accountType, he
     setShowViewItemDetails(false);
   }, [ username, characterName, quantity, selectedItem, selectedPlayer, socket]);
 
-  const dropItem = async (item, quantity) => {
+  const dropItem = (item, quantity) => {
     // console.log("INVENTORY- Dropping item:", item)
     // console.log("INVENTORY- Dropping item ID:", item.id)
     if (item && item.id) { // Check if item and its id exist.
-      try {
-        await axios.delete(`/api/inventory/${item.id}`, {
-          headers,
-          data: {
-            quantity: quantity
-          }
-        });
-        // Update the local inventory
-        setInventory(prevInventory => {
-          return prevInventory.map(i => {
-            // Decrease the quantity of the dropped item
-            if (i.id === item.id) {
-              return {...i, quantity: i.quantity - quantity};
+        axios.delete(`/api/inventory/${item.id}`, {
+            headers,
+            data: {
+                quantity: quantity
             }
-            // Return other items unchanged
-            return i;
-          }).filter(i => i.quantity > 0); // Remove items with no quantity
+        })
+        .then(() => {
+            // Update the local inventory
+            setInventory(prevInventory => {
+                return prevInventory.map(i => {
+                    // Decrease the quantity of the dropped item
+                    if (i.id === item.id) {
+                        return {...i, quantity: i.quantity - quantity};
+                    }
+                    // Return other items unchanged
+                    return i;
+                }).filter(i => i.quantity > 0); // Remove items with no quantity
+            });
+            setShowViewItemDetails(false);
+        })
+        .catch(error => {
+            handleError('Error dropping item:', error);
         });
-        setShowViewItemDetails(false);
-      } catch (error) {
-        handleError('Error dropping item:', error);
-      }
-    } else {
-      console.error('item or item.id is not defined.');
     }
   };
 

@@ -58,6 +58,7 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
       console.log("Encoded URL: " + encodedDestination);
       
       // Include the encoded destination URL as a query parameter in the login URL
+      // var loginUrl = `${baseUrl}login?redirect=/${encodedDestination}`;
       var loginUrl = `${baseUrl}login?redirect=/wiki/${encodedDestination}`;
       console.log("URL with Redirect: " + loginUrl);
       
