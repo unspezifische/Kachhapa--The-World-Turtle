@@ -324,6 +324,7 @@ function CharacterSheet({ headers, characterName }) {
         ep,
         gp,
         pp,
+        Proficiencies,
         ...rest
       } = response.data;
       
@@ -349,6 +350,7 @@ function CharacterSheet({ headers, characterName }) {
         ...rest,
         abilityScores,
         Wealth,
+        Proficiencies,
       }));
 
       setLoading(false);
@@ -500,39 +502,52 @@ function CharacterSheet({ headers, characterName }) {
   
     Promise.all([fetchClassData, fetchRaceData])
       .then(([classResponse, raceResponse]) => {
-        let newCharacterState = { ...character };
+        setCharacter(prevState => {
+          let newCharacterState = { ...prevState };
   
-        if (classResponse) {
-          const classData = classResponse.data;
-          console.log('Class info from Flask-', classData);
+          if (classResponse) {
+            const classData = classResponse.data;
+            console.log('Class info from Flask-', classData);
   
-          newCharacterState.HitPointMax = classData.hit_points.base + (character.Level * (classData.hit_points.level_increment + getModifier(character.abilityScores.constitution)));
+            newCharacterState.HitPointMax = classData.hit_points.base + (prevState.Level * (classData.hit_points.level_increment + getModifier(prevState.abilityScores.constitution)));
   
-          const features = [];
-          console.log("Character Level:", character.Level);
-          for (let i = 0; i < character.Level; i++) {
-            console.log("Level:", i);
-            features.push(...classData.levels[i].features);
+            const features = [];
+            console.log("Character Level:", prevState.Level);
+            for (let i = 0; i < prevState.Level; i++) {
+              console.log("Level:", i);
+              features.push(...classData.levels[i].features);
+            }
+            newCharacterState.Feats = formatFeatures(features, classData);
+            newCharacterState.Proficiencies = [
+              ...(prevState.Proficiencies || []),
+              ...(classData.armor_proficiencies || []),
+              ...(classData.weapon_proficiencies || [])
+            ];
           }
-          newCharacterState.Feats = formatFeatures(features, classData);
-          newCharacterState.Proficiencies = [...classData.armor_proficiencies, ...classData.weapon_proficiencies];
-        }
   
-        if (raceResponse) {
-          const raceData = raceResponse.data;
-          console.log('Race info from Flask-', raceData);
+          if (raceResponse) {
+            const raceData = raceResponse.data;
+            console.log("Languages:", raceData.languages);
   
-          newCharacterState.Proficiencies = [...(newCharacterState.Proficiencies || []), ...raceData.languages];
-          newCharacterState.Speed = raceData.speed;
-          newCharacterState.Feats = [...(newCharacterState.Feats || []), ...Object.values(raceData.traits)];
-        }
+            newCharacterState.Proficiencies = [
+              ...(newCharacterState.Proficiencies || []),
+              raceData.languages // Append the language string directly
+            ];
+            newCharacterState.Speed = raceData.speed;
+            newCharacterState.Feats = [
+              ...(newCharacterState.Feats || []),
+              ...Object.values(raceData.traits)
+            ];
+          }
   
-        setCharacter(newCharacterState);
+          return newCharacterState;
+        });
       })
       .catch(error => {
         console.error(error);
       });
   }, [character.Class, character.Race, character.Level]);
+
 
   // Calculate Skill Levels
   useEffect(() => {
@@ -1151,8 +1166,8 @@ function CharacterSheet({ headers, characterName }) {
           <>
             <h4 className="center-title">Bonds</h4>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character?.Ideals ? (
-                <p>{character.Ideals}</p>
+              {character?.Bonds ? (
+                <p>{character.Bonds}</p>
               ) : (
                 <Placeholder as="p" animation="glow">
                   <Placeholder xs={12} />
@@ -1166,8 +1181,8 @@ function CharacterSheet({ headers, characterName }) {
           <>
             <h4 className="center-title">Flaws</h4>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character?.Ideals ? (
-                <p>{character.Ideals}</p>
+              {character?.Flaws ? (
+                <p>{character.Flaws}</p>
               ) : (
                 <Placeholder as="p" animation="glow">
                   <Placeholder xs={12} />

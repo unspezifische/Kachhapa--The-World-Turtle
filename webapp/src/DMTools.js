@@ -604,7 +604,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
   // TODO: Future Expansion
   const handleShowBuildEncounter = () => {
-    navigate('/library');
+    console.log("Show Build Encounter")
   };
 
   
