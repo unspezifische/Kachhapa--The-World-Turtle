@@ -64,7 +64,7 @@
         const characterName = localStorage.getItem('characterName');
         console.log("token:", token);
         console.log("userID:", userID);
-        console.log("characterName:", characterName);
+        // console.log("characterName:", characterName);
 
         if (token && userID) {
           console.log('Headers found in local storage:', token, userID);
@@ -76,6 +76,7 @@
           };
         }
         if (characterName) {
+          console.log('Character name found in local storage:', characterName);
           window.authInfo.characterName = characterName;
         } else {
           console.log('No header info found in local storage');
@@ -112,34 +113,48 @@
     <!-- Autocomplete for search bar -->
     <script>
       $(document).ready(function () {
-        // console.log("Document ready. Initializing autocomplete."); // Log when document is ready
+        // Hide the searchResults dropdown initially
+        $('#searchResults').hide();
+    
         $('#search').autocomplete({
           minLength: 2,
           source: function (request, response) {
             var userInput = $('#search').val();
             console.log("user input:", userInput);
-            $.ajax({
-              url: '/wiki/{{ campaign_name }}/search',
-              data: { q: userInput },
-              success: function (data) {
-                console.log("response:", data); // Log the received data
-                var dropdown = $('#searchResults');
-                if (Array.isArray(data)) {
-                  data.forEach(function (item) {
-                    dropdown.append('<a class="dropdown-item" href="' + item.title + '">' + item.title + '</a>');
-                  });
-                  dropdown.show();
-                } else {
-                  console.error("Unexpected response format:", data);
-                  dropdown.hide();
+    
+            // Check if userInput is not an empty string
+            if (userInput.trim() !== "") {
+              $.ajax({
+                url: '/wiki/{{ campaign_name | urlencode }}/search',
+                data: { q: userInput },
+                success: function (data) {
+                  console.log("response:", data); // Log the received data
+                  var dropdown = $('#searchResults');
+                  dropdown.empty(); // Clear previous results
+                  if (Array.isArray(data) && data.length > 0) {
+                    data.forEach(function (item) {
+                      dropdown.append('<a class="dropdown-item" href="' + item.title + '">' + item.title + '</a>');
+                    });
+                    dropdown.show();
+                  } else if (data.message && data.create_option) {
+                    dropdown.append('<div class="dropdown-item">No results found. <a href="/wiki/{{ campaign_name | urlencode }}/create/' + encodeURIComponent(userInput) + '">Create new page</a></div>');
+                    dropdown.show();
+                  } else {
+                    console.error("Unexpected response format or empty data:", data);
+                    dropdown.hide();
+                  }
+                },
+                error: function (jqXHR, textStatus, errorThrown) {
+                  console.error("AJAX request failed:", textStatus, errorThrown); // Log any errors
+                  $('#searchResults').hide();
+                  response([]);
                 }
-              },
-              error: function (jqXHR, textStatus, errorThrown) {
-                console.error("AJAX request failed:", textStatus, errorThrown); // Log any errors
-                $('#searchResults').hide();
-                response([]);
-              }
-            });
+              });
+            } else {
+              console.log("Empty user input, skipping AJAX request.");
+              $('#searchResults').hide();
+              response([]);
+            }
           }
         });
       });

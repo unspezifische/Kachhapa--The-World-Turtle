@@ -73,20 +73,17 @@
         const userID = window.authInfo.userID;
         const username = window.authInfo.username;
 
-        // console.log("Token:", token);
-        console.log("UserID from window.authInfo:", userID);
-
         // Ensure the token is available before making the request
         if (token && userID) {
           console.log("Saving content:", content);
           var campaignName = encodeURIComponent('{{ campaign_name }}');
           var pageTitle = encodeURIComponent('{{ page_title }}');
-          var url = `/wiki/${campaignName}/{{ page_title }}/edit`;
+          var url = `/wiki/${campaignName}/${pageTitle}/edit`;
           console.log("URL:", url);
           console.log("window.location.href:", window.location.href);
 
           // Send the content to the server
-          axios.post(`/wiki/${campaignName}/{{ page_title }}`, 'content=' + encodeURIComponent(content), {
+          axios.post(window.location.href, 'content=' + encodeURIComponent(content), {
             headers: {
               'Authorization': token,
               'Content-Type': 'application/x-www-form-urlencoded',

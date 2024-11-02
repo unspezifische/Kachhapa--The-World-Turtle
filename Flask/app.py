@@ -634,6 +634,8 @@ def normalize_keys(d):
         new_dict = {}
         for k, v in d.items():
             new_key = k.lower().replace(' ', '_')
+            if k.endswith('n') and not new_key.endswith('n'):
+                app.logger.error(f"Key '{k}' was transformed to '{new_key}' incorrectly.")
             new_dict[new_key] = normalize_keys(v)
         return new_dict
     elif isinstance(d, list):
@@ -651,6 +653,7 @@ def load_json_files(directory):
                         data = json.load(file)
                         normalized_data = normalize_keys(data)
                         elements.append((filename.rstrip('.json'), normalized_data))
+                        app.logger.debug("Loaded %s from %s", filename, directory)
                     except json.JSONDecodeError:
                         app.logger.error(f"Error decoding JSON from file {filename}")
                     except UnicodeDecodeError:
@@ -2709,7 +2712,10 @@ def search(campaign_name):
     results = [{'id': page.id, 'title': page.title} for page in search_query]
     app.logger.debug("search results: %s", results)
 
-    return jsonify(results)   
+    if not results:
+        return jsonify({'message': 'No results found', 'create_option': True})
+
+    return jsonify(results) 
 
 import re
 

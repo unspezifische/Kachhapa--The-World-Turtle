@@ -1367,8 +1367,13 @@ export default function InventoryView({ username, characterName, accountType, he
         </Modal.Footer>
       </Modal>
 
-            {/* View ItemDetails Modal */}
-      <Modal show={showViewItemDetails} onHide={handleCloseItemDetails} centered scrollable>
+      {/* View Item Details Modal */}
+      <Modal
+        show={showViewItemDetails}
+        onHide={handleCloseItemDetails}
+        centered
+        scrollable
+        dialogClassName='modal-full-height'>
         <Modal.Header closeButton>
           <Modal.Title>
             <Row>
@@ -1525,7 +1530,7 @@ export default function InventoryView({ username, characterName, accountType, he
         </Modal.Footer>
       </Modal>
 
-      {/* Edit ItemDetails Modal */}
+      {/* Edit Item Details Modal */}
       <Modal show={showEditItemDetails} onHide={handleCloseItemDetails} centered scrollable>
         <Modal.Header closeButton>
           <Modal.Title>
