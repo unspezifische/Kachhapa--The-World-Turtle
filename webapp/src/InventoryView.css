@@ -20,3 +20,31 @@
   z-index: 999; /* Ensure it stays above other content */
   overflow: auto;
 }
+
+.modal-full-height .modal-dialog {
+  height: 100vh;
+  margin: 0;
+}
+
+.modal-full-height .modal-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-full-height .modal-header,
+.modal-full-height .modal-footer {
+  flex-shrink: 0;
+}
+
+.modal-full-height .modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+/* Optional: Adjust padding and margins if needed */
+.modal-full-height .modal-body,
+.modal-full-height .modal-header,
+.modal-full-height .modal-footer {
+  padding: 15px;
+}
