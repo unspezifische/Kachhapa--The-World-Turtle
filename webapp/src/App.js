@@ -249,7 +249,7 @@ function App() {
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
-                  <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID}/>} />
+                    <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID} socket={socketRef.current}/>} />
 
                   {/* Catch-all route for wiki pages */}
                   <Route path="/:campaign_name/:page_title" render={({ match }) => {
