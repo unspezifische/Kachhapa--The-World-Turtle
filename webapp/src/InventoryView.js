@@ -737,9 +737,17 @@ export default function InventoryView({ username, characterName, accountType, he
   /**************************************/
 
   const handleItemSelection = (item) => {
-    // console.log("INVENTORY- selectedItem being set:", item);
-    setSelectedItem(item);
-    fetchPlayers();
+    console.log("INVENTORY- getting further details for item:", item);
+    axios.get(`/api/inventory/${item.id}`, { headers })
+    .then(response => {
+      console.log("INVENTORY- selectedItem response:", response.data);
+      setSelectedItem(response.data.item);
+      setShowViewItemDetails(true);
+    })
+    .catch(error => {
+      handleError('Error fetching item:', error);
+    });
+
     setShowViewItemDetails(true);
     console.log('players:', players);
   };
@@ -918,7 +926,6 @@ export default function InventoryView({ username, characterName, accountType, he
                         columnOrder={columnOrder}
                         selectedColumns={selectedColumns}
                         onClick={() => {
-                          console.log("Row clicked");
                           handleItemSelection(item);
                         }}
                       />
@@ -1462,7 +1469,7 @@ export default function InventoryView({ username, characterName, accountType, he
             </Row>
           </Container>
         </Modal.Body>
-        <Modal.Footer>
+        <Modal.Footer style={{ height: '100px' }}>
           <Container>
             <Row className="mb-2">
               <Col>

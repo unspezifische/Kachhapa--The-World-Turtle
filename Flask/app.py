@@ -16,6 +16,8 @@ from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
 
 from flask_migrate import Migrate   ## For database migrations
 
+from flask_compress import Compress
+
 from fuzzywuzzy import fuzz, process
 
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -25,7 +27,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, decode_token, get_jwt, unset_jwt_cookies
 
 from jwt import InvalidTokenError, ExpiredSignatureError
-from flask_socketio import SocketIO, send, emit, disconnect
+from flask_socketio import SocketIO, join_room, leave_room, emit, send, disconnect
 
 from threading import Thread
 from datetime import datetime, timedelta, timezone
@@ -43,6 +45,7 @@ from urllib.parse import unquote
 
 
 app = Flask(__name__)
+Compress(app)
 # dashboard.bind(app)
 
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
@@ -862,7 +865,7 @@ def register():
         'userID': new_user.id  # Include the user's ID in the response
     })
 
-
+## Get a user's profile information
 @app.route('/api/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
@@ -883,6 +886,7 @@ def get_profile():
     except ExpiredSignatureError:
         return jsonify({'error': 'Expired token'}), 401
 
+## Get all users in a campaign
 @app.route('/api/campaigns', methods=['GET', 'POST'])
 @jwt_required()
 def campaigns():
@@ -1252,8 +1256,8 @@ def get_players():
 
     return jsonify({'players': players_info if players_info else []})
 
-## GET items for the DM and POST new items
-@app.route('/api/items', methods=['GET', 'POST']) ##, endpoint='items')
+## GET basic item info for the DM and POST new items
+@app.route('/api/items', methods=['GET', 'POST'])
 @jwt_required()
 def items():
     if request.method == 'GET':
@@ -1261,31 +1265,33 @@ def items():
         try:
             items = Item.query.all()
 
-            item_data_list = []
+            item_data = []
+            # item_data_list = []
 
             for item in items:
-                item_data = item.to_dict()
+                item_data.append(item.to_dict())
 
-                if item.type == 'Weapon':
-                    weapon = Weapon.query.filter_by(itemID=item.id).first()
-                    if weapon:
-                        item_data.update(weapon.to_dict())
-                elif item.type == 'Armor':
-                    armor = Armor.query.filter_by(itemID=item.id).first()
-                    if armor:
-                        item_data.update(armor.to_dict())
-                elif item.type == 'MountVehicle':
-                    mountVehicle = MountVehicle.query.filter_by(itemID=item.id).first()
-                    if mountVehicle:
-                        item_data.update(mountVehicle.to_dict())
-                # elif item.type in ['Ring', 'Wand', 'Scroll']:
-                #     magic_item = SpellItem.query.filter_by(itemID=item.id).first()
-                #     if magic_item:
-                #         item_data.update(magic_item.to_dict())
+            #     if item.type == 'Weapon':
+            #         weapon = Weapon.query.filter_by(itemID=item.id).first()
+            #         if weapon:
+            #             item_data.update(weapon.to_dict())
+            #     elif item.type == 'Armor':
+            #         armor = Armor.query.filter_by(itemID=item.id).first()
+            #         if armor:
+            #             item_data.update(armor.to_dict())
+            #     elif item.type == 'MountVehicle':
+            #         mountVehicle = MountVehicle.query.filter_by(itemID=item.id).first()
+            #         if mountVehicle:
+            #             item_data.update(mountVehicle.to_dict())
+            #     # elif item.type in ['Ring', 'Wand', 'Scroll']:
+            #     #     magic_item = SpellItem.query.filter_by(itemID=item.id).first()
+            #     #     if magic_item:
+            #     #         item_data.update(magic_item.to_dict())
 
-                item_data_list.append(item_data)
+            #     item_data_list.append(item_data)
 
-            return jsonify({'items': item_data_list}), 200
+            # return jsonify({'items': item_data_list}), 200
+            return jsonify({'items': item_data}), 200
 
         except Exception as e:
             app.logger.error(f"Error getting items: {e}")
@@ -1721,6 +1727,111 @@ def inventory():
         socketio.emit('inventory_update', {'character_name': character.character_name, 'itemID': data['itemID'], 'quantity': data['quantity']}, to=character.user.sid)
 
         return jsonify({'message': 'Item added to inventory!'})
+
+
+@app.route('/api/inventory/<int:itemID>', methods=['GET'])
+@jwt_required()
+def get_inventoryItem(itemID):
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+
+    campaignID = request.headers.get('CampaignID')
+
+    if campaignID is None:
+        return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+    
+    # Get the DM's user ID
+    dm_id = Campaign.query.filter_by(id=campaignID).first().dm_id
+
+    if user.id != dm_id:
+        # Find the character associated with the user and the campaign
+        stmt = select(campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID, 
+            campaign_members.c.userID == user.id
+        )
+        result = db.session.execute(stmt).first()
+
+        if result is None:
+            return jsonify({'error': 'Character not found.'}), 404
+
+        characterID = result.characterID if result else None
+
+        inventory_item = InventoryItem.query.filter_by(characterID=characterID, itemID=itemID).first()
+        if not inventory_item:
+            return jsonify({'message': 'Item not found in inventory!'}), 404
+
+        item = Item.query.get(itemID)
+
+        if item is None:
+            return jsonify({'message': 'Item not found!'}), 404
+
+        item_details = {
+            'id': itemID,
+            'name': inventory_item.name,
+            'type': item.type,
+            'cost': item.cost,
+            'currency': item.currency,
+            'quantity': inventory_item.quantity,
+            'description': item.description,
+            'weight': item.weight,
+            'equipped': inventory_item.equipped if inventory_item.equipped is not None else False
+        }
+
+    else: ## If the user is the DM
+        item = Item.query.get(itemID)
+
+        if item is None:
+            return jsonify({'message': 'Item not found!'}), 404
+
+        item_details = {
+            'id': itemID,
+            'name': item.name,
+            'type': item.type,
+            'cost': item.cost,
+            'currency': item.currency,
+            'description': item.description,
+            'weight': item.weight,
+        }
+
+    # Get additional item details based on item type
+    if item.type == 'Weapon':
+        weapon = Weapon.query.get(item.id)
+        if weapon is not None:
+            item_details.update({
+                'damage': weapon.damage,
+                'damage_type': weapon.damage_type,
+                'weapon_range': weapon.weapon_range
+            })
+    elif item.type == 'Armor':
+        armor = Armor.query.get(item.id)
+        if armor is not None:
+            item_details.update({
+                'armor_class': armor.armor_class,
+                'armor_type': armor.armor_type,
+                'strength_needed': armor.strength_needed,
+                'stealth_disadvantage': armor.stealth_disadvantage
+            })
+    elif item.type == 'SpellItem':
+        spellItem = SpellItem.query.get(item.id)
+        if spellItem is not None:
+            item_details.update({
+                'charges': spellItem.charges,
+                'spell_id': spellItem.spell_id
+            })
+    elif item.type == 'MountVehicle':
+        mountVehicle = MountVehicle.query.get(item.id)
+        if mountVehicle is not None:
+            item_details.update({
+                'speed': mountVehicle.speed,
+                'speed_unit': mountVehicle.speed_unit,
+                'capacity': mountVehicle.capacity
+            })
+
+
+    return jsonify({'item': item_details})
 
 
 ## When a player wants to nickname or equip an item from their inventory
@@ -2908,55 +3019,57 @@ def get_chat_history():
 ##************************##
 
 def emit_active_users(campaign_id):
-    app.logger.debug("ONLINE USERS- Emitting Active Users")
-    app.logger.debug("ONLINE USERS- campaign_id: %s", campaign_id)
+    """
+    Emits the list of active users in the specified campaign room.
+    """
+    if not campaign_id:
+        app.logger.error("ONLINE USERS - Campaign ID is missing")
+        return
+    
+    app.logger.debug("ONLINE USERS - Fetching active users for campaign_id: %s", campaign_id)
     
     # Query to get all user/character pairs for the given campaign
-    stmt = select(
-        campaign_members.c.userID, 
-        campaign_members.c.characterID
-    ).where(
-        campaign_members.c.campaignID == campaign_id
+    stmt = (
+        db.session.query(
+            campaign_members.c.userID, 
+            campaign_members.c.characterID
+        )
+        .filter(campaign_members.c.campaignID == campaign_id)
+        .subquery()
     )
     
-    result = db.session.execute(stmt).fetchall()
-
-    app.logger.debug("ONLINE USERS- online users for campaign: %s", result)
-    
-    # Create a dictionary to store one character name by user
-    user_characters = {}
-    for row in result:
-        user_id = row.userID
-        character_id = row.characterID
-        character = Character.query.filter_by(id=character_id).first()
-        if character:
-            user_characters[user_id] = character.character_name
-    
     # Query users who are online and part of the campaign
-    active_users = db.session.query(User).filter(
-        User.is_online == True,
-        User.id.in_(user_characters.keys())
-    ).all()
-    
-    # Aggregate character names by user
-    active_user_info = []
-    for user in active_users:
-        character_name = user_characters.get(user.id)
-        active_user_info.append({
-            'username': user.username,
-            'character_name': character_name,
-            'userID': user.id
-        })
-    
-    app.logger.debug("ONLINE USERS- active_user_info: %s", active_user_info)
-    socketio.emit('active_users', active_user_info)
+    active_users_query = (
+        db.session.query(User.id, User.username, Character.character_name)
+        .join(stmt, stmt.c.userID == User.id)
+        .join(Character, Character.id == stmt.c.characterID)
+        .filter(User.is_online == True)
+    )
+    active_users = active_users_query.all()
 
+    app.logger.debug("ONLINE USERS - Active users for campaign_id %s: %s", campaign_id, active_users)
+
+    # Prepare the data to emit
+    active_user_info = [
+        {
+            'username': user.username,
+            'character_name': user.character_name,
+            'userID': user.id
+        }
+        for user in active_users
+    ]
+    
+    # Emit the active users to the specific campaign room
+    socketio.emit('active_users', active_user_info, to=campaign_id)
 
 @socketio.on("request_active_users")
 def handle_request_active_users(data):
     campaign_id = data.get('campaignID')
-    app.logger.debug("Request Active Users: %s", campaign_id)
-    emit_active_users(campaign_id)
+    app.logger.debug("Request Active Users - campaign_id: %s", campaign_id)
+    if campaign_id:
+        emit_active_users(campaign_id)
+    else:
+        app.logger.error("Request Active Users - Missing campaign ID")
 
 @socketio.on("connect")
 def connected():
@@ -3003,15 +3116,29 @@ def connected():
         app.logger.error(f"CONNECT- An error occurred: {e}")
         socketio.disconnect()
 
+@socketio.on('join_room')
+def handle_join_room(data):
+    campaign_id = data.get('campaign_id')  # From the client
+    user_id = request.sid  # Unique session ID for each connection
+    if campaign_id:
+        join_room(campaign_id)  # Add the user to the room
+        socketio.emit('status', {'message': f'User {user_id} joined room {campaign_id}'}, to=campaign_id)
+
+@socketio.on('leave_room')
+def handle_leave_room(data):
+    campaign_id = data.get('campaign_id')  # From the client
+    user_id = request.sid
+    if campaign_id:
+        leave_room(campaign_id)  # Remove the user from the room
+        socketio.emit('status', {'message': f'User {user_id} left room {campaign_id}'}, to=campaign_id)
+
 @socketio.on('user_connected')
 def handle_user_connected(data):
-    # app.logger.debug("HANDLE CONNETION- user_connected- data: %s", data)
-    app.logger.debug('HANDLE CONNETION- User connected: %s', data['username'])
-    # You can now associate the username with the current socket connection
+    app.logger.debug('HANDLE CONNECTION- User connected: %s', data['username'])
     user = User.query.filter_by(username=data['username']).first()
-    app.logger.debug("HANDLE CONNETION- user: %s", user)
+    app.logger.debug("HANDLE CONNECTION- user: %s", user)
     if user:
-        app.logger.debug("HANDLE CONNETION- user's initial status: %s", user.is_online)
+        app.logger.debug("HANDLE CONNECTION- user's initial status: %s", user.is_online)
         if data['username'] in active_connections:
             app.logger.info(f"Disconnecting duplicate connection for user: {data['username']}")
             socketio.disconnect()
@@ -3020,16 +3147,11 @@ def handle_user_connected(data):
             user.is_online = True
             user.sid = request.sid  # Set the sid field
             db.session.commit()
-            campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
-            emit_active_users(campaign_id)
-            app.logger.info("HANDLE CONNETION- %s is now online", user.username)
+            app.logger.info("HANDLE CONNECTION- %s is now online", user.username)
         else:
             user.sid = request.sid  # Set the sid field
             db.session.commit()
-            campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
-            emit_active_users(campaign_id)
-            app.logger.info("HANDLE CONNETION- %s is already online", user.username)
-            # print("HANDLE CONNETION-", user.username, "is already online")
+            app.logger.info("HANDLE CONNECTION- %s is already online", user.username)
 
 
 @socketio.on('send_campaignID')
@@ -3061,7 +3183,6 @@ def handle_send_message(messageObj):
     campaignID = messageObj['campaignID']
     # campaignID = request.headers.get('CampaignID')
     app.logger.debug("MESSAGE- campaignID: %s", campaignID)
-
     app.logger.debug("MESSAGE- recipients: %s", recipients)
 
     recipient_characters = []
