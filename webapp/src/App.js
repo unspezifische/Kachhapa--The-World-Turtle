@@ -66,15 +66,6 @@ function App() {
   const [socketLoading, setSocketLoading] = useState(true);
 
   const [inCombat, setInCombat] = useState(false);
-  
-
-  // Emit user_connected after user is authenticated and socket is established
-  useEffect(() => {
-    if (isLoggedIn && socketRef.current) {
-        socketRef.current.emit('user_connected', { username });
-        console.log("Emitting user_connected");
-    }
-  }, [isLoggedIn, socketRef.current, username]);
 
 
   // Web Socket setup and maintance
@@ -111,7 +102,7 @@ function App() {
     newSocket.on('request_campaignID', () => {
       console.log('Server is requesting campaign ID');
       if (selectedCampaign.id) {
-        newSocket.emit('send_campaignID', { campaign_id: selectedCampaign.id });
+        newSocket.emit('send_campaignID', { campaignID: selectedCampaign.id });
       } else {
         // Handle the case where campaignID is not available
         console.error('Campaign ID is not available');
@@ -123,6 +114,12 @@ function App() {
       if (reason === 'io server disconnect') {
         newSocket.connect();
       }
+      else {
+        newSocket.emit('user_disconnected', {
+          campaign_id: selectedCampaign.id,
+          user_id: userID
+        });
+      }
     });
 
     return () => {
@@ -132,6 +129,14 @@ function App() {
     };
   }, [token, selectedCampaign.id]);
 
+  // Emit join_room event when selectedCampaign changes (which should only occur after the user has already logged in)
+  useEffect(() => {
+    if (socketRef.current && selectedCampaign.id && username) {
+      console.log(`Joining room for campaign ID: ${selectedCampaign.id}`);
+      // socketRef.current.join(selectedCampaign.id);
+      socketRef.current.emit('join_room', { username, campaign_id: selectedCampaign.id });
+    }
+  }, [socketRef.current, selectedCampaign.id, username]);
 
   // Web Socket event listeners for Initative Tracking
   useEffect(() => {
@@ -249,7 +254,7 @@ function App() {
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
-                    <Route path="/accountProfile" element={<AccountProfile headers={headers} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID} socket={socketRef.current}/>} />
+                  <Route path="/accountProfile" element={<AccountProfile headers={headers} selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID} socket={socketRef.current} />} />
 
                   {/* Catch-all route for wiki pages */}
                   <Route path="/:campaign_name/:page_title" render={({ match }) => {

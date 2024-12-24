@@ -6,7 +6,7 @@ import campaignIcon from './campaign.webp';
 
 import CreateCharacterModal from './CreateCharacterModal';
 
-const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType, setCharacterID, socket }) => {
+const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType, setCharacterID }) => {
   const navigate = useNavigate();
 
   const [campaigns, setCampaigns] = useState([]);
@@ -46,7 +46,6 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
     fetchData();
   }, [headers]);
 
-
   // Modified to accept a character object instead of a list
   const handleSelectCharacter = (character) => {
     if (character) {
@@ -54,7 +53,6 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
       setAccountType('Player');
       setCharacterName(character.name); // Set the character name
       setSelectedCampaign(character.campaign);
-      // socket.emit('join', { room: character.campaignID });
       setCharacterID(character.id); // Set the character ID
       // setShowModalSelectCharacter(true);
       navigate('/characterSheet');
@@ -73,7 +71,6 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
       dmId: campaign.dm_id,
       ownerId: campaign.owner_id
     });
-    // socket.emit('join', { room: campaign.id });
     if (campaign.dm_id === headers.userID) {
       axios.get('/api/characters', { headers })
         .then(response => {
