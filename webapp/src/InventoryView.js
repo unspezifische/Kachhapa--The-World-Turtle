@@ -749,7 +749,7 @@ export default function InventoryView({ username, characterName, accountType, he
     });
 
     setShowViewItemDetails(true);
-    console.log('players:', players);
+    fetchPlayers();
   };
 
   /*** Let Players Trade or Drop Items **/

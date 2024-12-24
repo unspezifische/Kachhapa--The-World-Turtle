@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Stack, Container, Row, Col, Form, Button, ToggleButton, ToggleButtonGroup } from 'react-bootstrap';
 import axios from 'axios';  // Makes API calls
 import "./Chat.css"
 
 import SendIcon from '@mui/icons-material/Send';
 import ChatIcon from '@mui/icons-material/Chat';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 function Chat({ headers, socket, characterName, username, campaignID }) {
   const [message, setMessage] = useState('');
@@ -16,7 +17,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   const [error, setError] = useState('');
 
   // Add a ref to your message container
-  const messageContainerRef = React.useRef(null);
+  const messageContainerRef = useRef(null);
 
   let lastGroupId = null;
 
@@ -24,18 +25,13 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     const fetchChatHistory = async () => {
       // Check if characterName has been initialized
       if (characterName) {
-        // console.log("CHAT- Getting message history for " + characterName);
         axios.get('/api/chat_history', { headers: headers })
         .then(response => {
           const data = response.data;
-          // console.log("CHAT HISTORY- response:", data)
-  
-          // Ensure each message has an item property, even if it's null
           const formattedMessages = data.map(message => ({
             ...message,
             item: message.item || null
           }));
-  
           setMessages(formattedMessages);
         })
         .catch(error => {
@@ -48,19 +44,10 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     fetchChatHistory();
   }, [characterName]);
 
-
-  useEffect(() => {
-    // console.log("CHAT- users:", users);
-    // console.log("CHAT- campaignID", campaignID)
-  }, [users, campaignID]);
-
   useEffect(() => {
     const handleMessage = (message) => {
-      console.log("Receivied message:", message);
-      console.log("Checking message from: " + message.sender_character_name);
-      console.log("Checking message to: " + message.recipient_character_names);
+      console.log("Received message:", message);
       if (message.sender === headers.userID || message.recipients.includes(headers.userID)) {
-        console.log("It's a match")
         setUnreadMessages(prevUnreadMessages => prevUnreadMessages + 1);
         setMessages(prevMessages => [...prevMessages, message]);
       } else if (message.type === 'item_transfer' && message.recipients.includes(headers.userID)) {
@@ -71,7 +58,6 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   
     const handleActiveUsers = (active_users) => {
       console.log("CHAT- active_users", active_users);
-      // console.log("CHAT- your characterName:", characterName);
       const otherUsers = active_users.filter(user => user.username !== username);
       setUsers(otherUsers);
     }
@@ -80,13 +66,18 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     socket.on('active_users', handleActiveUsers);
   
     // Emit an event to request the current list of active users
-    socket.emit('request_active_users', { campaignID: campaignID });
+    socket.emit('request_active_users', { campaignID });
   
     return () => {
       socket.off('message', handleMessage);
       socket.off('active_users', handleActiveUsers);
     }
   }, [socket, characterName]);
+
+  const getUsers = () => {
+    console.log("Requesting active users...");
+    socket.emit('request_active_users', { campaignID });
+  }
 
   const sendMessage = (event, item = null) => {
     event.preventDefault();
@@ -122,24 +113,11 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   const replyAll = (message) => {
     console.log("Replying to message:", message);
     
-    // Extract userID values from recipients
     const allUserIDs = message.recipients;
-    console.log("SELECTED MESSAGE- All user IDs:", allUserIDs);
-
-    // Get userID from headers
-    console.log("SELECTED MESSAGE- Your userID:", headers.userID);
-    
-    // Filter out the current user's userID from recipients
     const filteredUserIDs = allUserIDs.filter(userID => userID !== headers.userID);
-    console.log("SELECTED MESSAGE- Filtered user IDs:", filteredUserIDs);
-    
-    // Check if the sender's userID does not match the current user's userID
     if (message.sender !== headers.userID) {
         filteredUserIDs.push(message.sender);
     }
-    console.log("SELECTED MESSAGE- Final user IDs:", filteredUserIDs);
-    
-    // Update the selectedUsers state with filtered user IDs
     setSelectedUsers(filteredUserIDs);
   };
 
@@ -186,7 +164,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     </div>
   );
 
-  // Scrolls to the bottom when a new message is recieved.
+  // Scrolls to the bottom when a new message is received.
   useEffect(() => {
     if (messageContainerRef.current) {
       const scrollElement = messageContainerRef.current;
@@ -248,6 +226,9 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
                   ))
                 )}
               </ToggleButtonGroup>
+            <Button variant='outline-primary' onClick={() => getUsers()}>
+              <RefreshIcon />
+            </Button>
             </Col>
           </Row>
           {/* Text Field for composing messages */}
