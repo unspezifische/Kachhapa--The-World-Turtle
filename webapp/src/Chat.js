@@ -121,48 +121,72 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     setSelectedUsers(filteredUserIDs);
   };
 
-  const renderMessage = (message, i, isSameGroup) => (
-    <div
-      key={i}
-      className={`${(message.sender_character_name ? message.sender_character_name : message.sender) === characterName ? "message sent" : "message received"} ${(message.sender_character_name ? message.sender_character_name : message.sender) === characterName ? "grouped" : ""} ${isSameGroup ? "" : "new-group"}`}
-      onClick={() => replyAll(message)}
-      ref={i === messages.length - 1 ? messageContainerRef : null}
-    >
-      <div className="message-text">
-        {message.sender === headers.userID ? (
-          <>
-            {message.type !== 'item_transfer' && (
-              <p className="sender">
-                To: {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
-              </p>
-            )}
-            {message.type === 'item_transfer' 
-              ? `${message.sender_character_name ? message.sender_character_name : message.sender} gave you ${message.item.quantity} ${message.item.name}` 
-              : message.text}
-            {message.type !== 'item_transfer' && (
-              <p className="sender">
+  const renderMessage = (message, i, isSameGroup) => {
+    const sender = message.sender_character_name ? message.sender_character_name : message.sender;
+    const isCurrentUser = message.sender === headers.userID;
+  
+    const className = `${isCurrentUser ? "message sent" : "message received"} ${isCurrentUser ? "grouped" : ""} ${isSameGroup ? "" : "new-group"}`;
+  
+    console.log("Message Type-", message.type);
+    return (
+      <div
+        key={i}
+        className={className}
+        onClick={() => replyAll(message)}
+        ref={i === messages.length - 1 ? messageContainerRef : null}
+      >
+        <div className="message-text">
+          {message.type === 'item_transfer' ? (
+            isCurrentUser ? (
+              <>
+                <p className="sender">
+                  From: System
+                </p>
+                You gave {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')} {message.text}
+                <p className="sender">
                 {message.sender_character_name ? message.sender_character_name : message.sender}
-              </p>
-            )}
-          </>
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="sender">
+                  From: System
+                </p>
+                {message.sender_character_name ? message.sender_character_name : message.sender} gave you {message.text}
+                <p className="sender">
+                  {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
+                </p>
+              </>
+            )
           ) : (
-          <>
-            <p className="sender">
-              From: {message.sender_character_name ? message.sender_character_name : message.sender}
-            </p>
-            {message.type === 'item_transfer' 
-              ? `${message.sender_character_name ? message.sender_character_name : message.sender} gave you ${message.item.quantity} ${message.item.name}` 
-              : message.text}
-            {message.type !== 'item_transfer' && (
-              <p className="sender">
-                {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
-              </p>
-            )}
-          </>
-        )}
+            <>
+              {message.sender === headers.userID ? (
+                <>
+                  <p className="sender">
+                    To: {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
+                  </p>
+                  {message.text}
+                  <p className="sender">
+                    {message.sender_character_name ? message.sender_character_name : message.sender}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="sender">
+                    From: {message.sender_character_name ? message.sender_character_name : message.sender}
+                  </p>
+                  {message.text}
+                  <p className="sender">
+                    {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
+                  </p>
+                </>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // Scrolls to the bottom when a new message is received.
   useEffect(() => {

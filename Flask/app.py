@@ -3324,8 +3324,6 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
     
     item = messageObj['item']
     quantity = item['quantity']
-    # recipient_character_name = recipient_character.character_name
-    # sender_character_name = sender_character.character_name
 
     # Update recipient's inventory here
     if recipient_user is None:
@@ -3346,10 +3344,6 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
         recipient_inventory_item.quantity += int(quantity)
         app.logger.debug("ITEM TRANSFER- new quantity: %s", recipient_inventory_item.quantity)
     else: 
-        # app.logger.debug("ITEM TRANSFER- Creating new inventory item")
-        # app.logger.debug("ITEM TRANSFER- recipient_character.id: %s", recipient_character.id)
-        # app.logger.debug("ITEM TRANSFER- db_item.id: %s", db_item.id)
-        # app.logger.debug("ITEM TRANSFER- quantity: %s", quantity)
         new_inventory_item = InventoryItem(characterID=recipient_character.id, itemID=db_item.id, name=db_item.name, quantity=int(quantity), item=db_item)
         db.session.add(new_inventory_item)
         app.logger.debug("new_inventory_item: %s", new_inventory_item.to_dict())
@@ -3423,6 +3417,19 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
         'recipients': [sender_user.id],
     }
     socketio.emit('message', confirmation_message, to=sender_user.sid)
+
+    # Save the transaction message to the database
+    new_reception_message = Message(
+        sender_id=sender_user.id,
+        campaign_id=campaignID,
+        recipient_ids=str(recipient_user.id),
+        message_type='item_transfer',
+        message_text=f'{quantity} {db_item.name}',
+        group_id=f"0-{sender_user.id}-{recipient_user.id}",
+        item_id=None
+    )
+    db.session.add(new_reception_message)
+    db.session.commit()
 
 def handle_spell_transfer(messageObj, recipient_users, sender):
     # Assuming recipient_users contains only one recipient for a spell_transfer
