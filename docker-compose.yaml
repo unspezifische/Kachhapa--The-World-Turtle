@@ -15,8 +15,13 @@ services:
   rabbitmq:
     image: rabbitmq:latest
     ports:
-      - "5672:5672"  # RabbitMQ default port
-      - "15672:15672"  # RabbitMQ Management Plugin port
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
     networks:
       - Kachhapa-network
 
@@ -25,8 +30,10 @@ services:
       context: .
       dockerfile: Flask/Dockerfile
     depends_on:
-      - postgres
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_started
     volumes:
       - myapp_socket:/tmp
     ports:

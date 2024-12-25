@@ -89,7 +89,7 @@ app.logger.debug("Debugging set to True")
 
 socketio = SocketIO(
     app,
-    message_queue='amqp://guest:guest@localhost:5672//',
+    message_queue='amqp://guest:guest@rabbitmq:5672//',
     cors_allowed_origins="*",
     logger=True,
     engineio_logger=True,
@@ -701,15 +701,33 @@ def get_table_columns(model):
 
 def map_fields(data, model):
     """Map incoming data fields to model columns using fuzzy matching."""
+    app.logger.debug(f"Mapping fields for {model.__name__}")
+
     valid_fields = get_table_columns(model)
     mapped_data = {}
+    matched_fields = set()
+
     for key, value in data.items():
-        # Use fuzzy matching to map the field
-        best_match = process.extractOne(key, valid_fields, score_cutoff=80)
+        best_match = None
+        for score_cutoff in range(100, 75, -5):
+            match = process.extractOne(key, valid_fields, score_cutoff=score_cutoff)
+            if match and match[0] not in matched_fields:
+                best_match = match
+                app.logger.debug(f"Score cutoff: {score_cutoff}, Mapping {key} to {best_match[0]}")
+                break
+
         if best_match:
             mapped_data[best_match[0]] = value
+            matched_fields.add(best_match[0])
         else:
-            mapped_data[key] = value  # Keep it if no match found, you might want to log this case
+            mapped_data[key] = value  # Keep original if no match found
+            app.logger.debug(f"No match found for {key}")
+
+        # Stop if all valid fields have been matched
+        if len(matched_fields) == len(valid_fields):
+            break
+
+    # app.logger.debug("Mapped data: %s", mapped_data)
     return mapped_data
 
 
@@ -823,7 +841,7 @@ def login():
         return jsonify({'message': 'Username and password are required!'}), 400
     user = User.query.filter_by(username=data['username'].lower()).first()
     if not user:
-        return jsonify({'message': 'invalid username'}), 401
+        return jsonify({'message': 'Invalid Username'}), 401
     elif not check_password_hash(user.password, data['password']):
         return jsonify({'message': 'Incorrect Password'}), 401
     print("Creating Access Token for", user.username)
@@ -1483,6 +1501,7 @@ def save_items():
         for item in items:
             # Map fields for the Item model using fuzzy matching
             item = map_fields(item, Item)
+            app.logger.debug("SAVE CSV- Mapped item: %s", item)
 
             if not all(k in item for k in ('name', 'type', 'cost', 'currency')):  # Match mapped keys
                 return jsonify(error='Missing item fields'), 400
@@ -1492,16 +1511,27 @@ def save_items():
             if existing_item is None:
                 new_item = Item(name=item['name'], type=item['type'], cost=item['cost'], currency=item['currency'],
                                 weight=item.get('weight'), description=item.get('description'))
+                app.logger.debug("SAVE CSV- Adding new item: %s", new_item.to_dict())
                 db.session.add(new_item)
                 db.session.commit()
 
-                item_type = item['type']
+                item_name = item['name']
+                item_type = item['type']    # Save the item type for further processing cause it's about to get removed from the item dict
                 itemID = new_item.id
 
+                ## Remove the fields that are already saved in the Item model
+                item.pop('name', None)
+                item.pop('type', None)
+                item.pop('cost', None)
+                item.pop('currency', None)
+                item.pop('weight', None)
+                item.pop('description', None)
+
                 if item_type == 'Weapon':
-                    print(item, "is a Weapon")
+                    app.logger.debug("SAVE CSV- %s is Weapon", item_name)
                     # Map fields for the Weapon model
                     weapon_data = map_fields(item, Weapon)
+                    app.logger.debug("SAVE CSV- Weapon Data: %s", weapon_data)
                     weapon = Weapon(itemID=itemID, damage=weapon_data.get('damage'),
                                     damage_type=weapon_data.get('damage_type'),
                                     weapon_type=weapon_data.get('weapon_type'),
@@ -1509,9 +1539,10 @@ def save_items():
                     db.session.add(weapon)
 
                 elif item_type == 'Armor':
-                    print(item, "is Armor")
+                    app.logger.debug("SAVE CSV- %s is Armor", item_name)
                     # Map fields for the Armor model
                     armor_data = map_fields(item, Armor)
+                    app.logger.debug("SAVE CSV- Armor Data: %s", armor_data)
                     armor = Armor(itemID=itemID, armor_class=armor_data.get('armor_class'),
                                   armor_type=armor_data.get('armor_type'),
                                   stealth_disadvantage=armor_data.get('stealth'),
@@ -1519,7 +1550,7 @@ def save_items():
                     db.session.add(armor)
 
                 elif item_type in ['Ring', 'Wand', 'Scroll']:
-                    print(item, "is a Magic Item")
+                    app.logger.debug("SAVE CSV- %s is a Magic Item", item_name)
                     # Map fields for the SpellItem model
                     spell_data = map_fields(item, SpellItem)
                     magic_item = SpellItem(itemID=itemID, spell=spell_data.get('spell'),
@@ -1527,7 +1558,7 @@ def save_items():
                     db.session.add(magic_item)
 
                 elif item_type == 'Mounts and Vehicles':
-                    print(item, "is a Mount or Vehicle")
+                    app.logger.debug("SAVE CSV- %s is a Mount or Vehicle", item_name)
                     # Map fields for the MountVehicle model
                     mount_data = map_fields(item, MountVehicle)
                     mount_vehicle = MountVehicle(itemID=itemID, speed=mount_data.get('speed'),
@@ -1538,8 +1569,7 @@ def save_items():
 
                 db.session.commit()
             else:
-                print("SAVE CSV- Item", {item['name']}, "already exists in the database. Skipping...")
-                app.logger.info("SAVE CSV- Item %s already exists in the database. Skipping...", {item['name']})
+                app.logger.debug("SAVE CSV- Item %s already exists in the database. Skipping...", item['name'])
 
         socketio.emit('items_updated')
         return jsonify(message='Items saved'), 200

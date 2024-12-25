@@ -79,25 +79,6 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
     }
   }, []);
 
-  // useEffect(() => {
-  //   console.log("Checking for redirect URL- NAVIGATE");
-  //   console.log("Window Location:", window.location);
-  //   console.log("Current URL:", window.location.href);
-  //   const urlParams = new URLSearchParams(window.location.search);
-  //   console.log("URL Params:", urlParams);
-
-  //   const redirectUrl = urlParams.get('redirect');
-  //   console.log("Redirect URL:", redirectUrl);
-
-  //   if (redirectUrl) {
-  //     // Decode the redirect URL
-  //     const decodedRedirectUrl = decodeURIComponent(redirectUrl);
-  //     console.log("Decoded Redirect URL:", decodedRedirectUrl);
-
-  //     // Redirect to the intended URL
-  //     navigate(decodedRedirectUrl);
-  //   }
-  // }, []);
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -122,6 +103,7 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
       console.log("Navigating to accountProfile");
     })
       .catch(error => {
+        setError(error.response.data.message);
         console.log('Error logging in-', error);
     });
   };

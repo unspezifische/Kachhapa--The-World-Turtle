@@ -6,6 +6,11 @@
   height: 100vh;
 }
 
+.error-message {
+  color: red;
+  font-weight: bold;
+}
+
 .login-container form {
   display: flex;
   flex-direction: column;
