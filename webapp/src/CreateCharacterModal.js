@@ -127,6 +127,16 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     const [attributes, setAttributes] = useState('');  // This will be a list of the selected attributes [str, dex, con, int, wis, cha
     const [equipement, setEquipment] = useState('');
 
+    const [selectedEquipment, setSelectedEquipment] = useState({});
+
+    // Function to handle equipment selection
+    const handleEquipmentSelection = (optionIndex, choice) => {
+        setSelectedEquipment(prevState => ({
+            ...prevState,
+            [optionIndex]: choice,
+        }));
+    };
+
     const [races, setRaces] = useState([]);
     const [classes, setClasses] = useState([]);
     const [backgrounds, setBackgrounds] = useState([]);
@@ -179,8 +189,8 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     });
 
     const handleStandardArraySelection = (event) => {
-        console.log("Setting Ability Score " + event.target.name + " to " + event.target.value + " by Standard Array");
         const { name, value } = event.target;
+        console.log("Setting Ability Score " + name + " to " + value + " by Standard Array");
         const selectedValue = parseInt(value);
         const previousValue = character.abilityScores[name];
 
@@ -208,6 +218,10 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
         // Remove the selected value from the standard array
         setStandardArray(prevArray => prevArray.filter(item => item !== selectedValue));
     };
+
+    useEffect(() => {
+        console.log("selectedStandardValues-", selectedStandardValues);
+    }, [selectedStandardValues]);
 
     const [remainingPoints, setRemainingPoints] = useState(27);
     const pointCosts = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9 };
@@ -536,7 +550,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                                     </Form.Control>
                                 )}
                                 {method === 'standard' && (
-                                    <Form.Control as="select" name={ability} value={character.abilityScores[ability]} onChange={handleStandardArraySelection} >
+                                    <Form.Control as="select" name={ability} value={selectedStandardValues[ability]} onChange={handleStandardArraySelection}>
                                         <option>--Choose--</option>
                                         {standardArray.map((item) => (
                                             <option key={item} value={item}>{item}</option>
@@ -608,12 +622,29 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                     <div style={{ height: 'calc(100vh - 250px)' }}>
                         <h2>Character Equipment</h2>
                         {/* Pick Character Equipment */}
-                        {selectedBackground && selectedBackground.data && selectedBackground.data.Equipment && (
+                        {selectedClass && classes.find(cls => cls.name === selectedClass)?.starter_equipment?.options && (
                             <div>
-                                {Object.entries(selectedBackground.data.Equipment).map(([key, value]) => (
-                                    <p key={key}>
-                                        <strong>{key}:</strong> {value}
-                                    </p>
+                                {classes.find(cls => cls.name === selectedClass).starter_equipment.options.map((option, index) => (
+                                    <div key={index}>
+                                        <p><strong>{option.description}</strong></p>
+                                        {option.requires_selection ? (
+                                            <Form.Group controlId={`equipment-option-${index}`}>
+                                                <Form.Label>Choose one:</Form.Label>
+                                                <Form.Select
+                                                    aria-label={`Equipment option ${index}`}
+                                                    value={selectedEquipment[index] || ''}
+                                                    onChange={(e) => handleEquipmentSelection(index, e.target.value)}
+                                                >
+                                                    <option value="">--Choose--</option>
+                                                    {option.choices.map((choice, choiceIndex) => (
+                                                        <option key={choiceIndex} value={choice}>{choice}</option>
+                                                    ))}
+                                                </Form.Select>
+                                            </Form.Group>
+                                        ) : (
+                                            <p>{option.choices.join(', ')}</p>
+                                        )}
+                                    </div>
                                 ))}
                             </div>
                         )}

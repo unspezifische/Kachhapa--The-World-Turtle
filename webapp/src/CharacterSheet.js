@@ -34,38 +34,6 @@ const skillAbilities = {
   'Survival': 'wisdom'
 };
 
-// Default Layout for Character Sheet Tiles
-// const tiles = [
-//   { i: 'Name', x: 0, y: 0, w: 2, h: 4 },
-//   { i: 'Class', x: 2, y: 0, w: 1, h: 3 },
-//   { i: 'Race', x: 2, y: 3, w: 1, h: 3 },
-//   { i: 'Alignment', x: 3, y: 0, w: 1, h: 4 },
-//   { i: 'Ability Scores', x: 0, y: 3, w: 1, h: 20 },
-//   { i: 'Proficiency Bonus', x: 1, y: 3, w: 1, h: 3 },
-//   { i: 'Saving Throws', x: 1, y: 6, w: 1, h: 12 },
-//   { i: 'Skills', x: 3, y: 14, w: 2, h: 19 },
-//   { i: 'PersonalityTraits', x: 5, y: 30, w: 2, h: 4 },
-//   { i: 'Ideals', x: 0, y: 31, w: 2, h: 4 },
-//   { i: 'Bonds', x: 0, y: 35, w: 2, h: 4 },
-//   { i: 'Flaws', x: 3, y: 33, w: 2, h: 5 },
-//   { i: 'Feats', x: 5, y: 0, w: 2, h: 9 },
-//   { i: 'Attacks', x: 5, y: 9, w: 2, h: 7 },
-//   { i: 'Actions', x: 3, y: 28, w: 2, h: 5 },
-//   { i: 'Spells', x: 5, y: 23, w: 2, h: 7 },
-//   { i: 'Equipment', x: 5, y: 16, w: 2, h: 7 },
-//   { i: 'Proficiencies', x: 1, y: 19, w: 2, h: 12 },
-//   { i: 'Wealth', x: 2, y: 12, w: 1, h: 7 },
-//   { i: 'Initiative', x: 3, y: 6, w: 1, h: 3 },
-//   { i: 'Speed', x: 4, y: 3, w: 1, h: 3 },
-//   { i: 'Armor Class', x: 2, y: 6, w: 1, h: 3 },
-//   { i: 'Background', x: 3, y: 4, w: 1, h: 3 },
-//   { i: 'ExperiencePoints', x: 4, y: 0, w: 1, h: 4 },
-//   { i: 'PassivePerception', x: 3, y: 12, w: 2, h: 2 },
-//   { i: 'HitPointMax', x: 2, y: 9, w: 1, h: 3 },
-//   { i: 'CurrentHitPoints', x: 3, y: 9, w: 1, h: 3 },
-//   { i: 'TemporaryHitPoints', x: 4, y: 9, w: 1, h: 3 }
-// ];
-
 const tiles = [
   { "w": 2, "h": 4, "x": 0, "y": 0, "i": "Name" },
   { "w": 1, "h": 3, "x": 2, "y": 0, "i": "Class" },
@@ -75,7 +43,7 @@ const tiles = [
   { "w": 1, "h": 3, "x": 1, "y": 4, "i": "Proficiency Bonus" },
   { "w": 1, "h": 12, "x": 1, "y": 7, "i": "Saving Throws" },
   { "w": 2, "h": 19, "x": 3, "y": 14, "i": "Skills" },
-  { "w": 2, "h": 4, "x": 3, "y": 38, "i": "PersonalityTraits" },
+  { "w": 2, "h": 4, "x": 3, "y": 38, "i": "Personality Traits" },
   { "w": 2, "h": 4, "x": 1, "y": 31, "i": "Ideals" },
   { "w": 2, "h": 4, "x": 1, "y": 35, "i": "Bonds" },
   { "w": 2, "h": 5, "x": 3, "y": 33, "i": "Flaws" },
@@ -90,11 +58,11 @@ const tiles = [
   { "w": 1, "h": 3, "x": 4, "y": 4, "i": "Speed" },
   { "w": 1, "h": 3, "x": 2, "y": 6, "i": "Armor Class" },
   { "w": 1, "h": 4, "x": 3, "y": 4, "i": "Background" },
-  { "w": 1, "h": 4, "x": 4, "y": 0, "i": "ExperiencePoints" },
-  { "w": 1, "h": 4, "x": 4, "y": 10, "i": "PassivePerception" },
-  { "w": 1, "h": 3, "x": 2, "y": 9, "i": "HitPointMax" },
-  { "w": 1, "h": 3, "x": 3, "y": 11, "i": "CurrentHitPoints" },
-  { "w": 1, "h": 3, "x": 4, "y": 7, "i": "TemporaryHitPoints" }
+  { "w": 1, "h": 4, "x": 4, "y": 0, "i": "XP" },
+  { "w": 1, "h": 4, "x": 4, "y": 10, "i": "Passive Perception" },
+  { "w": 1, "h": 3, "x": 2, "y": 9, "i": "Max HP" },
+  { "w": 1, "h": 3, "x": 3, "y": 11, "i": "Current HP" },
+  { "w": 1, "h": 3, "x": 4, "y": 7, "i": "Temporary HP" }
 ]
 
 const defaultLayout = {
@@ -105,7 +73,7 @@ const defaultLayout = {
   xxs: tiles,
 };
 
-function CharacterSheet({ headers, characterName }) {
+function CharacterSheet({ headers, characterName, setCharacterName }) {
   const [loading, setLoading] = useState(true);
   const [editingTileId, setEditingTileId] = useState(null);
   const [isModalShown, setIsModalShown] = useState(false);
@@ -159,17 +127,16 @@ function CharacterSheet({ headers, characterName }) {
     return savedPresets ? JSON.parse(savedPresets) : [];
   };
 
-
   // Declare a new state variable to store the character data
   const [character, setCharacter] = useState({
-    Name: characterName,
+    Name: characterName || '',
     Class: null,
     Level: 1,
+    ExperiencePoints: 0,
     Background: null,
     Race: null,
     Alignment: null,
-    ExperiencePoints: 0,
-
+    
     abilityScores: {
       Strength: 0,
       Dexterity: 0,
@@ -211,7 +178,7 @@ function CharacterSheet({ headers, characterName }) {
     Proficiencies: [''],   // Determined by class and race
 
     ArmorClass: 10, // 10 + Dex Mod, if unarmored. Otherwise use equipment list
-    Initiative: 1, // Determined by class
+    Initiative: 1, // Determined by Dex
     Speed: 30, // Determined by Race
     HitPointMax: 0,  // Determined by Con mod & class
     CurrentHitPoints: 0,
@@ -240,30 +207,82 @@ function CharacterSheet({ headers, characterName }) {
   const [addAmount, setAddAmount] = useState(0);
   const [spendAmount, setSpendAmount] = useState(0);
 
+  // Log when addAmount or spendAmount changes
+  useEffect(() => {
+    console.log("Add Amount:", addAmount);
+  }, [addAmount]);
+  useEffect(() => {
+    console.log("Spend Amount:", spendAmount);
+  }, [spendAmount]);
+
+  // Functions to handle character wealth management
   const handleAddAmount = (currency, value) => {
     setAddAmount({ ...addAmount, [currency]: value });
   };
-
   const handleSpendAmount = (currency, value) => {
     setSpendAmount({ ...spendAmount, [currency]: value });
   };
 
   const handleWealthUpdate = (e) => {
     e.preventDefault();
-    // Logic to update character's wealth based on addAmount and spendAmount
+  
+    const conversionRates = {
+      pp: 1000,
+      gp: 100,
+      ep: 50,
+      sp: 10,
+      cp: 1
+    };
+  
     const newWealth = { ...character.Wealth };
-    for (const currency in newWealth) {
-      newWealth[currency] += (parseInt(addAmount[currency]) || 0) - (parseInt(spendAmount[currency]) || 0);
+    console.log("Current Character Wealth:", newWealth);
+  
+    // Calculate total spend amount in copper
+    let totalSpendInCopper = 0;
+    for (const currency in spendAmount) {
+      totalSpendInCopper += (parseInt(spendAmount[currency]) || 0) * conversionRates[currency];
     }
-    setCharacter(prevState => ({
-      ...prevState,
-      Wealth: newWealth,
-    }));
-    // Clear addAmount and spendAmount
-    setAddAmount(0);
-    setSpendAmount(0);
-    setIsModalShown(false)  // Close the modal once done.
-    saveCharacter();  // Save character, since the user can't click the button anymore
+  
+    // Calculate total wealth in copper
+    let totalWealthInCopper = 0;
+    for (const currency in newWealth) {
+      totalWealthInCopper += newWealth[currency] * conversionRates[currency];
+    }
+  
+    // Check if there is enough total wealth to cover the spend amount
+    if (totalWealthInCopper >= totalSpendInCopper) {
+      // Deduct the spend amount from total wealth in copper
+      totalWealthInCopper -= totalSpendInCopper;
+  
+      // Convert total wealth in copper back to individual currencies
+      for (const currency of Object.keys(conversionRates).sort((a, b) => conversionRates[b] - conversionRates[a])) {
+        if (newWealth[currency] !== undefined) {
+          newWealth[currency] = Math.floor(totalWealthInCopper / conversionRates[currency]);
+          totalWealthInCopper %= conversionRates[currency];
+        }
+      }
+  
+      // Add the addAmount to the new wealth directly
+      for (const currency in addAmount) {
+        if (newWealth[currency] !== undefined) {
+          newWealth[currency] += (parseInt(addAmount[currency]) || 0);
+        }
+      }
+  
+      setCharacter(prevState => ({
+        ...prevState,
+        Wealth: newWealth,
+      }));
+  
+      // Clear addAmount and spendAmount
+      setAddAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
+      setSpendAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
+      setIsModalShown(false);  // Close the modal once done.
+      saveCharacter();  // Save character, since the user can't click the button anymore
+    } else {
+      // Handle the case where there is not enough total wealth to cover the spend amount
+      alert("Not enough total wealth to cover the spend amount.");
+    }
   };
 
   // Get Equipped items from Inventory & prepared spells from Spellbook
@@ -367,10 +386,10 @@ function CharacterSheet({ headers, characterName }) {
 
 
   function handleEdit(event, tileId) {
-    // console.log('handleEdit called');
-    // console.log('event:', event);
-    // console.log('tileId:', tileId);
+    console.log('handleEdit called');
+    console.log('event:', event);
     event.stopPropagation();
+    console.log('event- post propogation:', event);
     console.log('Editing tile:', tileId);
     setEditingTileId(tileId);
     setIsModalShown(true);
@@ -383,9 +402,56 @@ function CharacterSheet({ headers, characterName }) {
   };
 
   const saveCharacter = () => {
-    axios.put(`/api/character`, character, { headers: headers })
+    // Sanitize UI-facing fields that map to different backend names
+    const payload = { ...character };
+    if (payload.XP !== undefined) {
+      payload.ExperiencePoints = parseInt(payload.XP, 10) || 0;
+      delete payload.XP;
+    }
+    if (payload['Current HP'] !== undefined) {
+      payload.CurrentHitPoints = parseInt(payload['Current HP'], 10) || 0;
+      delete payload['Current HP'];
+    }
+    if (payload['Temporary HP'] !== undefined) {
+      payload.TemporaryHitPoints = parseInt(payload['Temporary HP'], 10) || 0;
+      delete payload['Temporary HP'];
+    }
+
+    axios.put(`/api/character`, payload, { headers: headers })
     .then(response => {
       console.log('Character saved successfully', response.status);
+      // Update local state with canonical server response to avoid stale/misnamed keys
+      const {
+        strength,
+        dexterity,
+        constitution,
+        intelligence,
+        wisdom,
+        charisma,
+        cp,
+        sp,
+        ep,
+        gp,
+        pp,
+        Proficiencies,
+        ...rest
+      } = response.data;
+
+      setCharacter(prev => {
+        const cleaned = { ...prev };
+        // Remove UI-only keys if present
+        delete cleaned.XP;
+        delete cleaned['Current HP'];
+        delete cleaned['Temporary HP'];
+
+        return {
+          ...cleaned,
+          ...rest,
+          abilityScores: { strength, dexterity, constitution, intelligence, wisdom, charisma },
+          Wealth: { cp, sp, ep, gp, pp },
+          Proficiencies
+        };
+      });
     })
     .catch(error => {
       // error case
@@ -399,6 +465,7 @@ function CharacterSheet({ headers, characterName }) {
   }
 
   function calculateLevelAndMilestone(xp) {
+    // XP thresholds for each level- eventually these can be retrieved from Postgres for whatever System is in use
     const levels = [
       { level: 1, xp: 0 },
       { level: 2, xp: 300 },
@@ -441,6 +508,25 @@ function CharacterSheet({ headers, characterName }) {
     return Math.ceil(level / 4) + 1;
   }
 
+  // Return a sensible default base walking speed (in feet) for a given race.
+  // TODO: Prefer retrieving this from the race API when available.
+  function getBaseSpeed(race) {
+    if (!race) return 30; // default
+    const r = String(race).toLowerCase();
+
+    // Races with 25 ft base speed
+    if (r.includes('dwarf') || r.includes('gnome') || r.includes('halfl') || r.includes('halfing')) {
+      return 25;
+    }
+
+    // Special cases (common base speeds)
+    if (r.includes('centaur')) return 40;
+    if (r.includes('aarakocra') || r.includes('arakocra')) return 25;
+
+    // Default base speed for most races
+    return 30;
+  }
+
   function calculateSkillPoints(skill, abilityScores, proficiencyBonus, isProficient) {
     const ability = skillAbilities[skill];
 
@@ -459,7 +545,9 @@ function CharacterSheet({ headers, characterName }) {
     for (const ability in abilityScores) {
       const abilityScore = abilityScores[ability];
       const abilityModifier = Math.floor((abilityScore - 10) / 2);
-      const isProficient = proficiencies.includes(ability);
+      // Compare proficiencies case-insensitively (proficiencies may be stored in various casings)
+      const normalizedProfs = (proficiencies || []).map(p => String(p).toLowerCase());
+      const isProficient = normalizedProfs.includes(String(ability).toLowerCase());
       savingThrows[ability.toLowerCase()] = abilityModifier + (isProficient ? proficiencyBonus : 0);
     }
     return savingThrows;
@@ -478,19 +566,20 @@ function CharacterSheet({ headers, characterName }) {
   
   // Updated formatFeatures function
   function formatFeatures(features, classData) {
-    console.log('formatFeatures- Features:', features);
-    console.log('formatFeatures- Class Data:', classData);
+    console.log('formatFeatures- Features (from character sheet):', features);
+    // console.log('formatFeatures- Class Data:', classData);
+    console.log('formatFeatures- Class Features:', classData.class_features);
     
     return features.map(feature => {
       const normalizedFeature = normalizeFeatureName(feature);
       const trait = classData.class_features[normalizedFeature];
-      console.log('Trait:', trait);
+      console.log("formatFeatures- trait:", trait);
       
       return {
         name: feature,
-        description: typeof trait === 'string'
-          ? trait
-          : trait.description
+        description: trait
+          ? (typeof trait === 'string' ? trait : trait.description || '')
+          : ''
       };
     });
   }
@@ -552,9 +641,10 @@ function CharacterSheet({ headers, characterName }) {
   // Calculate Skill Levels
   useEffect(() => {
     const proficiencyBonus = calculateProficiencyBonus(character.Level);
+    const profsLower = (character.Proficiencies || []).map(p => String(p).toLowerCase());
     const Skills = Object.fromEntries(
       Object.entries(character.Skills).map(([skill, _]) => {
-        const isProficient = character.Proficiencies.includes(skill);
+        const isProficient = profsLower.includes(String(skill).toLowerCase());
         const skillPoints = calculateSkillPoints(skill, character.abilityScores, proficiencyBonus, isProficient);
         return [skill, skillPoints];
       })
@@ -763,7 +853,7 @@ function CharacterSheet({ headers, characterName }) {
             </h4>
           </>
         );
-      case 'ExperiencePoints':
+      case 'XP':
         return (
           <>
             <h3 className="center-title">XP</h3>
@@ -921,7 +1011,7 @@ function CharacterSheet({ headers, characterName }) {
             </h3>
           </div>
         );
-      case 'HitPointMax':
+      case 'Max HP':
         return (
           <>
             <div className="label">Max HP</div>
@@ -936,7 +1026,7 @@ function CharacterSheet({ headers, characterName }) {
             </h3>
           </>
         );
-      case 'CurrentHitPoints':
+      case 'Current HP':
         return (
           <>
             <span className="label">Current HP</span>
@@ -953,7 +1043,7 @@ function CharacterSheet({ headers, characterName }) {
             </div>
           </>
         );
-      case 'TemporaryHitPoints':
+      case 'Temporary HP':
         return (
           <>
             <div className="label">Temporary HP</div>
@@ -1017,14 +1107,14 @@ function CharacterSheet({ headers, characterName }) {
             <h2>Attacks:</h2>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
               {Array.isArray(character?.Attacks) && character.Attacks.length > 0 ? (
-                character.Attacks.map((attack) => (
-                  <div key={attack.name}>
-                    <h4>{attack.name}</h4>
-                    <div>Bonus to Hit: {attack.bonusToHit}</div>
-                    <div>Damage: {attack.damage} ({attack.damageType})</div>
-                    <div>Range: {attack.range}</div>
+                character.Attacks.map((attack, index) => (
+                  <div key={`${attack.name || 'attack'}-${index}`}>
+                    <h4>{attack.name || 'Unnamed Attack'}</h4>
+                    <div>Bonus to Hit: {attack.bonusToHit ?? 0}</div>
+                    <div>Damage: {attack.damage ?? '—'} ({attack.damageType || attack.damage_type || '—'})</div>
+                    <div>Range: {attack.range || attack.weapon_range || '—'}</div>
                     {/* <div>Special Properties: </div> */}
-                    <p/>
+                    <p />
                   </div>
                 ))
               ) : (
@@ -1096,7 +1186,7 @@ function CharacterSheet({ headers, characterName }) {
             </div>
           </>
         );
-      case 'PassivePerception':
+      case 'Passive Perception':
         return (
           <>
             <div className="label">Passive Perception</div>
@@ -1131,7 +1221,7 @@ function CharacterSheet({ headers, characterName }) {
             </div>
           </>
         );
-      case 'PersonalityTraits':
+      case 'Personality Traits':
         return (
           <>
             <h4 className='center-title'>Personality Traits:</h4>
@@ -1208,11 +1298,11 @@ function CharacterSheet({ headers, characterName }) {
           onLayoutChange={handleLayoutChange}
         >
           {character && tiles.map(tile => (
-            <div key={tile.i} className="tile">
-              <Paper elevation={3} style={{ height: '100%', padding: '10px', position: 'relative' }}>
-                <div className="edit-icon" style={{ position: 'absolute', top: '10px', right: '10px' }}>
-                  <EditIcon onClick={(event) => handleEdit(event, tile.i)} />
-                </div>
+            <div key={tile.i} className="tile" > {/* Apparently this being className "tile is important for the edit button to work */}
+              <div className="edit-icon" onClick={(event) => { event.stopPropagation(); handleEdit(event, tile.i); }}>
+                <EditIcon />
+              </div>
+              <Paper elevation={3} style={{ height: '100%', padding: '10px', position: 'relative', position: 'relative'}}>
                 {loading ? (
                   <Placeholder as="div" animation="glow">
                     <Placeholder xs={12} />
@@ -1240,7 +1330,7 @@ function CharacterSheet({ headers, characterName }) {
               // Determine what type of input to display based on the tileId
               switch (editingTileId) {
                 case 'Background':
-                case 'PersonalityTraits':
+                case 'Personality Traits':
                 case 'Bonds':
                 case 'Ideals':
                 case 'Flaws':
@@ -1259,23 +1349,34 @@ function CharacterSheet({ headers, characterName }) {
                       />
                     </Form.Group>
                   );
-                case 'ExperiencePoints':
-                case 'CurrentHitPoints':
-                case 'TemporaryHitPoints':
-                  return(
+                case 'XP':
+                case 'Current HP':
+                case 'Temporary HP': {
+                  // Map UI-facing tile ids to canonical character keys
+                  const map = {
+                    'XP': 'ExperiencePoints',
+                    'Current HP': 'CurrentHitPoints',
+                    'Temporary HP': 'TemporaryHitPoints'
+                  };
+                  const fieldKey = map[editingTileId];
+
+                  return (
                     <Row>
                       <label>{editingTileId}</label>
                       <input
-                      type="number"
-                      value={character[editingTileId]}
-                      onChange={e => {
-                        setCharacter({
-                          ...character,
-                          [editingTileId]: e.target.value,
-                        });
-                      }}/>
+                        type="number"
+                        value={character[fieldKey] ?? ''}
+                        onChange={e => {
+                          // Store as number when possible
+                          const val = e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0;
+                          setCharacter({
+                            ...character,
+                            [fieldKey]: val,
+                          });
+                        }} />
                     </Row>
-                  )
+                  );
+                }
                 case 'Class':
                   return(
                     <Form.Control as="select" value={character.Class} onChange={e => {
@@ -1289,7 +1390,7 @@ function CharacterSheet({ headers, characterName }) {
                         <option key={playerClass} value={playerClass}>{playerClass}</option>
                       )) || <p>No classes defined</p>}
                     </Form.Control>
-                  )
+                  );
                 case 'Race':
                   return(
                     <Form.Control as="select" value={character.Race} onChange={e => {
@@ -1303,7 +1404,7 @@ function CharacterSheet({ headers, characterName }) {
                         <option key={race} value={race}>{race}</option>
                       )) || <p>No races defined</p>}
                     </Form.Control>
-                  )
+                  );
                 case 'Alignment':
                   return(
                     <Form.Control as="select" value={character.Alignment} onChange={e => {
@@ -1341,49 +1442,55 @@ function CharacterSheet({ headers, characterName }) {
                     </Row>
                   ));
                 case 'Skills':
-                  return Object.entries(character.Skills).map(([skill, value]) => (
-                    <Form.Check
-                      type="checkbox"
-                      key={skill}
-                      label={`Proficient in ${skill}`}
-                      checked={character.Proficiencies.includes(skill)}
-                      onChange={e => {
-                        if (e.target.checked) {
-                          setCharacter({
-                            ...character,
-                            Proficiencies: [...character.Proficiencies, skill],
-                          });
-                        } else {
-                          setCharacter({
-                            ...character,
-                            Proficiencies: character.Proficiencies.filter(proficiency => proficiency !== skill),
-                          });
-                        }
-                      }}
-                    />
-                  ));
-                case 'SavingThrows':
-                  return Object.entries(character.SavingThrows).map(([Throw, value]) => (
-                    <Form.Check
-                      type="checkbox"
-                      key={Throw}
-                      label={`Proficient in ${Throw}`}
-                      checked={character.Proficiencies.includes(Throw)}
-                      onChange={e => {
-                        if (e.target.checked) {
-                          setCharacter({
-                            ...character,
-                            Proficiencies: [...character.Proficiencies, Throw],
-                          });
-                        } else {
-                          setCharacter({
-                            ...character,
-                            Proficiencies: character.Proficiencies.filter(proficiency => proficiency !== Throw),
-                          });
-                        }
-                      }}
-                    />
-                  ));
+                  return Object.entries(character.Skills).map(([skill, value]) => {
+                    const isChecked = (character.Proficiencies || []).map(p => String(p).toLowerCase()).includes(String(skill).toLowerCase());
+                    return (
+                      <Form.Check
+                        type="checkbox"
+                        key={skill}
+                        label={`Proficient in ${skill}`}
+                        checked={isChecked}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setCharacter({
+                              ...character,
+                              Proficiencies: [...(character.Proficiencies || []), skill],
+                            });
+                          } else {
+                            setCharacter({
+                              ...character,
+                              Proficiencies: (character.Proficiencies || []).filter(proficiency => String(proficiency).toLowerCase() !== String(skill).toLowerCase()),
+                            });
+                          }
+                        }}
+                      />
+                    );
+                  });
+                case 'Saving Throws':
+                  return Object.entries(character.SavingThrows).map(([Throw, value]) => {
+                    const isChecked = (character.Proficiencies || []).map(p => String(p).toLowerCase()).includes(String(Throw).toLowerCase());
+                    return (
+                      <Form.Check
+                        type="checkbox"
+                        key={Throw}
+                        label={`Proficient in ${Throw}`}
+                        checked={isChecked}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setCharacter({
+                              ...character,
+                              Proficiencies: [...(character.Proficiencies || []), Throw],
+                            });
+                          } else {
+                            setCharacter({
+                              ...character,
+                              Proficiencies: (character.Proficiencies || []).filter(proficiency => String(proficiency).toLowerCase() !== String(Throw).toLowerCase()),
+                            });
+                          }
+                        }}
+                      />
+                    );
+                  });
                 case 'Wealth':
                   return (
                     <div>
@@ -1443,7 +1550,7 @@ function CharacterSheet({ headers, characterName }) {
                       </Table>
                       <button onClick={handleWealthUpdate}>Update Wealth</button>
                     </div>
-                    );
+                  );
                 case 'Equipment':
                   return (
                     <>
@@ -1525,43 +1632,78 @@ function CharacterSheet({ headers, characterName }) {
                 
                   return <p>{explanation}</p>;
                 };
-                // case 'Attacks':
-                //   const weapons = character.Equipment.filter(item => item.type === 'Weapon');
-                //   return (
-                //     <div>
-                //       <h3>Standard Attacks</h3>
-                //       <ul>
-                //         <p>Attack - choose a weapon to use & roll a D20</p>
-                //         <p>Grapple - Athletics check to restrain someone, with advantage. On the next turn, you can pin them.</p>
-                //         <p>Shove - Athletics check to push someone within reach back by 1 square (5 feet), or knock them prone.</p>
-                //         <p>Use Object - example: administering a potion to an ally</p>
-                //         <p>Dash - Use the action on your turn to move</p>
-                //         <p>Disengage - run away without getting hit</p>
-                //         <p>Dodge - enemies have disadvantage attacking you</p>
-                //         <p>Help - gives an ally advantage on an ability check</p>
-                //         <p>Hide - make a stealth check to be hidden</p>
-                //         <p>Ready - wait for a specific condition, then attack</p>
-                //         <p>Search - Perception or Investigation check</p>
-                //       </ul>
-                //       {weapons.length > 0 ? (
-                //         <ul>
-                //           {weapons.map((weapon, index) => (
-                //             <li key={index}>{weapon.name}</p>
-                //           ))}
-                //         </ul>
-                //       ) : (
-                //         <p>No weapons equipped.</p>
-                //       )}
-                //     </div>
-                //   );
-                case 'HitPointMax':
+                case 'Attacks': {
+                  const weapons = Array.isArray(character.Equipment) ? character.Equipment.filter(item => item.type === 'Weapon') : [];
+                  const standardActions = [
+                    'Attack - choose a weapon to use & roll a D20',
+                    'Grapple - Athletics check to restrain someone, with advantage. On the next turn, you can pin them.',
+                    'Shove - Athletics check to push someone within reach back by 1 square (5 feet), or knock them prone.',
+                    'Use Object - example: administering a potion to an ally',
+                    'Dash - Use the action on your turn to move',
+                    'Disengage - run away without getting hit',
+                    'Dodge - enemies have disadvantage attacking you',
+                    'Help - gives an ally advantage on an ability check',
+                    'Hide - make a stealth check to be hidden',
+                    'Ready - wait for a specific condition, then attack',
+                    'Search - Perception or Investigation check'
+                  ];
+
+                  return (
+                    <div>
+                      <h3>Standard Attacks</h3>
+                      <ul>
+                        {standardActions.map((action, idx) => (
+                          <li key={idx}>{action}</li>
+                        ))}
+                      </ul>
+
+                      {weapons.length > 0 ? (
+                        <div>
+                          <h4>Equipped Weapons</h4>
+                          <ul>
+                            {weapons.map((weapon, index) => (
+                              <li key={index}>{weapon?.name || weapon?.item || 'Unnamed Weapon'}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <p>No weapons equipped.</p>
+                      )}
+                    </div>
+                  );
+                }
+                case 'Max HP':
                   return (
                     <>
-                       <p>Total HP = base + (Character Level) * (Level Increment + Constitution Modifier)</p>
-                       <p>HP Per Level: {hitPoints.level_increment} + {getModifier(character.abilityScores.constitution)} (derived from {character.abilityScores.constitution} Constitution Score.)</p>
+                      <p>Total HP = base + (Character Level) * (Level Increment + Constitution Modifier)</p>
+                      <p>HP Per Level: {hitPoints.level_increment} + {getModifier(character.abilityScores.constitution)} (derived from {character.abilityScores.constitution} Constitution Score.)</p>
                       <p>Total HP = {hitPoints.base} + {character.Level} * (HP increase per level)</p>
                       <p>Total HP = {character.HitPointMax}</p>
                     </>
+                  );
+                case 'Proficiency Bonus':
+                  return (
+                    <p>Your proficiency bonus is determined by your character level. At level {character.Level}, your proficiency bonus is {character.proficiencyBonus}.</p>
+                  );
+                case 'Initiative':
+                  return (
+                    <p>Your initiative modifier is equal to your Dexterity modifier, which is {getModifier(character.abilityScores.dexterity)} based on your Dexterity score of {character.abilityScores.dexterity}.</p>
+                  );
+                case 'Speed':
+                  return (
+                    <p>Your base speed is determined by your race. As a {character.Race}, your base speed is {getBaseSpeed(character.Race)} feet.</p>
+                  );
+                case 'Spells':
+                  return (
+                    <p>Your spells are determined by your class and level. Refer to your class spell list for available spells and spell slots.</p>
+                  );
+                case 'Feats':
+                  return (
+                    <p>Feats provide special abilities or advantages to your character. You can choose feats when you reach certain levels, as specified in the rules.</p>
+                  );
+                case 'Actions':
+                  return (
+                    <p>Actions are the things your character can do on their turn in combat. This includes attacking, casting spells, and other special maneuvers.</p>
                   );
                 default:
                   return (

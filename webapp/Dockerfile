@@ -4,8 +4,8 @@ FROM node:18-alpine AS build
 # Set the working directory
 WORKDIR /app
 
-# Copy package.json and install dependencies
-COPY package*.json ./
+# Copy package.json and install dependencies (paths are relative to build context)
+COPY webapp/package*.json ./
 
 # Install the specific version of npm
 RUN npm install -g npm@10.8.3
@@ -14,7 +14,7 @@ RUN npm install -g npm@10.8.3
 RUN npm install
 
 # Copy the rest of the application code
-COPY . .
+COPY webapp/. ./
 
 # Build the React app
 RUN npm run build
@@ -25,8 +25,12 @@ FROM nginx:alpine
 # Copy the build output to Nginx's html directory
 COPY --from=build /app/build /usr/share/nginx/html
 
-# Copy the custom Nginx configuration file
-COPY nginx-docker.conf /etc/nginx/nginx.conf
+# Copy the standalone 5etools static site to a directory the nginx config expects
+# This requires docker build context to include the project root (handled in docker-compose)
+COPY 5etools /var/www/5etools
+
+# Copy the custom Nginx configuration file (path is relative to build context)
+COPY webapp/nginx-docker.conf /etc/nginx/nginx.conf
 
 # Expose the port Nginx will listen on
 EXPOSE 80

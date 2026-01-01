@@ -6,7 +6,7 @@ import campaignIcon from './campaign.webp';
 
 import CreateCharacterModal from './CreateCharacterModal';
 
-const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAccountType, setCharacterID }) => {
+const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setCharacterName }) => {
   const navigate = useNavigate();
 
   const [campaigns, setCampaigns] = useState([]);
@@ -46,15 +46,23 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
     fetchData();
   }, [headers]);
 
-  // Modified to accept a character object instead of a list
+  // Accepts a character object and sets the character name and ID
   const handleSelectCharacter = (character) => {
     if (character) {
       console.log("AccountProfile- selected character:", character);
       setAccountType('Player');
-      setCharacterName(character.name); // Set the character name
-      setSelectedCampaign(character.campaign);
-      setCharacterID(character.id); // Set the character ID
-      // setShowModalSelectCharacter(true);
+      console.log("AccountProfile- selected character name:", character.name);
+      // setCharacterName(character.name); // Set the character name
+
+      // Set the selected campaign with the required format
+      setSelectedCampaign({
+        id: character.campaignID,
+        name: character.campaign,
+        dmId: null,
+        ownerId: null
+      });
+      console.log("AccountProfile- selected campaign:", character.campaign, character.campaignID);
+  
       navigate('/characterSheet');
     } else {
       console.log("Profile- no character selected");
@@ -64,7 +72,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
   const handleCampaignSelection = (campaign) => {
     console.log("header- AccountProfile", headers);
     // Add the Campaign-ID to the headers
-    headers['Campaign-ID'] = campaign.id;
+    headers['Campaign-ID'] = campaign.id || 1;
     setSelectedCampaign({
       id: campaign.id,
       name: campaign.name,
@@ -123,7 +131,7 @@ const AccountProfile = ({ headers, setSelectedCampaign, setCharacterName, setAcc
   const handleWikiSelection = (campaign) => {
     console.log("header- AccountProfile", headers);
     // Add the Campaign-ID to the headers
-    headers['Campaign-ID'] = campaign.id;
+    headers['Campaign-ID'] = campaign.id || 1;
     setSelectedCampaign({
       id: campaign.id,
       name: campaign.name,

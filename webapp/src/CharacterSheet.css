@@ -1,17 +1,18 @@
 .tile {
   position: relative;
-  /* make sure the tile is positioned */
 }
 
 .edit-icon {
   position: absolute;
-  /* position the icon absolutely within the tile */
-  top: 0;
-  right: 0;
+  top: 10px;
+  right: 10px;
+  z-index: 1000; /* Ensure the icon is on top */
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.3s ease;
-  /* hide the icon by default and make it non-interactive */
+  padding: 5px; /* Add padding to increase clickable area */
+  background-color: rgba(238, 10, 10, 0.8); /* Optional: Add background to ensure visibility */
+  border-radius: 50%; /* Optional: Make it circular */
 }
 
 .tile:hover .edit-icon {
@@ -45,7 +46,6 @@
   justify-content: center;
   align-items: center;
 }
-
 
 .register-container {
   display: flex;

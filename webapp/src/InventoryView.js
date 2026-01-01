@@ -850,7 +850,7 @@ export default function InventoryView({ username, characterName, accountType, he
       // console.log("Player is updating item")
       try {
         await axios.put(`/api/inventory/${selectedItem.id}`, {
-          name: selectedItem.name,
+          name: selectedItem.name === "" ? "None" : selectedItem.name,
           equipped: selectedItem.equipped
         }, { headers: headers });
         setInventory(inventory.map(item => item.id === selectedItem.id ? selectedItem : item));
