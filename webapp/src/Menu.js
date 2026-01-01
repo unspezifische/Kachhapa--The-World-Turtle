@@ -141,14 +141,14 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
             </NavText>
           </NavItem>
           {/* External Links */}
-          {/* <NavItem onClick={() => navigateToExternalLink('http://maps.raspberrypi.local')}>
+          <NavItem onClick={() => navigateToExternalLink('http://tools.raspberrypi.local')}>
             <NavIcon>
               <MapIcon />
             </NavIcon>
             <NavText>
-              Settlement Manager
+              5e Tools
             </NavText>
-          </NavItem> */}
+          </NavItem>
           <NavItem onClick={() => openWiki()}>
             <NavIcon>
               <HikingIcon />

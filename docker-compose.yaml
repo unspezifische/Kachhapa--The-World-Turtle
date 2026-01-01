@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:16
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
@@ -42,7 +42,9 @@ services:
       - Kachhapa-network
 
   webapp:
-    build: ./webapp
+    build:
+      context: .
+      dockerfile: webapp/Dockerfile
     ports:
       - "80:80"
     depends_on:

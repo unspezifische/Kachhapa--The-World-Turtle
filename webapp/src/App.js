@@ -25,6 +25,8 @@ import Chat from './Chat';
 
 import './App.css';
 import 'bootstrap/dist/css/bootstrap.min.css';
+import axios from 'axios';
+import { use } from 'react';
 
 
 function App() {
@@ -52,6 +54,27 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
+
+  useEffect(() => {
+    if (selectedCampaign.id) {
+      console.log('Selected Campaign:', selectedCampaign);
+      // Update characterName based on selectedCampaign
+      axios.get(`/api/character`, { headers: headers })
+        .then((res) => {
+          console.log('App- Character:', res.data);
+          setCharacterName(res.data.name);
+          setCharacterID(res.data.id);
+          console.log("App- character name has been set!");
+        })
+        .catch((err) => {
+          console.error(err);
+        });
+    }
+  }, [selectedCampaign]);
+
+  useEffect(() => {
+    console.log("App- characterName:", characterName);
+  }, [characterName]);
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token}`,
@@ -248,13 +271,13 @@ function App() {
               <Col md={8} className="content-column">
                 <Routes>
                   <Route path="/" element={<Navigate to="/accountProfile" />} />
-                  <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} />} />
+                  <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} setCharacterName={setCharacterName} />} />
                   <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
                   <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
-                  <Route path="/accountProfile" element={<AccountProfile headers={headers} selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} setCharacterName={setCharacterName} setAccountType={setAccountType} setCharacterID={setCharacterID} socket={socketRef.current} />} />
+                    <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} />} />
 
                   {/* Catch-all route for wiki pages */}
                   <Route path="/:campaign_name/:page_title" render={({ match }) => {

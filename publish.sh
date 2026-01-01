@@ -40,7 +40,7 @@ rsync -avz Flask/static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static
 echo "Finished copying the static directory"
 
 # Now that all files are up to date on the Pi, restart Flask in the background
-ssh $DESTINATION "sudo systemctl restart myapp" &
+ssh $DESTINATION "sudo systemctl restart myapp"
 echo "Triggered Flask restart"
 
 # Define variables
@@ -48,6 +48,7 @@ PI_DB="db"
 PI_DUMP_FILE="database_backup.dump"
 LOCAL_DB="local_db"
 
+# password for PG db: should be 'admin'. Whatever is in the Flask app in the line `app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@postgres:5432/db'`
 # Dump the PostgreSQL database on the Raspberry Pi
 ssh $DESTINATION "pg_dump -U admin -W -F c $PI_DB > $PI_DUMP_FILE"
 echo "Finished dumping the database on the Raspberry Pi"

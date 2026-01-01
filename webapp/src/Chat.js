@@ -37,6 +37,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
         .catch(error => {
           console.error("CHAT- Error fetching chat history:", error);
         })
+      } else {
+        console.log("CHAT- Character name not initialized yet.");
       }
     };
   

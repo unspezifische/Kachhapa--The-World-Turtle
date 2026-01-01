@@ -49,8 +49,6 @@ Compress(app)
 # dashboard.bind(app)
 
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
-app.config['MAP_FOLDER'] = '/home/ijohnson/Downloads/Maps'
-app.config['BATTLE_MAP_FOLDER'] = '/home/ijohnson/Downloads/battleMaps'
 app.config['SECRET_KEY'] = 'secret-key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@postgres:5432/db'
 
@@ -157,6 +155,7 @@ class Character(db.Model):
     Feats = db.Column(db.Text)
     Proficiencies = db.Column(db.Text)  # list of proficiencies
     CurrentHitPoints = db.Column(db.Integer)
+    TemporaryHitPoints = db.Column(db.Integer)
     cp = db.Column(db.Integer)
     sp = db.Column(db.Integer)
     ep = db.Column(db.Integer)
@@ -192,6 +191,7 @@ class Character(db.Model):
             'Flaws': self.Flaws,
             'Proficiencies': json.loads(self.Proficiencies) if self.Proficiencies else [],
             'CurrentHitPoints': self.CurrentHitPoints,
+            'TemporaryHitPoints': self.TemporaryHitPoints,
             'cp': self.cp,
             'sp': self.sp,
             'ep': self.ep,
@@ -542,7 +542,7 @@ class NPC(db.Model):
 class GameElement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     system = db.Column(db.String(50))  # e.g., 'D&D 5e', 'pathfinder'
-    element_type = db.Column(db.String(50))  # e.g., 'class', 'race', 'character_background', 'character_sheet'
+    element_type = db.Column(db.String(50))  # e.g., 'class', 'race', 'character_background', 'character_sheet', 'NPC_jobs'
     module = db.Column(db.String(50), nullable=True)  # Specific module, if applicable
     setting = db.Column(db.String(50), nullable=True)  # Specific setting, if applicable
     name = db.Column(db.String(50), unique=True)
@@ -862,6 +862,8 @@ def login():
 def register():
     ## app.logger.debug("/api/register: %s", request.json)
     data = request.get_json()
+    app.logger.debug("Data from Register:", data)
+    
     if 'username' not in data or 'password' not in data:
         return jsonify({'message': 'Username and password are required!'}), 400
 
@@ -872,15 +874,90 @@ def register():
 
     hashed_password = generate_password_hash(data['password'], method='sha256')
     new_user = User(username=data['username'].lower(), password=hashed_password)
-    # new_user.is_online = True ## Only set the user online once they select a campaign
+
     db.session.add(new_user)
     db.session.commit()
     ## app.logger.debug(new_user.is_online)
     access_token = create_access_token(identity=new_user.username)
+    
+    # If the client provided an initial character, create it and associate with the user and campaign
+    try:
+        character_data = data.get('character')
+        campaign_id = data.get('CampaignID', 1)
+
+        created_character = None
+        if character_data:
+            # Map incoming character fields to the Character model columns
+            mapped = map_fields(character_data, Character)
+
+            # Ability scores may be provided nested under `abilityScores`
+            ability_scores = character_data.get('abilityScores') or character_data.get('ability_scores') or {}
+
+            # Helper to get value from nested abilityScores or top-level mapped fields
+            def get_score(key):
+                val = ability_scores.get(key) if isinstance(ability_scores, dict) else None
+                if val is None:
+                    val = mapped.get(key)
+                return int(val) if val is not None and str(val).isdigit() else 0
+
+            created_character = Character(
+                icon=mapped.get('icon'),
+                system=mapped.get('system', character_data.get('system', 'D&D 5e')),
+                userID=new_user.id,
+                campaignID=campaign_id,
+                character_name=(mapped.get('character_name') or mapped.get('name') or character_data.get('Name') or character_data.get('name')),
+                Class=mapped.get('Class') or mapped.get('class'),
+                Background=mapped.get('Background') or mapped.get('background'),
+                Race=mapped.get('Race') or mapped.get('race'),
+                Alignment=mapped.get('Alignment') or mapped.get('alignment'),
+                ExperiencePoints=int(mapped.get('ExperiencePoints')) if mapped.get('ExperiencePoints') else 0,
+                strength=get_score('strength'),
+                dexterity=get_score('dexterity'),
+                constitution=get_score('constitution'),
+                intelligence=get_score('intelligence'),
+                wisdom=get_score('wisdom'),
+                charisma=get_score('charisma'),
+                PersonalityTraits=mapped.get('PersonalityTraits') or mapped.get('personalitytraits'),
+                Ideals=mapped.get('Ideals') or mapped.get('ideals'),
+                Bonds=mapped.get('Bonds') or mapped.get('bonds'),
+                Flaws=mapped.get('Flaws') or mapped.get('flaws'),
+                Feats=json.dumps(mapped.get('Feats', [])) if mapped.get('Feats') is not None else json.dumps([]),
+                Proficiencies=json.dumps(mapped.get('Proficiencies', [])) if mapped.get('Proficiencies') is not None else json.dumps([]),
+                CurrentHitPoints=int(mapped.get('CurrentHitPoints')) if mapped.get('CurrentHitPoints') else 0,
+                cp=int(mapped.get('cp')) if mapped.get('cp') else 0,
+                sp=int(mapped.get('sp')) if mapped.get('sp') else 0,
+                ep=int(mapped.get('ep')) if mapped.get('ep') else 0,
+                gp=int(mapped.get('gp')) if mapped.get('gp') else 0,
+                pp=int(mapped.get('pp')) if mapped.get('pp') else 0
+            )
+
+            db.session.add(created_character)
+            db.session.flush()  # ensure id is available
+
+            # Insert association row into campaign_members with the characterID
+            try:
+                insert_stmt = campaign_members.insert().values(
+                    userID=new_user.id,
+                    campaignID=campaign_id,
+                    characterID=created_character.id
+                )
+                db.session.execute(insert_stmt)
+            except Exception:
+                app.logger.exception('Failed to insert campaign_members row')
+
+        db.session.commit()
+    except Exception:
+        # If character creation or association failed, rollback but still return registration token
+        app.logger.exception('Error creating initial character for new user')
+        db.session.rollback()
+
     return jsonify({
         'message': 'Registration successful!', 
         'access_token': access_token,
-        'userID': new_user.id  # Include the user's ID in the response
+        'userID': new_user.id,  # legacy key (camelCase)
+        'user_id': new_user.id,  # snake_case expected by client
+        'character_id': created_character.id if created_character else None,
+        'character': created_character.to_dict() if created_character else None
     })
 
 ## Get a user's profile information
@@ -979,9 +1056,15 @@ def campaigns():
 def get_user_characters():
     if request.method == 'GET':
         username = get_jwt_identity()
+        app.logger.debug("Request from %s", username)
+
         user = User.query.filter_by(username=username).first()
+        app.logger.debug("Located user %s in database", user.to_dict())
+
         characters = Character.query.filter_by(userID=user.id).all()
         character_list = [character.to_dict() for character in characters]
+        app.logger.debug("Character List:, %s", character_list)
+        
         return jsonify(character_list)
     
     elif request.method == 'POST':
@@ -1184,16 +1267,49 @@ def update_character():
         character.Background = data.get('Background')
         character.Race = data.get('Race')
         character.Alignment = data.get('Alignment')
-        character.ExperiencePoints = data.get('ExperiencePoints')
-        character.CurrentHitPoints = data.get('CurrentHitPoints')
+        # Safely coerce numeric fields to integers when present
+        if data.get('ExperiencePoints') is not None:
+            try:
+                character.ExperiencePoints = int(data.get('ExperiencePoints'))
+            except (TypeError, ValueError):
+                character.ExperiencePoints = character.ExperiencePoints or 0
 
-        ability_scores = data.get('abilityScores', {})
-        character.strength = int(ability_scores.get('strength')) if ability_scores.get('strength') else 0
-        character.dexterity = int(ability_scores.get('dexterity')) if ability_scores.get('dexterity') else 0
-        character.constitution = int(ability_scores.get('constitution')) if ability_scores.get('constitution') else 0
-        character.intelligence = int(ability_scores.get('intelligence')) if ability_scores.get('intelligence') else 0
-        character.wisdom = int(ability_scores.get('wisdom')) if ability_scores.get('wisdom') else 0
-        character.charisma = int(ability_scores.get('charisma')) if ability_scores.get('charisma') else 0
+        if data.get('CurrentHitPoints') is not None:
+            try:
+                character.CurrentHitPoints = int(data.get('CurrentHitPoints'))
+            except (TypeError, ValueError):
+                character.CurrentHitPoints = character.CurrentHitPoints or 0
+
+        # Temporary hit points (may not exist on older DBs yet)
+        if data.get('TemporaryHitPoints') is not None:
+            try:
+                character.TemporaryHitPoints = int(data.get('TemporaryHitPoints'))
+            except (TypeError, ValueError):
+                character.TemporaryHitPoints = character.TemporaryHitPoints or 0
+
+        ability_scores = data.get('abilityScores') or data.get('ability_scores') or {}
+
+        def _get_score_obj(key):
+            # Try several common casings for incoming keys (e.g., 'strength', 'Strength')
+            if not isinstance(ability_scores, dict):
+                return None
+            for k in (key, key.lower(), key.capitalize(), key.title(), key.upper()):
+                if k in ability_scores and ability_scores[k] is not None:
+                    return ability_scores[k]
+            return None
+
+        def _to_int(val):
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return 0
+
+        character.strength = _to_int(_get_score_obj('strength'))
+        character.dexterity = _to_int(_get_score_obj('dexterity'))
+        character.constitution = _to_int(_get_score_obj('constitution'))
+        character.intelligence = _to_int(_get_score_obj('intelligence'))
+        character.wisdom = _to_int(_get_score_obj('wisdom'))
+        character.charisma = _to_int(_get_score_obj('charisma'))
 
         wealth = data.get('Wealth', {})
         character.cp = int(wealth.get('cp')) if wealth.get('cp') else 0
@@ -1207,6 +1323,23 @@ def update_character():
         character.Bonds = data.get('Bonds')
         character.Flaws = data.get('Flaws')
         character.Feats = json.dumps(data.get('Feats', []))
+        # Persist Proficiencies (ensure we store a clean list)
+        profs = data.get('Proficiencies') or data.get('proficiencies') or []
+        cleaned_profs = []
+        if isinstance(profs, str):
+            try:
+                parsed = json.loads(profs)
+                if isinstance(parsed, list):
+                    profs = parsed
+                else:
+                    profs = [parsed]
+            except Exception:
+                profs = [profs]
+
+        if isinstance(profs, (list, tuple)):
+            cleaned_profs = [p for p in profs if p and str(p).strip()]
+
+        character.Proficiencies = json.dumps(cleaned_profs)
 
         db.session.commit()
         # app.logger.debug("Updated character: %s", character.to_dict())
@@ -1779,8 +1912,10 @@ def get_inventoryItem(itemID):
     
     # Get the DM's user ID
     dm_id = Campaign.query.filter_by(id=campaignID).first().dm_id
+    admin_id = Campaign.query.filter_by(id=campaignID).first().owner_id
+    app.logger.debug("Admin ID: %s", admin_id)
 
-    if user.id != dm_id:
+    if user.id != dm_id and user.id != admin_id:
         # Find the character associated with the user and the campaign
         stmt = select(campaign_members.c.characterID).where(
             campaign_members.c.campaignID == campaignID, 
@@ -1903,8 +2038,19 @@ def update_inventoryItem(itemID):
     nickname = data.get('name')
     equipped = data.get('equipped')
 
+    app.logger.info("UPDATE INVENTORY ITEM- nickname: %s", nickname)
+
     if nickname is not None:
-        inventory_item.name = nickname
+        if nickname == "None":
+            # Populate with the original item name
+            original_item = Item.query.filter_by(id=inventory_item.itemID).first()
+            if original_item:
+                app.logger.debug("Original item found: %s", original_item.name)
+                inventory_item.name = original_item.name
+            else:
+                app.logger.error("Original item not found for itemID: %s", inventory_item.itemID)
+        else:
+            inventory_item.name = nickname
     if equipped is not None:
         inventory_item.equipped = equipped
 
@@ -1946,12 +2092,6 @@ def drop_item(itemID):
     
     app.logger.debug("DROP ITEM- campaignID: %s", campaignID)
     app.logger.debug("DROP ITEM- characterID: %s", characterID)
-    
-    # Query the campaign_members table and join with the Character table
-    # character = db.session.query(Character).join(campaign_members, campaign_members.c.characterID == Character.id).filter(
-    #     campaign_members.c.campaignID == campaignID,
-    #     campaign_members.c.userID == userID
-    # ).first()
 
     character = Character.query.filter_by(id=characterID).first()
     
