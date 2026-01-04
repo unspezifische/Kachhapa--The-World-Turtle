@@ -24,3 +24,7 @@ TTRPG.pub
 update_sequence.sql
 5etools/
 
+flask_monitoringdashboard.db
+__pycache__/
+database_backup_before_5etools_import.sql
+database_backup.dump

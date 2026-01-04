@@ -5,15 +5,19 @@ import SideNav, { NavItem, NavIcon, NavText } from '@trendmicro/react-sidenav';
 import '@trendmicro/react-sidenav/dist/react-sidenav.css';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
-import ConstructionIcon from '@mui/icons-material/Construction';  // DM Tools
-import PersonIcon from '@mui/icons-material/Person';            // Profile Page
-import BackpackIcon from '@mui/icons-material/Backpack';          // Inventory
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';    // SpellBook
-import HistoryEduIcon from '@mui/icons-material/HistoryEdu';    // Journal
-import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';  // Library
-import HikingIcon from '@mui/icons-material/Hiking';            // Wiki
-import MapIcon from '@mui/icons-material/Map';       // Link to Settlement page
-import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import ConstructionIcon from '@mui/icons-material/Construction';    // DM Tools
+import PersonIcon from '@mui/icons-material/Person';                // Profile Page
+import BackpackIcon from '@mui/icons-material/Backpack';            // Inventory
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';      // SpellBook
+import HistoryEduIcon from '@mui/icons-material/HistoryEdu';        // Journal
+import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';    // Library
+import HikingIcon from '@mui/icons-material/Hiking';                // Wiki
+import MapIcon from '@mui/icons-material/Map';                      // Link to Settlement page
+import AutoStoriesIcon from '@mui/icons-material/AutoStories';      // 5e Tools Compendium
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';  // Admin
+import DashboardIcon from '@mui/icons-material/Dashboard';          // Dashboard
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';  // Account Profile
+import LogoutIcon from '@mui/icons-material/Logout';  // Log Out
 
 
 function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
@@ -67,6 +71,15 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
     } else {
         console.log("No selected campaign or campaign name");
     }
+  }
+
+  function logOut() {
+    // Clear local storage
+    localStorage.clear();
+    console.log("Cleared local storage");
+
+    // Refresh the page to log out
+    window.location.reload();
   }
 
   return (
@@ -140,15 +153,36 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
               Library
             </NavText>
           </NavItem>
+          {/* Link to 5e Tools (use current host so it works in localhost or on the Pi) */}
+          {accountType === 'DM' &&
+          <>
+            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/5etools/')}>
+              <NavIcon>
+                <AutoStoriesIcon />
+              </NavIcon>
+              <NavText>
+                Compendium
+              </NavText>
+            </NavItem>
+            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/dashboard/')}>
+              <NavIcon>
+                <DashboardIcon />
+              </NavIcon>
+              <NavText>
+                Flask Dashbaord
+              </NavText>
+            </NavItem>
+            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/admin/')}>
+              <NavIcon>
+                <AdminPanelSettingsIcon />
+              </NavIcon>
+              <NavText>
+                Flask Admin
+              </NavText>
+            </NavItem>
+          </>
+          }
           {/* External Links */}
-          <NavItem onClick={() => navigateToExternalLink('http://tools.raspberrypi.local')}>
-            <NavIcon>
-              <MapIcon />
-            </NavIcon>
-            <NavText>
-              5e Tools
-            </NavText>
-          </NavItem>
           <NavItem onClick={() => openWiki()}>
             <NavIcon>
               <HikingIcon />
@@ -163,6 +197,14 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
             </NavIcon>
             <NavText>
               Account Profile
+            </NavText>
+          </NavItem>
+          <NavItem onClick={() => logOut()}>
+            <NavIcon>
+              <LogoutIcon />
+            </NavIcon>
+            <NavText>
+              Log Out
             </NavText>
           </NavItem>
         </SideNav.Nav>

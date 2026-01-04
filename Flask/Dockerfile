@@ -10,10 +10,7 @@ RUN pip install -r requirements.txt --no-cache-dir
 
 # Copy the rest of the application code
 COPY Flask/ .
-COPY GameElements/ GameElements/
-
-# Expose the port Gunicorn will run on
-EXPOSE 5000
+# COPY GameElements/ GameElements/
 
 # Command to run the app with Gunicorn, using eventlet
-CMD ["gunicorn", "-k", "eventlet", "-w", "4", "--bind", "unix:/tmp/myapp.socket", "app:app"]
+CMD ["gunicorn", "-k", "eventlet", "-w", "1", "--bind", "unix:/tmp/myapp.socket", "--reload", "app:app"]

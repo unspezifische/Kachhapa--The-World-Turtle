@@ -1,3 +1,21 @@
+def resolve_system_from_request():
+    """Resolve game system using explicit header/param first, then campaign.
+
+    Order of precedence:
+    1) `System` header or `system` query param (explicit override).
+    2) `CampaignID` header -> look up campaign.system.
+    If neither yields a system, returns (None, None) and leaves the caller to warn.
+    """
+    system_override = request.headers.get('System') or request.args.get('system')
+    if system_override:
+        return system_override, None
+
+    campaign_id = request.headers.get('CampaignID')
+    if campaign_id:
+        campaign = Campaign.query.filter_by(id=campaign_id).first()
+        if campaign:
+            return campaign.system, campaign
+    return None, None
 from flask import Flask, request, jsonify, send_file
 from flask import render_template ## For rendering wiki pages
 from flask import redirect, url_for
@@ -5,7 +23,7 @@ from flask import redirect, url_for
 ## Server Admin Console
 from flask_admin import Admin
 from flask_admin.contrib.sqla import ModelView
-# import flask_monitoringdashboard as dashboard
+import flask_monitoringdashboard as dashboard
 
 ## For database stuff
 from flask_sqlalchemy import SQLAlchemy
@@ -29,7 +47,7 @@ from flask_jwt_extended import JWTManager, jwt_required, create_access_token, ge
 from jwt import InvalidTokenError, ExpiredSignatureError
 from flask_socketio import SocketIO, join_room, leave_room, emit, send, disconnect
 
-from threading import Thread
+from threading import Thread, Lock
 from datetime import datetime, timedelta, timezone
 import io
 import os
@@ -46,7 +64,7 @@ from urllib.parse import unquote
 
 app = Flask(__name__)
 Compress(app)
-# dashboard.bind(app)
+dashboard.bind(app)
 
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
 app.config['SECRET_KEY'] = 'secret-key'
@@ -66,9 +84,6 @@ db = SQLAlchemy()
 ## Admin Console
 admin = Admin(app, name='Kachhapa Admin')
 
-
-# CORS(app, resources={r"/*": {"origins": "*"}})  # This header is added by Nginx
-
 # # For INFO level
 # app.logger.setLevel(logging.INFO)  # set the desired logging level
 # handler = logging.StreamHandler()
@@ -85,18 +100,24 @@ app.debug = True
 
 app.logger.debug("Debugging set to True")
 
+RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@127.0.0.1:5672//")
+
 socketio = SocketIO(
     app,
-    message_queue='amqp://guest:guest@rabbitmq:5672//',
+    message_queue=RABBIT_URL,
     cors_allowed_origins="*",
     logger=True,
     engineio_logger=True,
-    ping_timeout=60000)
-active_connections = {}
+    ping_timeout=60000,
+)
 
 socketio.init_app(app)
 
 db.init_app(app)
+
+# Map of username -> sid for active socket connections. Guarded by a lock
+active_connections = {}
+active_connections_lock = Lock()
 
 
 INTEGER_MIN = -2147483648
@@ -138,6 +159,7 @@ class Character(db.Model):
     campaign = db.relationship('Campaign', backref='party_members')  # relationship to the Campaign model
     character_name = db.Column(db.String(50), nullable=True) # character's name
     Class = db.Column(db.String(50))  # name of the class (e.g., "Wizard")
+    Subclass = db.Column(db.String(80), nullable=True)  # subclass/archetype, optional
     Background = db.Column(db.String(50))  # character's background (e.g., "Noble")
     Race = db.Column(db.String(50))  # character's race (e.g., "Elf")
     Alignment = db.Column(db.String(50))  # character's alignment (e.g., "Neutral Good")
@@ -173,8 +195,9 @@ class Character(db.Model):
             'userID': self.userID,
             'campaignID': self.campaignID,
             'campaign': self.campaign.name if self.campaign else None,
-            'name': self.character_name,
+            'Name': self.character_name,
             'Class': self.Class,
+            'Subclass': self.Subclass,
             'Background': self.Background,
             'Race': self.Race,
             'Alignment': self.Alignment,
@@ -650,17 +673,38 @@ def load_json_files(directory):
     elements = []
     if os.path.exists(directory):
         for filename in os.listdir(directory):
-            if filename.endswith('.json'):
-                with open(os.path.join(directory, filename), 'r') as file:
-                    try:
+            if not filename.endswith('.json'):
+                continue
+
+            # Skip macOS resource fork files (._*) which are not valid JSON
+            if filename.startswith('._'):
+                app.logger.debug("Skipping macOS resource file: %s", filename)
+                continue
+
+            file_path = os.path.join(directory, filename)
+            # Try UTF-8 first, fall back to latin-1 if necessary
+            try:
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    data = json.load(file)
+            except UnicodeDecodeError as ude:
+                app.logger.warning("UnicodeDecodeError reading %s with utf-8: %s; trying latin-1", filename, ude)
+                try:
+                    with open(file_path, 'r', encoding='latin-1') as file:
                         data = json.load(file)
-                        normalized_data = normalize_keys(data)
-                        elements.append((filename.rstrip('.json'), normalized_data))
-                        app.logger.debug("Loaded %s from %s", filename, directory)
-                    except json.JSONDecodeError:
-                        app.logger.error(f"Error decoding JSON from file {filename}")
-                    except UnicodeDecodeError:
-                        app.logger.error(f"Error decoding Unicode from file {filename}")    
+                except Exception as e:
+                    app.logger.error("Error decoding JSON from file %s with latin-1: %s", filename, e)
+                    continue
+            except json.JSONDecodeError as jde:
+                app.logger.error("Error decoding JSON from file %s: %s", filename, jde)
+                continue
+            except Exception as e:
+                app.logger.error("Unexpected error reading %s: %s", filename, e)
+                continue
+
+            normalized_data = normalize_keys(data)
+            base_name = os.path.splitext(filename)[0]
+            elements.append((base_name, normalized_data))
+            app.logger.debug("Loaded %s from %s", filename, directory)
     return elements
 
 def insert_elements(system, element_type, directory):
@@ -734,7 +778,7 @@ def map_fields(data, model):
 with app.app_context():
     db.create_all()
     set_all_users_offline()
-    populate_game_elements()
+    # populate_game_elements()
 
 migrate = Migrate(app, db)
 
@@ -1063,7 +1107,7 @@ def get_user_characters():
 
         characters = Character.query.filter_by(userID=user.id).all()
         character_list = [character.to_dict() for character in characters]
-        app.logger.debug("Character List:, %s", character_list)
+        # app.logger.debug("Character List:, %s", character_list)
         
         return jsonify(character_list)
     
@@ -1121,6 +1165,33 @@ def get_user_characters():
         return jsonify(new_character.to_dict()), 201
 
 
+@app.route('/api/campaign_characters', methods=['GET'])
+@jwt_required()
+def get_campaign_characters():
+    """Return all characters for a given campaign (DM view / character switcher).
+
+    Expects `CampaignID` header. Returns 400 if missing. Only returns characters
+    linked via campaign_members to keep scope bounded to the campaign.
+    """
+    campaign_id = request.headers.get('CampaignID')
+    if not campaign_id:
+        return jsonify({'error': 'CampaignID header is required'}), 400
+
+    try:
+        # Find character IDs linked to the campaign via association table
+        stmt = select(campaign_members.c.characterID).where(campaign_members.c.campaignID == campaign_id)
+        character_ids = [row.characterID for row in db.session.execute(stmt) if row.characterID]
+
+        if not character_ids:
+            return jsonify([])
+
+        characters = Character.query.filter(Character.id.in_(character_ids)).all()
+        return jsonify([c.to_dict() for c in characters])
+    except Exception:
+        app.logger.exception('Error fetching campaign characters')
+        return jsonify({'error': 'internal server error'}), 500
+
+
 @app.route('/api/characterSheet')
 def get_characterSheet():
     # Determine the System in use
@@ -1129,26 +1200,36 @@ def get_characterSheet():
     system = campaign.system if campaign else 'D&D 5e'
 
     characterSheet = GameElement.query.filter_by(element_type='character_sheet', system=system).first()
-    app.logger.debug("CharacterSheet- %s", [c.data for c in characterSheet])
-    return jsonify([c.data for c in characterSheet])
+    if not characterSheet:
+        app.logger.debug("CharacterSheet: none found for system %s", system)
+        return jsonify({})
+    app.logger.debug("CharacterSheet- %s", characterSheet.data)
+    return jsonify(characterSheet.data)
 
 @app.route('/api/classes')
 def get_class_listing():
-    # Determine the System in use
-    campaignID = request.headers.get('CampaignID')
-    campaign = Campaign.query.filter_by(id=campaignID).first()
-    system = campaign.system if campaign else 'D&D 5e'
+    # Determine the System in use: explicit override, then campaign, else warn
+    system, campaign = resolve_system_from_request()
+    if not system:
+        app.logger.warning("System not provided and no CampaignID/system resolution for /api/classes")
+        return jsonify({'error': 'System or CampaignID header is required'}), 400
 
-    classes = GameElement.query.filter_by(element_type='class', system=system).all()
-    # print("Classes:", [c.to_dict() for c in classes])
-    return jsonify([c.to_dict() for c in classes])
+    try:
+        classes = GameElement.query.filter_by(element_type='class', system=system).all()
+        app.logger.debug("Returning %d classes for system %s", len(classes), system)
+        # Return only the name field for listing (not full data) to reduce payload size
+        return jsonify([{'name': c.name} for c in classes])
+    except Exception:
+        app.logger.exception("Error fetching classes")
+        return jsonify({'error': 'internal server error'}), 500
 
 @app.route('/api/classes/<class_name>')
 def get_class_info(class_name):
-    # Determine the System in use
-    campaignID = request.headers.get('CampaignID')
-    campaign = Campaign.query.filter_by(id=campaignID).first()
-    system = campaign.system if campaign else 'D&D 5e'
+    # Determine the System in use: explicit override, then campaign, else warn
+    system, campaign = resolve_system_from_request()
+    if not system:
+        app.logger.warning("System not provided and no CampaignID/system resolution for /api/classes/<class_name>")
+        return jsonify({'error': 'System or CampaignID header is required'}), 400
 
     game_element = GameElement.query.filter_by(name=class_name, element_type='class', system=system).first()
     if game_element:
@@ -1158,21 +1239,23 @@ def get_class_info(class_name):
 
 @app.route('/api/races', methods=['GET'])
 def get_race_listing():
-    # Determine the System in use
-    campaignID = request.headers.get('CampaignID')
-    campaign = Campaign.query.filter_by(id=campaignID).first()
-    system = campaign.system if campaign else 'D&D 5e'
+    # Determine the System in use: explicit override, then campaign, else warn
+    system, campaign = resolve_system_from_request()
+    if not system:
+        app.logger.warning("System not provided and no CampaignID/system resolution for /api/races")
+        return jsonify({'error': 'System or CampaignID header is required'}), 400
     
     races = GameElement.query.filter_by(element_type='race', system=system).all()
-    # print([r.to_dict() for r in races])
-    return jsonify([r.to_dict() for r in races])
+    # Return only the name field for listing (not full data) to reduce payload size
+    return jsonify([{'name': r.name} for r in races])
 
 @app.route('/api/races/<race_name>', methods=['GET'])
 def get_race_info(race_name):
-    # Determine the System in use
-    campaignID = request.headers.get('CampaignID')
-    campaign = Campaign.query.filter_by(id=campaignID).first()
-    system = campaign.system if campaign else 'D&D 5e'
+    # Determine the System in use: explicit override, then campaign, else warn
+    system, campaign = resolve_system_from_request()
+    if not system:
+        app.logger.warning("System not provided and no CampaignID/system resolution for /api/races/<race_name>")
+        return jsonify({'error': 'System or CampaignID header is required'}), 400
     
     game_element = GameElement.query.filter_by(name=race_name, element_type='race', system=system).first()
     if game_element:
@@ -1182,20 +1265,28 @@ def get_race_info(race_name):
 
 @app.route('/api/backgrounds', methods=['GET'])
 def get_background_listing():
-    # Determine the System in use
-    campaignID = request.headers.get('CampaignID')
-    campaign = Campaign.query.filter_by(id=campaignID).first()
-    system = campaign.system if campaign else 'D&D 5e'
+    # Determine the System in use: explicit override, then campaign, else warn
+    system, campaign = resolve_system_from_request()
+    if not system:
+        app.logger.warning("System not provided and no CampaignID/system resolution for /api/backgrounds")
+        return jsonify({'error': 'System or CampaignID header is required'}), 400
     
-    backgrounds = GameElement.query.filter_by(element_type='character_background', system=system).all()
-    return jsonify([b.to_dict() for b in backgrounds])
+    try:
+        backgrounds = GameElement.query.filter_by(element_type='character_background', system=system).all()
+        app.logger.debug("Returning %d backgrounds for system %s", len(backgrounds), system)
+        # Return only the name field for listing (not full data) to reduce payload size
+        return jsonify([{'name': b.name} for b in backgrounds])
+    except Exception:
+        app.logger.exception("Error fetching backgrounds")
+        return jsonify({'error': 'internal server error'}), 500
 
 @app.route('/api/backgrounds/<background_name>', methods=['GET'])
 def get_background_info(background_name):
-    # Determine the System in use
-    campaignID = request.headers.get('CampaignID')
-    campaign = Campaign.query.filter_by(id=campaignID).first()
-    system = campaign.system if campaign else 'D&D 5e'
+    # Determine the System in use: explicit override, then campaign, else warn
+    system, campaign = resolve_system_from_request()
+    if not system:
+        app.logger.warning("System not provided and no CampaignID/system resolution for /api/backgrounds/<background_name>")
+        return jsonify({'error': 'System or CampaignID header is required'}), 400
     
     game_element = GameElement.query.filter_by(name=background_name, element_type='character_background', system=system).first()
     if game_element:
@@ -1208,7 +1299,7 @@ def get_background_info(background_name):
 @app.route('/api/character', methods=['GET'])
 @jwt_required()
 def get_character():
-    # print("Get Character Profile:", request.headers)
+    # app.logger.debug("Get Character Profile:", request.headers)
     try:
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
@@ -1224,6 +1315,9 @@ def get_character():
         characterID = result.characterID if result else None
 
         character = Character.query.filter_by(id=characterID).first()
+        app.logger.debug("GET Character- character: %s", character.to_dict() if character else "None")
+        if character is None:
+            return jsonify({'error': 'Character not found for user in this campaign.'}), 404
 
         return jsonify(character.to_dict()), 200
 
@@ -1232,38 +1326,92 @@ def get_character():
     except ExpiredSignatureError:
         return jsonify({'error': 'Expired token'}), 401
 
+
+## GET Character Profile by name (campaign-scoped)
+@app.route('/api/character_by_name', methods=['GET'])
+@jwt_required()
+def get_character_by_name():
+    """Return a character by name for the active campaign.
+
+    Expects:
+      - `CampaignID` header
+      - `name` query param (character name)
+
+    Only returns characters linked to the campaign via `campaign_members`.
+    """
+    try:
+        campaign_id = request.headers.get('CampaignID')
+        if not campaign_id:
+            return jsonify({'error': 'CampaignID header is required'}), 400
+
+        character_name = request.args.get('name')
+        if not character_name:
+            return jsonify({'error': 'name query param is required'}), 400
+
+        # Ensure the requested character is part of this campaign
+        stmt = select(campaign_members.c.characterID).where(campaign_members.c.campaignID == campaign_id)
+        character_ids = [row.characterID for row in db.session.execute(stmt) if row.characterID]
+        if not character_ids:
+            return jsonify({'error': 'Character not found'}), 404
+
+        character = Character.query.filter(
+            Character.id.in_(character_ids),
+            Character.character_name == character_name
+        ).first()
+
+        if not character:
+            return jsonify({'error': 'Character not found'}), 404
+
+        return jsonify(character.to_dict()), 200
+    except InvalidTokenError:
+        return jsonify({'error': 'InvalidTokenError- GET /api/character_by_name'}), 401
+    except ExpiredSignatureError:
+        return jsonify({'error': 'Expired token'}), 401
+    except Exception:
+        app.logger.exception('Error fetching character by name')
+        return jsonify({'error': 'internal server error'}), 500
+
 ## Update a user's Character Profile
 @app.route('/api/character', methods=['PUT'])
 @jwt_required()
 def update_character():
     try:
-        userID = request.headers.get('userID')
-        campaignID = request.headers.get('CampaignID')
+        data = request.json
+        
+        # If character ID is provided in payload, use it directly (for character switching)
+        # Otherwise fall back to userID-based lookup (for original character)
+        characterID = data.get('id')
+        
+        if not characterID:
+            userID = request.headers.get('userID')
+            campaignID = request.headers.get('CampaignID')
 
-        app.logger.debug("UPDATE CHARACTER- userID: %s", userID)
-        app.logger.debug("UPDATE CHARACTER- campaignID: %s", campaignID)
+            # app.logger.debug("UPDATE CHARACTER- userID: %s", userID)
+            # app.logger.debug("UPDATE CHARACTER- campaignID: %s", campaignID)
 
-        stmt = select(campaign_members.c.characterID).where(
-            campaign_members.c.campaignID == campaignID, 
-            campaign_members.c.userID == userID
-        )
+            stmt = select(campaign_members.c.characterID).where(
+                campaign_members.c.campaignID == campaignID, 
+                campaign_members.c.userID == userID
+            )
 
-        result = db.session.execute(stmt).first()
-
-        characterID = result.characterID if result else None
+            result = db.session.execute(stmt).first()
+            characterID = result.characterID if result else None
+        else:
+            app.logger.debug("UPDATE CHARACTER- using character ID from payload: %s", characterID)
 
         character = Character.query.filter_by(id=characterID).first()
 
-        # app.logger.debug("Character from database- %s", character.to_dict())
+        if not character:
+            return jsonify({'error': 'Character not found'}), 404
 
-        data = request.json
-        # app.logger.debug("Character JSON for Updating:")
-        # for key, value in data.items():
-        #     app.logger.debug("%s: %s", key, value)
+        # app.logger.debug("Character from database- %s", character.to_dict())
+        # app.logger.debug("UPDATE CHARACTER- Character JSON for Updating keys: %s", list(data.keys()))
+        # app.logger.debug("UPDATE CHARACTER- incoming Wealth: %s", data.get('Wealth'))
 
         # Hardcode the mapping
         character.system = data.get('system')
         character.Class = data.get('Class')
+        character.Subclass = data.get('Subclass')
         character.Background = data.get('Background')
         character.Race = data.get('Race')
         character.Alignment = data.get('Alignment')
@@ -1342,7 +1490,7 @@ def update_character():
         character.Proficiencies = json.dumps(cleaned_profs)
 
         db.session.commit()
-        # app.logger.debug("Updated character: %s", character.to_dict())
+        app.logger.debug("Updated character: %s", character.to_dict())
         return jsonify(character.to_dict()), 200
 
     except InvalidTokenError:
@@ -3232,7 +3380,7 @@ def emit_active_users(campaign_id):
         }
         for user in active_users
     ]
-    
+    app.logger.debug("ONLINE USERS - Emitting %s active users to campaign_id %s", len(active_user_info), campaign_id)
     # Emit the active users to the specific campaign room
     socketio.emit('active_users', active_user_info, to=campaign_id)
 
@@ -3259,10 +3407,12 @@ def connected():
         app.logger.info("CONNECT- Received a token")
         if token and request.args.get("username"):
             username = request.args.get("username")
-            if username in active_connections:
-                app.logger.info(f"Disconnecting duplicate connection for user: {username}")
-                socketio.disconnect()
-                return
+            # Protect access to shared active_connections mapping
+            with active_connections_lock:
+                if username in active_connections:
+                    app.logger.info(f"Disconnecting duplicate connection for user: {username}")
+                    socketio.disconnect()
+                    return
 
             user = User.query.filter_by(username=username).first()
             app.logger.info("CONNECT- username: %s", username)
@@ -3271,6 +3421,12 @@ def connected():
                 app.logger.info("CONNECT- setting %s to online", user)
                 user.is_online = True
                 user.sid = request.sid  # Update the SID associated with this user
+                # Persist online state immediately so other threads/handlers can see it
+                try:
+                    db.session.commit()
+                    app.logger.debug("CONNECT- committed online state for user: %s (sid=%s)", user.username, user.sid)
+                except Exception as e:
+                    app.logger.error("CONNECT- failed to commit user online state: %s", e)
                 campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
 
                 if not campaign_id:
@@ -3304,21 +3460,24 @@ def handle_join_room(data):
 
     if user:
         app.logger.debug("JOIN ROOM- user's initial status: %s", user.is_online)
-        if data['username'] in active_connections:
-            app.logger.info(f"Disconnecting duplicate connection for user: {data['username']}")
-            socketio.disconnect()
+        # Protect access to shared active_connections mapping
+        with active_connections_lock:
+            if data['username'] in active_connections:
+                app.logger.info(f"Disconnecting duplicate connection for user: {data['username']}")
+                socketio.disconnect()
+                return
 
-        if not user.is_online:
-            user.is_online = True
-            user.sid = request.sid  # Set the sid field
-            active_connections[data['username']] = request.sid
-            db.session.commit()
-            app.logger.info("JOIN ROOM- %s is now online", user.username)
-        else:
-            user.sid = request.sid  # Set the sid field
-            active_connections[data['username']] = request.sid
-            db.session.commit()
-            app.logger.info("JOIN ROOM- %s is already online", user.username)
+            if not user.is_online:
+                user.is_online = True
+                user.sid = request.sid  # Set the sid field
+                active_connections[data['username']] = request.sid
+                db.session.commit()
+                app.logger.info("JOIN ROOM- %s is now online", user.username)
+            else:
+                user.sid = request.sid  # Set the sid field
+                active_connections[data['username']] = request.sid
+                db.session.commit()
+                app.logger.info("JOIN ROOM- %s is already online", user.username)
 
 
 @socketio.on('leave_room')
@@ -3651,8 +3810,9 @@ def end_combat():
 @socketio.on('heartbeat')
 def handle_heartbeat():
     username = request.args.get('username')
-    if username in active_connections:
-        app.logger.info(f"Heartbeat received from: {username}")
+    with active_connections_lock:
+        if username in active_connections:
+            app.logger.info(f"Heartbeat received from: {username}")
 
 @socketio.on('user_disconnected')
 def handle_user_disconnected(data):
@@ -3666,7 +3826,9 @@ def handle_user_disconnected(data):
         user.is_online = False
         user.sid = None
         db.session.commit()
-        sid = active_connections.pop(user.username, None)  # Remove the mapping
+        # Remove the mapping thread-safely
+        with active_connections_lock:
+            sid = active_connections.pop(user.username, None)  # Remove the mapping
         emit_active_users(campaign_id)
 
 @socketio.on('disconnect')
@@ -3679,9 +3841,10 @@ def handle_disconnect():
     if user:
         app.logger.info("DISCONNECT- %s is logging off!", user.username)
 
-        if user.username in active_connections:
-            del active_connections[user.username]
-            app.logger.info(f"Active connections: {active_connections}")
+        with active_connections_lock:
+            if user.username in active_connections:
+                del active_connections[user.username]
+                app.logger.info(f"Active connections: {active_connections}")
         user.is_online = False
         db.session.commit()
 

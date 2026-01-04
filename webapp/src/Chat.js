@@ -25,6 +25,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
     const fetchChatHistory = async () => {
       // Check if characterName has been initialized
       if (characterName) {
+        console.log("CHAT- Fetching chat history for character:", characterName);
         axios.get('/api/chat_history', { headers: headers })
         .then(response => {
           const data = response.data;
