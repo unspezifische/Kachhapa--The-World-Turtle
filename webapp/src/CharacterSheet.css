@@ -11,7 +11,7 @@
   pointer-events: none;
   transition: opacity 0.3s ease;
   padding: 5px; /* Add padding to increase clickable area */
-  background-color: rgba(238, 10, 10, 0.8); /* Optional: Add background to ensure visibility */
+  /* background-color: rgba(238, 10, 10, 0.8); /* Optional: Add background to ensure visibility */
   border-radius: 50%; /* Optional: Make it circular */
 }
 

@@ -36,7 +36,7 @@ const skillAbilities = {
 
 const tiles = [
   { "w": 2, "h": 4, "x": 0, "y": 0, "i": "Name" },
-  { "w": 1, "h": 3, "x": 2, "y": 0, "i": "Class" },
+  { "w": 2, "h": 4, "x": 2, "y": 0, "i": "Class" },
   { "w": 1, "h": 3, "x": 2, "y": 3, "i": "Race" },
   { "w": 1, "h": 4, "x": 3, "y": 0, "i": "Alignment" },
   { "w": 1, "h": 20, "x": 0, "y": 4, "i": "Ability Scores" },
@@ -57,7 +57,7 @@ const tiles = [
   { "w": 1, "h": 3, "x": 3, "y": 8, "i": "Initiative" },
   { "w": 1, "h": 3, "x": 4, "y": 4, "i": "Speed" },
   { "w": 1, "h": 3, "x": 2, "y": 6, "i": "Armor Class" },
-  { "w": 1, "h": 4, "x": 3, "y": 4, "i": "Background" },
+  { "w": 1, "h": 3, "x": 3, "y": 4, "i": "Background" },
   { "w": 1, "h": 4, "x": 4, "y": 0, "i": "XP" },
   { "w": 1, "h": 4, "x": 4, "y": 10, "i": "Passive Perception" },
   { "w": 1, "h": 3, "x": 2, "y": 9, "i": "Max HP" },
@@ -85,30 +85,171 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   const [playerRaces, setPlayerRaces] = useState([]);
   const alignments = ['Lawful Good', 'Neutral Good', 'Chaotic Good', 'Lawful Neutral', 'Neutral', 'Chaotic Neutral', 'Lawful Evil', 'Neutral Evil', 'Chaotic Evil'];
   const [hitPoints, setHitPoints] = useState({ base: 0, level_increment: 0 });
+  const [subclassOptions, setSubclassOptions] = useState([]);
 
   const [selectedEquipment, setSelectedEquipment] = useState(null);
   const [weapons, setWeapons] = useState([]);
   const [preparedSpells, setPreparedSpells] = useState([]);
 
-  const fetchPlayerClasses = () => {
-    axios.get(`/api/classes`)
+  // Track previous values to detect changes in class/subclass/race
+  const prevClassRef = useRef(null);
+  const prevSubclassRef = useRef(null);
+  const prevRaceRef = useRef(null);
+
+  // Fetch all available characters
+  const fetchAllCharacters = () => {
+    axios.get('/api/campaign_characters', { headers })
       .then(response => {
-        setPlayerClasses(response.data);
+        // Accept any of the possible name keys from the API
+        const names = Array.isArray(response.data)
+          ? response.data.map(c => c.Name || c.name || c.character_name || c)
+          : [];
+        const uniq = [...new Set(names)].sort((a, b) => String(a).localeCompare(String(b)));
+        setCharacters(uniq);
+        console.log('Fetched all characters:', uniq);
       })
       .catch(error => {
-        console.error(error);
+        console.error('Error fetching characters:', error);
+      });
+  };
+
+  const loadCharacter = (nameToLoad) => {
+    if (!nameToLoad) return;
+    setLoading(true);
+
+    // Use a character-specific header for dependent endpoints (equipment/spells)
+    const characterHeaders = { ...headers, CharacterName: nameToLoad };
+
+    return Promise.all([
+      axios.get('/api/character_by_name', { headers, params: { name: nameToLoad } }),
+      axios.get('/api/equipment', { headers: characterHeaders }),
+      axios.get('/api/prepared_spells', { headers: characterHeaders })
+    ])
+      .then(([characterResponse, equipmentResponse, spellsResponse]) => {
+        const {
+          strength,
+          dexterity,
+          constitution,
+          intelligence,
+          wisdom,
+          charisma,
+          cp,
+          sp,
+          ep,
+          gp,
+          pp,
+          Proficiencies,
+          Subclass,
+          ...rest
+        } = characterResponse.data;
+
+        const abilityScores = {
+          strength,
+          dexterity,
+          constitution,
+          intelligence,
+          wisdom,
+          charisma,
+        };
+
+        const Wealth = {
+          cp,
+          sp,
+          ep,
+          gp,
+          pp,
+        };
+
+        setCharacter(prev => ({
+          ...prev,
+          ...rest,
+          id: characterResponse.data.id,  // Track character ID for saves
+          Name: nameToLoad,
+          abilityScores,
+          Wealth,
+          Proficiencies,
+          Subclass,
+          Equipment: equipmentResponse?.data?.equipment ?? prev.Equipment,
+          Spells: spellsResponse?.data?.spells ?? prev.Spells,
+        }));
+      })
+      .catch(error => {
+        console.error('Error loading character:', error);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
+
+  // Switch to a different character: save current changes, then load new character
+  const switchCharacter = (newCharacterName) => {
+    if (newCharacterName === character.Name) return; // No-op if same character
+
+    // Save current character before switching
+    saveCharacter();
+
+    // Update parent so other pages (inventory/journal) display the selected name
+    if (setCharacterName) {
+      setCharacterName(newCharacterName);
+    }
+
+    // Load the selected character into local state only (no parent updates)
+    loadCharacter(newCharacterName);
+  };
+
+  const fetchPlayerClasses = () => {
+    const campaignHeader = headers?.campaignID || headers?.CampaignID;
+    if (!campaignHeader) {
+      console.warn('Skipping class fetch: missing CampaignID header');
+      return;
+    }
+
+    const systemHeader = headers?.System || 'D&D 5e';
+    const requestHeaders = { ...headers, System: systemHeader };
+    const requestParams = { system: systemHeader };
+
+    axios.get(`/api/classes`, { headers: requestHeaders, params: requestParams })
+      .then(response => {
+        // API returns GameElement objects; extract the 'name' field for the dropdown
+        const names = Array.isArray(response.data) ? response.data.map(c => c.name || c) : [];
+        const uniq = [...new Set(names)].sort((a, b) => String(a).localeCompare(String(b)));
+        setPlayerClasses(uniq);
+        console.log("Fetched player classes:", uniq);
+      })
+      .catch(error => {
+        console.error('Error fetching player classes at /api/classes:', error);
       });
   };
 
   const fetchPlayerRaces = () => {
-    axios.get(`/api/races`)
+    const campaignHeader = headers?.campaignID || headers?.CampaignID;
+    if (!campaignHeader) {
+      console.warn('Skipping race fetch: missing CampaignID header');
+      return;
+    }
+
+    const systemHeader = headers?.System || 'D&D 5e';
+    const requestHeaders = { ...headers, System: systemHeader };
+    const requestParams = { system: systemHeader };
+
+    axios.get(`/api/races`, { headers: requestHeaders, params: requestParams })
       .then(response => {
-        setPlayerRaces(response.data);
+        const names = Array.isArray(response.data) ? response.data.map(r => r.name || r) : [];
+        const uniq = [...new Set(names)].sort((a, b) => String(a).localeCompare(String(b)));
+        setPlayerRaces(uniq);
+        console.log("Fetched player races:", uniq);
       })
       .catch(error => {
-        console.error(error);
+        console.error('Error fetching player races:', error);
       });
   };
+
+  // Fetch class/race listings and all characters once headers (CampaignID) are available
+  useEffect(() => {
+    fetchPlayerClasses();
+    fetchPlayerRaces();
+    fetchAllCharacters();
+  }, [headers?.campaignID, headers?.CampaignID]);
 
   const getLayouts = () => {
     const savedLayout = localStorage.getItem('tileLayout');
@@ -129,8 +270,10 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   // Declare a new state variable to store the character data
   const [character, setCharacter] = useState({
+    id: null,  // Track character ID for saves
     Name: characterName || '',
     Class: null,
+    Subclass: null,
     Level: 1,
     ExperiencePoints: 0,
     Background: null,
@@ -204,8 +347,9 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     Attacks: [''], // List of attacks the player can make
   });
 
-  const [addAmount, setAddAmount] = useState(0);
-  const [spendAmount, setSpendAmount] = useState(0);
+  // Track per-currency add/spend amounts as objects so we can compute change correctly
+  const [addAmount, setAddAmount] = useState({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
+  const [spendAmount, setSpendAmount] = useState({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
 
   // Log when addAmount or spendAmount changes
   useEffect(() => {
@@ -217,10 +361,10 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   // Functions to handle character wealth management
   const handleAddAmount = (currency, value) => {
-    setAddAmount({ ...addAmount, [currency]: value });
+    setAddAmount({ ...addAmount, [currency]: parseInt(value, 10) || 0 });
   };
   const handleSpendAmount = (currency, value) => {
-    setSpendAmount({ ...spendAmount, [currency]: value });
+    setSpendAmount({ ...spendAmount, [currency]: parseInt(value, 10) || 0 });
   };
 
   const handleWealthUpdate = (e) => {
@@ -237,79 +381,160 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     const newWealth = { ...character.Wealth };
     console.log("Current Character Wealth:", newWealth);
   
-    // Calculate total spend amount in copper
-    let totalSpendInCopper = 0;
-    for (const currency in spendAmount) {
-      totalSpendInCopper += (parseInt(spendAmount[currency]) || 0) * conversionRates[currency];
+    // Apply addAmount entries before computing spend so adds can be used to make change
+    for (const currency of Object.keys(addAmount)) {
+      const addVal = parseInt(addAmount[currency], 10) || 0;
+      newWealth[currency] = (parseInt(newWealth[currency], 10) || 0) + addVal;
     }
-  
-    // Calculate total wealth in copper
-    let totalWealthInCopper = 0;
-    for (const currency in newWealth) {
-      totalWealthInCopper += newWealth[currency] * conversionRates[currency];
-    }
-  
-    // Check if there is enough total wealth to cover the spend amount
-    if (totalWealthInCopper >= totalSpendInCopper) {
-      // Deduct the spend amount from total wealth in copper
-      totalWealthInCopper -= totalSpendInCopper;
-  
-      // Convert total wealth in copper back to individual currencies
-      for (const currency of Object.keys(conversionRates).sort((a, b) => conversionRates[b] - conversionRates[a])) {
-        if (newWealth[currency] !== undefined) {
-          newWealth[currency] = Math.floor(totalWealthInCopper / conversionRates[currency]);
-          totalWealthInCopper %= conversionRates[currency];
-        }
+
+    // Apply spending by following the rule set requested:
+    // 1) If sufficient in same denom, subtract and do not change other denominations.
+    // 2) Else, if sufficient in smaller denominations only, take from them (largest smaller first).
+    // 3) Else, break larger denominations as needed (providing change back) combined with smaller if necessary.
+    // If none of these can cover the spend, abort with "Insufficient funds".
+
+    const denomOrder = ['pp','gp','ep','sp','cp']; // largest -> smallest
+
+    const idxOf = (d) => denomOrder.indexOf(d);
+    const smallerOf = (d) => denomOrder.slice(idxOf(d) + 1); // smaller denominations
+    const largerOf = (d) => denomOrder.slice(0, idxOf(d)); // larger denominations (largest->closest)
+
+    // Work on a temp wealth object so we can abort on insufficient funds
+    const tempWealth = { ...newWealth };
+
+    for (const currency of Object.keys(spendAmount)) {
+      const coinsToSpend = parseInt(spendAmount[currency], 10) || 0;
+      if (coinsToSpend <= 0) continue;
+      const neededCp = coinsToSpend * conversionRates[currency];
+
+      // Option 1: same denom
+      const availableSame = parseInt(tempWealth[currency], 10) || 0;
+      if (availableSame >= coinsToSpend) {
+        tempWealth[currency] = availableSame - coinsToSpend;
+        console.log(`Wealth Update - used ${coinsToSpend} ${currency} directly`);
+        continue;
       }
-  
-      // Add the addAmount to the new wealth directly
-      for (const currency in addAmount) {
-        if (newWealth[currency] !== undefined) {
-          newWealth[currency] += (parseInt(addAmount[currency]) || 0);
+
+      // Option 2: smaller denominations only
+      const smaller = smallerOf(currency);
+      let totalSmallCp = 0;
+      for (const s of smaller) totalSmallCp += (parseInt(tempWealth[s], 10) || 0) * conversionRates[s];
+      if (totalSmallCp >= neededCp) {
+        // consume from smaller denominations, largest smaller first
+        let remainingCp = neededCp;
+        for (const donor of smaller) {
+          if (remainingCp <= 0) break;
+          const rate = conversionRates[donor];
+          const avail = parseInt(tempWealth[donor], 10) || 0;
+          if (avail <= 0) continue;
+          const take = Math.min(avail, Math.ceil(remainingCp / rate));
+          tempWealth[donor] = avail - take;
+          remainingCp -= take * rate;
+          console.log(`Wealth Update - took ${take} ${donor} from smaller to cover ${currency} spend, remainingCp=${remainingCp}`);
         }
+        continue;
       }
-  
-      setCharacter(prevState => ({
-        ...prevState,
-        Wealth: newWealth,
-      }));
-  
-      // Clear addAmount and spendAmount
-      setAddAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
-      setSpendAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
-      setIsModalShown(false);  // Close the modal once done.
-      saveCharacter();  // Save character, since the user can't click the button anymore
-    } else {
-      // Handle the case where there is not enough total wealth to cover the spend amount
-      alert("Not enough total wealth to cover the spend amount.");
+
+      // Option 3: combine smaller + breaking larger denominations
+      const larger = largerOf(currency);
+      let totalLargeCp = 0;
+      for (const L of larger) totalLargeCp += (parseInt(tempWealth[L], 10) || 0) * conversionRates[L];
+      if (totalSmallCp + totalLargeCp >= neededCp) {
+        // First consume all smaller as far as possible
+        let remainingCp = neededCp;
+        for (const donor of smaller) {
+          if (remainingCp <= 0) break;
+          const rate = conversionRates[donor];
+          const avail = parseInt(tempWealth[donor], 10) || 0;
+          const take = Math.min(avail, Math.ceil(remainingCp / rate));
+          tempWealth[donor] = avail - take;
+          remainingCp -= take * rate;
+          console.log(`Wealth Update - used ${take} ${donor} (smaller) for ${currency} spend, remainingCp=${remainingCp}`);
+        }
+
+        // If still need cp, break larger denominations, starting from the smallest larger (closest above target)
+        if (remainingCp > 0) {
+          const largerSmallestFirst = [...larger].reverse();
+          let changeBuffer = 0; // cp obtained from breaking larger coins
+          for (const donor of largerSmallestFirst) {
+            if (remainingCp <= 0) break;
+            const rate = conversionRates[donor];
+            let avail = parseInt(tempWealth[donor], 10) || 0;
+            while (avail > 0 && remainingCp > 0) {
+              // break one coin
+              avail -= 1;
+              tempWealth[donor] = avail;
+              changeBuffer += rate;
+              // use from buffer
+              const used = Math.min(changeBuffer, remainingCp);
+              changeBuffer -= used;
+              remainingCp -= used;
+              console.log(`Wealth Update - broke 1 ${donor}, used ${used}cp from buffer, remainingCp=${remainingCp}, buffer=${changeBuffer}`);
+            }
+          }
+
+          // Any leftover change in buffer should be converted back into denominations (largest->smallest)
+          if (changeBuffer > 0) {
+            for (const d of denomOrder) {
+              const rate = conversionRates[d];
+              const add = Math.floor(changeBuffer / rate);
+              if (add > 0) {
+                tempWealth[d] = (parseInt(tempWealth[d], 10) || 0) + add;
+                changeBuffer -= add * rate;
+              }
+            }
+            console.log(`Wealth Update - returned change buffer as coins, leftover buffer=${changeBuffer}`);
+          }
+        }
+        continue;
+      }
+
+      // If we reach here, insufficient funds for this particular spend
+      alert('Insufficient funds');
+      return;
     }
+
+    console.log('Wealth Update - final tempWealth after all spends:', tempWealth);
+    // Persist the changes
+    setCharacter(prevState => ({ ...prevState, Wealth: tempWealth }));
+    setAddAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
+    setSpendAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
+    setIsModalShown(false);
+    console.log('Wealth Update - invoking saveCharacter with Wealth:', tempWealth);
+    saveCharacter({ ...character, Wealth: tempWealth });
   };
 
   // Get Equipped items from Inventory & prepared spells from Spellbook
   useEffect(() => {
+    // Only auto-fetch for the currently active character context.
+    // Character switching explicitly loads equipment/spells via loadCharacter().
+    if (headers?.CharacterName && character.Name && headers.CharacterName !== character.Name) {
+      return;
+    }
+
     axios.get('/api/equipment', { headers })
-    .then(response => {
-      console.log("Equipped items from Flask- response.data:", response.data);
-      setCharacter(prevState => ({
-        ...prevState,
-        Equipment: response.data.equipment
-      }));
-    })
-    .catch(error => {
-      console.error(error);
-    });
+      .then(response => {
+        console.log("Equipped items from Flask- response.data:", response.data);
+        setCharacter(prevState => ({
+          ...prevState,
+          Equipment: response.data.equipment
+        }));
+      })
+      .catch(error => {
+        console.error(error);
+      });
 
     axios.get('/api/prepared_spells', { headers })
-    .then(response => {
+      .then(response => {
         console.log("Prepared spells from Flask- response.data:", response.data);
         setCharacter(prevState => ({
           ...prevState,
           Spells: response.data.spells
         }));
-    })
-    .catch(error => {
+      })
+      .catch(error => {
         console.error("Error fetching prepared spells:", error);
-    });
+      });
   }, [headers, character.Name]);
 
   // Determine Attacks based on equipped weapons
@@ -326,74 +551,91 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   // Fetch the character data from the server when the component mounts
   useEffect(() => {
+    // If the page was opened with a specific characterName, load it explicitly.
+    // Otherwise fall back to the backend's "current character" resolution.
+    if (characterName) {
+      loadCharacter(characterName);
+      return;
+    }
+
     console.log("character.Name:", character.Name);
     axios.get(`/api/character`, { headers: headers })
-    .then(response => {
-      console.log('Fetched character data:', response.data);
-      // Update the character state with the data from the server
-      const {
-        strength,
-        dexterity,
-        constitution,
-        intelligence,
-        wisdom,
-        charisma,
-        cp,
-        sp,
-        ep,
-        gp,
-        pp,
-        Proficiencies,
-        ...rest
-      } = response.data;
-      
-      const abilityScores = {
-        strength,
-        dexterity,
-        constitution,
-        intelligence,
-        wisdom,
-        charisma,
-      };
-      
-      const Wealth = {
-        cp,
-        sp,
-        ep,
-        gp,
-        pp,
-      };
-      
-      setCharacter(prevState => ({
-        ...prevState,
-        ...rest,
-        abilityScores,
-        Wealth,
-        Proficiencies,
-      }));
+      .then(response => {
+        console.log('Fetched character data:', response.data);
+        const {
+          strength,
+          dexterity,
+          constitution,
+          intelligence,
+          wisdom,
+          charisma,
+          cp,
+          sp,
+          ep,
+          gp,
+          pp,
+          Proficiencies,
+          Subclass,
+          ...rest
+        } = response.data;
 
-      setLoading(false);
-    })
-    .catch(error => {
-      console.error(error);
-    });
+        const abilityScores = {
+          strength,
+          dexterity,
+          constitution,
+          intelligence,
+          wisdom,
+          charisma,
+        };
+
+        const Wealth = {
+          cp,
+          sp,
+          ep,
+          gp,
+          pp,
+        };
+
+        setCharacter(prevState => ({
+          ...prevState,
+          ...rest,
+          id: response.data.id,  // Track character ID for saves
+          abilityScores,
+          Wealth,
+          Proficiencies,
+          Subclass,
+        }));
+
+        setLoading(false);
+      })
+      .catch(error => {
+        console.error(error);
+      });
   }, [])
 
-  // Log the character data whenever it changes
-  useEffect(() => {
-    console.log("Character Sheet:", character);
-  }, [character]);
+  // // Log the character data whenever it changes
+  // useEffect(() => {
+  //   console.log("Character Sheet:", character);
+  // }, [character]);
 
 
   function handleEdit(event, tileId) {
-    console.log('handleEdit called');
-    console.log('event:', event);
     event.stopPropagation();
-    console.log('event- post propogation:', event);
-    console.log('Editing tile:', tileId);
+    // console.log('Editing tile:', tileId);
+    // Ensure we have fresh lists for class/race when editing their tiles
+    if (tileId === 'Class') fetchPlayerClasses();
+    if (tileId === 'Race') fetchPlayerRaces();
     setEditingTileId(tileId);
     setIsModalShown(true);
   }
+
+  // When opening the Wealth modal, ensure add/spend inputs are reset
+  useEffect(() => {
+    if (isModalShown && editingTileId === 'Wealth') {
+      setAddAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
+      setSpendAmount({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
+    }
+  }, [isModalShown, editingTileId]);
 
   // This function will be called whenever the layout changes
   const handleLayoutChange = (layout, layouts) => {
@@ -401,9 +643,9 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     localStorage.setItem('tileLayout', JSON.stringify(layouts));
   };
 
-  const saveCharacter = () => {
+  const saveCharacter = (overridePayload = null) => {
     // Sanitize UI-facing fields that map to different backend names
-    const payload = { ...character };
+    const payload = overridePayload ? { ...overridePayload } : { ...character };
     if (payload.XP !== undefined) {
       payload.ExperiencePoints = parseInt(payload.XP, 10) || 0;
       delete payload.XP;
@@ -417,9 +659,22 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
       delete payload['Temporary HP'];
     }
 
+    // Ensure subclass is saved explicitly
+    if (character.Subclass && !payload.Subclass) {
+      payload.Subclass = character.Subclass;
+    }
+
+    // Include character ID so backend knows which character to update
+    if (character.id) {
+      payload.id = character.id;
+    }
+
+    console.log('Saving character payload (Wealth):', payload.Wealth);
+    console.log('Saving character ID:', payload.id);
     axios.put(`/api/character`, payload, { headers: headers })
     .then(response => {
       console.log('Character saved successfully', response.status);
+      console.log('Server returned character wealth:', { cp: response.data.cp, sp: response.data.sp, ep: response.data.ep, gp: response.data.gp, pp: response.data.pp });
       // Update local state with canonical server response to avoid stale/misnamed keys
       const {
         strength,
@@ -447,6 +702,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
         return {
           ...cleaned,
           ...rest,
+          id: response.data.id,  // Preserve character ID
           abilityScores: { strength, dexterity, constitution, intelligence, wisdom, charisma },
           Wealth: { cp, sp, ep, gp, pp },
           Proficiencies
@@ -568,74 +824,317 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   function formatFeatures(features, classData) {
     console.log('formatFeatures- Features (from character sheet):', features);
     // console.log('formatFeatures- Class Data:', classData);
-    console.log('formatFeatures- Class Features:', classData.class_features);
-    
+    const classFeatures = (classData && classData.class_features) ? classData.class_features : {};
+    console.log('formatFeatures- Class Features:', classFeatures);
+
     return features.map(feature => {
       const normalizedFeature = normalizeFeatureName(feature);
-      const trait = classData.class_features[normalizedFeature];
+      const trait = classFeatures[normalizedFeature];
       console.log("formatFeatures- trait:", trait);
-      
+
+      let description = '';
+      if (trait) {
+        if (typeof trait === 'string') {
+          description = trait;
+        } else if (trait.description) {
+          description = trait.description;
+        } else if (trait.entries) {
+          description = entriesToDescription(trait);
+        }
+      }
+
       return {
         name: feature,
-        description: trait
-          ? (typeof trait === 'string' ? trait : trait.description || '')
-          : ''
+        description,
       };
     });
   }
 
+  // Flatten 5etools-style entries into a simple description string (best-effort)
+  function entriesToDescription(entry) {
+    if (!entry) return '';
+    const parts = [];
+
+    const walk = (node) => {
+      if (!node) return;
+      if (typeof node === 'string') {
+        parts.push(node);
+        return;
+      }
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (typeof node === 'object') {
+        if (node.name && node.entries) {
+          // include a heading-ish prefix
+          parts.push(node.name);
+          walk(node.entries);
+          return;
+        }
+        if (node.entries) {
+          walk(node.entries);
+          return;
+        }
+        // fallback: stringify known fields
+        if (node.text) parts.push(node.text);
+      }
+    };
+
+    walk(entry.entries || entry);
+    return parts.join('\n');
+  }
+
+  function normalizeFeat(feat) {
+    if (!feat) return null;
+    if (typeof feat === 'string') return { name: feat, description: '' };
+    if (typeof feat === 'object') {
+      const name = feat.name || feat.title || feat.id;
+      if (!name) return null;
+      return {
+        name,
+        description: feat.description || feat.desc || ''
+      };
+    }
+    return null;
+  }
+
+  function mergeFeats(...lists) {
+    const merged = [];
+    const seen = new Set();
+    lists.flat().forEach(item => {
+      const nf = normalizeFeat(item);
+      if (!nf) return;
+      const key = String(nf.name).toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      merged.push(nf);
+    });
+    return merged;
+  }
+
+  function buildClassFeats(classData, level, className, subclassName) {
+    if (!classData) return [];
+
+    const norm = (s) => (s ? String(s).toLowerCase() : '');
+    const matchesSubclass = (entry) => {
+      if (!subclassName) return false;
+      const n = entry.name || entry.subclassShortName || entry.shortName;
+      return norm(n) === norm(subclassName);
+    };
+
+    // 1) From levels array features
+    const featsFromLevels = (() => {
+      const collected = [];
+      const levels = classData.levels || [];
+      for (let i = 0; i < level; i++) {
+        if (levels[i] && Array.isArray(levels[i].features)) {
+          collected.push(...levels[i].features);
+        }
+      }
+      return formatFeatures(collected, classData);
+    })();
+
+    // 2) From classFeatures property (5etools style, often nested arrays)
+    const featsFromClassFeatures = (() => {
+      const out = [];
+      if (Array.isArray(classData.classFeatures)) {
+        classData.classFeatures.flat().forEach((cf, idx) => {
+          if (!cf) return;
+          if (typeof cf === 'string') {
+            out.push({ name: cf, description: '' });
+            return;
+          }
+          const name = cf.name || cf.title || cf.classFeature || `Feature ${idx + 1}`;
+          const description = entriesToDescription(cf);
+          if (cf.level && cf.level > level) return;
+          out.push({ name, description });
+        });
+      }
+      return out;
+    })();
+
+    // 3) From classFeature (capital F) array with level gating
+    const featsFromClassFeature = (() => {
+      const out = [];
+      if (Array.isArray(classData.classFeature)) {
+        classData.classFeature.forEach((cf, idx) => {
+          if (!cf) return;
+          if (cf.level && cf.level > level) return;
+          const name = cf.name || cf.title || `Feature ${idx + 1}`;
+          const description = entriesToDescription(cf);
+          out.push({ name, description });
+        });
+      }
+      return out;
+    })();
+
+    // 4) From entries (some newer data uses entries arrays like races)
+    const featsFromEntries = (() => {
+      if (!Array.isArray(classData.entries)) return [];
+      return classData.entries
+        .map((ent, idx) => {
+          if (typeof ent === 'string') return { name: `Feature ${idx + 1}`, description: ent };
+          const name = ent.name || ent.title || `Feature ${idx + 1}`;
+          const description = entriesToDescription(ent);
+          return { name, description };
+        })
+        .filter(Boolean);
+    })();
+
+    // 5) From a plain features array if present
+    const featsFromFeaturesArray = Array.isArray(classData.features)
+      ? classData.features.map((f, idx) => ({ name: f.name || f.title || f.id || `Feature ${idx + 1}`, description: f.description || entriesToDescription(f) }))
+      : [];
+
+    // 6) Subclass features filtered by selected subclass and level
+    const featsFromSubclass = (() => {
+      if (!subclassName || !Array.isArray(classData.subclassFeature)) return [];
+      return classData.subclassFeature
+        .filter(sf => (!sf.level || sf.level <= level) && (!sf.className || norm(sf.className) === norm(className)) && matchesSubclass(sf))
+        .map((sf, idx) => ({
+          name: sf.name || sf.title || `Subclass Feature ${idx + 1}`,
+          description: entriesToDescription(sf)
+        }));
+    })();
+
+    return mergeFeats(
+      featsFromLevels,
+      featsFromClassFeatures,
+      featsFromClassFeature,
+      featsFromEntries,
+      featsFromFeaturesArray,
+      featsFromSubclass
+    );
+  }
+
   // Fetch character and race information from Flask and update character state
   useEffect(() => {
-    const fetchClassData = character.Class ? axios.get(`/api/classes/${character.Class}`) : Promise.resolve(null);
-    const fetchRaceData = character.Race ? axios.get(`/api/races/${character.Race}`) : Promise.resolve(null);
-  
-    Promise.all([fetchClassData, fetchRaceData])
-      .then(([classResponse, raceResponse]) => {
+    // Detect if Class, Subclass, or Race has changed
+    const classChanged = prevClassRef.current !== null && prevClassRef.current !== character.Class;
+    const subclassChanged = prevSubclassRef.current !== null && prevSubclassRef.current !== character.Subclass;
+    const raceChanged = prevRaceRef.current !== null && prevRaceRef.current !== character.Race;
+
+    const systemHeader = headers?.System || 'D&D 5e';
+    const requestHeaders = { ...headers, System: systemHeader };
+    const requestParams = { system: systemHeader };
+
+    const fetchClassData = character.Class
+      ? axios.get(`/api/classes/${encodeURIComponent(character.Class)}`, { headers: requestHeaders, params: requestParams })
+      : Promise.resolve(null);
+    const fetchRaceData = character.Race
+      ? axios.get(`/api/races/${encodeURIComponent(character.Race)}`, { headers: requestHeaders, params: requestParams })
+      : Promise.resolve(null);
+
+    Promise.allSettled([fetchClassData, fetchRaceData])
+      .then(([classResult, raceResult]) => {
         setCharacter(prevState => {
           let newCharacterState = { ...prevState };
+
+          // Rebuild feats from scratch whenever we refetch class/race data
+          let classFeats = [];
+          let raceFeats = [];
+
+          // Reset subclass dropdown while loading a new class
+          if (classChanged) {
+            setSubclassOptions([]);
+          }
+
+          // Reset feats and proficiencies if class, subclass, or race changed
+          if (classChanged || subclassChanged || raceChanged) {
+            console.log('Class/Subclass/Race changed - resetting feats and proficiencies');
+            newCharacterState.Feats = [];
+            newCharacterState.Proficiencies = [];
+          }
   
-          if (classResponse) {
-            const classData = classResponse.data;
+          if (classResult.status === 'fulfilled' && classResult.value) {
+            const classData = classResult.value.data || {};
             console.log('Class info from Flask-', classData);
-  
-            newCharacterState.HitPointMax = classData.hit_points.base + (prevState.Level * (classData.hit_points.level_increment + getModifier(prevState.abilityScores.constitution)));
-  
-            const features = [];
-            console.log("Character Level:", prevState.Level);
-            for (let i = 0; i < prevState.Level; i++) {
-              console.log("Level:", i);
-              features.push(...classData.levels[i].features);
+
+          if (raceResult.status === 'fulfilled' && raceResult.value) {
+            const raceData = raceResult.value.data;
+              const names = classData.subclass
+                .map(sc => sc && (sc.name || sc.shortName))
+                .filter(Boolean);
+              const uniq = [...new Set(names)].sort((a, b) => String(a).localeCompare(String(b)));
+              setSubclassOptions(uniq);
+            } else {
+              setSubclassOptions([]);
             }
-            newCharacterState.Feats = formatFeatures(features, classData);
+
+            // Safely handle missing hitPoints in class data
+            const classHitPoints = classData.hit_points || { base: 0, level_increment: 0 };
+            console.log("Class Hit Points:", classHitPoints);
+            newCharacterState.HitPointMax = classHitPoints.base + (prevState.Level * (classHitPoints.level_increment + getModifier(prevState.abilityScores.constitution)));
+            // Keep local hitPoints state in sync so the edit modal displays the class defaults
+            setHitPoints(classHitPoints);
+
+            classFeats = buildClassFeats(classData, prevState.Level, prevState.Class, prevState.Subclass || newCharacterState.Subclass);
             newCharacterState.Proficiencies = [
               ...(prevState.Proficiencies || []),
               ...(classData.armor_proficiencies || []),
               ...(classData.weapon_proficiencies || [])
             ];
           }
+          if (classResult.status === 'rejected') {
+            console.error('Error fetching class info:', classResult.reason);
+            if (classChanged) setSubclassOptions([]);
+          }
+          if (raceResult.status === 'rejected') {
+            console.error('Error fetching race info:', raceResult.reason);
+          }
   
-          if (raceResponse) {
-            const raceData = raceResponse.data;
-            console.log("Languages:", raceData.languages);
+          if (raceResult.status === 'fulfilled' && raceResult.value) {
+            const raceData = raceResult.value.data;
+            console.log("raceData:", raceData);
   
+            // Safely append languages (may be undefined) and traits
             newCharacterState.Proficiencies = [
               ...(newCharacterState.Proficiencies || []),
-              raceData.languages // Append the language string directly
+              ...(raceData.languages || [])
             ];
-            newCharacterState.Speed = raceData.speed;
-            newCharacterState.Feats = [
-              ...(newCharacterState.Feats || []),
-              ...Object.values(raceData.traits)
-            ];
+            newCharacterState.Speed = raceData.speed || newCharacterState.Speed;
+            const raceTraits = raceData?.traits
+              ? Object.entries(raceData.traits).map(([name, val]) => ({
+                name,
+                description: typeof val === "string" ? val : (val?.description ?? "")
+              }))
+              : [];
+
+            // Newer format: entries array with objects containing name/entries
+            const raceEntries = Array.isArray(raceData.entries)
+              ? raceData.entries
+                  .map((ent, idx) => {
+                    if (typeof ent === 'string') return { name: `Trait ${idx + 1}`, description: ent };
+                    const name = ent.name || ent.title || `Trait ${idx + 1}`;
+                    const description = entriesToDescription(ent);
+                    return { name, description };
+                  })
+                  .filter(Boolean)
+              : [];
+
+            raceFeats = mergeFeats(raceTraits, raceEntries);
           }
+          else if (raceChanged) {
+            // Clear race-dependent feats if race data failed to load
+            raceFeats = [];
+          }
+
+          // Finalize feats as a clean recomputation from class/race data only
+          newCharacterState.Feats = mergeFeats(classFeats, raceFeats);
   
           return newCharacterState;
         });
+
+        // Update refs after processing
+        prevClassRef.current = character.Class;
+        prevSubclassRef.current = character.Subclass;
+        prevRaceRef.current = character.Race;
       })
       .catch(error => {
         console.error(error);
       });
-  }, [character.Class, character.Race, character.Level]);
+  }, [character.Class, character.Race, character.Level, character.Subclass]);
 
 
   // Calculate Skill Levels
@@ -731,8 +1230,9 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     }
   }
 
+  // Calculate Armor Class if equipment or Dexterity changes
+  // Populate Attacks based on equipped weapons
   useEffect(() => {
-    // Calculate Armor Class if equipment or Dexterity changes
     const armorClass = calculateArmorClass();
     console.log('Armor Class:', armorClass);
   
@@ -813,10 +1313,14 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   function generateTileContent(tileId) {
     switch (tileId) {
       case 'Name':
-        return character?.Name ? (
-          <h1>{character.Name}</h1>
-        ) : (
-          <Placeholder as="h1" animation="glow" />
+        return (
+          <div>
+            {character?.Name ? (
+              <h1>{character.Name}</h1>
+            ) : (
+              <Placeholder as="h1" animation="glow" />
+            )}
+          </div>
         );
       case 'Class':
         return (
@@ -824,15 +1328,24 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             <div className="label">Class:</div>
             <h3 className="center">
               {character?.Class && character?.Level ? (
-                `${character.Class} ${character.Level}`
+                <>
+                  <div style={{ textAlign: 'center' }}>{`${character.Class} ${character.Level}`}</div>
+                  {character?.Subclass ? (
+                    <div style={{ fontSize: '0.9em', textAlign: 'center' }}>{character.Subclass}</div>
+                  ) : null}
+                </>
               ) : (
                 <>
-                  <Placeholder as="span" animation="glow">
-                    <Placeholder xs={6} />
-                  </Placeholder>
-                  <Placeholder as="span" animation="glow">
-                    <Placeholder xs={2} />
-                  </Placeholder>
+                  <div style={{ textAlign: 'center' }}>
+                    <Placeholder as="span" animation="glow">
+                      <Placeholder xs={6} />
+                    </Placeholder>
+                  </div>
+                  <div style={{ fontSize: '0.9em', textAlign: 'center' }}>
+                    <Placeholder as="span" animation="glow">
+                      <Placeholder xs={4} />
+                    </Placeholder>
+                  </div>
                 </>
               )}
             </h3>
@@ -1087,12 +1600,15 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             <h3>Feats:</h3>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
               {Array.isArray(character?.Feats) && character.Feats.length > 0 ? (
-                character.Feats.map((feature, index) => (
-                  <div key={index}>
-                    <h4>{feature.name}</h4>
-                    <p>{feature.description}</p>
-                  </div>
-                ))
+                character.Feats
+                  .map(normalizeFeat)
+                  .filter(Boolean)
+                  .map((feat, index) => (
+                    <div key={`${feat.name}-${index}`}>
+                      <h4>{feat.name}</h4>
+                      {feat.description ? <p>{feat.description}</p> : null}
+                    </div>
+                  ))
               ) : (
                 <Placeholder as="p" animation="glow">
                   <Placeholder xs={12} />
@@ -1299,7 +1815,11 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
         >
           {character && tiles.map(tile => (
             <div key={tile.i} className="tile" > {/* Apparently this being className "tile is important for the edit button to work */}
-              <div className="edit-icon" onClick={(event) => { event.stopPropagation(); handleEdit(event, tile.i); }}>
+              <div
+                className="edit-icon"
+                onMouseDown={(event) => { event.stopPropagation(); event.preventDefault(); }}
+                onClick={(event) => { event.stopPropagation(); handleEdit(event, tile.i); }}
+              >
                 <EditIcon />
               </div>
               <Paper elevation={3} style={{ height: '100%', padding: '10px', position: 'relative', position: 'relative'}}>
@@ -1329,6 +1849,28 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             {(() => {
               // Determine what type of input to display based on the tileId
               switch (editingTileId) {
+                case 'Name': {
+                  return (
+                    <Form.Group>
+                      <Form.Label>Select character</Form.Label>
+                      <Form.Control
+                        as="select"
+                        value={character.Name || ''}
+                        onChange={e => switchCharacter(e.target.value)}
+                      >
+                        <option value="" disabled>Select character</option>
+                        {(() => {
+                          const options = [...characters];
+                          if (character.Name && !options.includes(character.Name)) options.unshift(character.Name);
+                          if (options.length === 0) return <option disabled>No characters found</option>;
+                          return options.map(name => (
+                            <option key={name} value={name}>{name}</option>
+                          ));
+                        })()}
+                      </Form.Control>
+                    </Form.Group>
+                  );
+                }
                 case 'Background':
                 case 'Personality Traits':
                 case 'Bonds':
@@ -1378,18 +1920,44 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                   );
                 }
                 case 'Class':
-                  return(
-                    <Form.Control as="select" value={character.Class} onChange={e => {
-                      setCharacter({
-                        ...character,
-                        [editingTileId]: e.target.value,
-                      });
-                    }}>
-                      <option value="" disabled>Select class</option>
-                      {playerClasses.map(playerClass => (
-                        <option key={playerClass} value={playerClass}>{playerClass}</option>
-                      )) || <p>No classes defined</p>}
-                    </Form.Control>
+                  return (
+                    <>
+                      <Form.Label>Class</Form.Label>
+                      <Form.Control as="select" value={character.Class} onChange={e => {
+                        setCharacter({
+                          ...character,
+                          [editingTileId]: e.target.value,
+                          Subclass: null,
+                        });
+                      }}>
+                        <option value="" disabled>Select class</option>
+                        {(() => {
+                          const options = [...playerClasses];
+                          if (character.Class && !options.includes(character.Class)) options.unshift(character.Class);
+                          if (options.length === 0) return <option disabled>No classes defined</option>;
+                          return options.map(playerClass => (
+                            <option key={playerClass} value={playerClass}>{playerClass}</option>
+                          ));
+                        })()}
+                      </Form.Control>
+
+                      <Form.Label style={{ marginTop: '0.75rem' }}>Subclass</Form.Label>
+                      <Form.Control as="select" value={character.Subclass || ''} onChange={e => {
+                        setCharacter({
+                          ...character,
+                          Subclass: e.target.value || null,
+                        });
+                      }}>
+                        <option value="">(None)</option>
+                        {(() => {
+                          const options = [...subclassOptions];
+                          if (character.Subclass && !options.includes(character.Subclass)) options.unshift(character.Subclass);
+                          return options.map(sc => (
+                            <option key={sc} value={sc}>{sc}</option>
+                          ));
+                        })()}
+                      </Form.Control>
+                    </>
                   );
                 case 'Race':
                   return(
@@ -1400,9 +1968,14 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                       });
                     }}>
                       <option value="" disabled>Select race</option>
-                      {playerRaces.map(race => (
-                        <option key={race} value={race}>{race}</option>
-                      )) || <p>No races defined</p>}
+                      {(() => {
+                        const options = [...playerRaces];
+                        if (character.Race && !options.includes(character.Race)) options.unshift(character.Race);
+                        if (options.length === 0) return <option disabled>No races defined</option>;
+                        return options.map(race => (
+                          <option key={race} value={race}>{race}</option>
+                        ));
+                      })()}
                     </Form.Control>
                   );
                 case 'Alignment':
@@ -1519,7 +2092,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                                   type="number"
                                   value={amount}
                                   onChange={e => {
-                                    const newAmount = parseInt(e.target.value) + (parseInt(addAmount[currency]) || 0);
+                                    const newAmount = e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0;
                                     setCharacter(prevCharacter => {
                                       const newWealth = { ...prevCharacter.Wealth };
                                       newWealth[currency] = newAmount;
@@ -1548,6 +2121,33 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                           ))}
                         </tbody>
                       </Table>
+                      {/* Show a hint when requested spend exceeds a single-currency balance and we'll make change */}
+                      {(() => {
+                        const conversionRates = { pp: 1000, gp: 100, ep: 50, sp: 10, cp: 1 };
+                        // compute totals after adding addAmount
+                        let totalSpend = 0;
+                        let totalWealth = 0;
+                        const insufficient = [];
+                        for (const c of Object.keys(spendAmount)) {
+                          const s = parseInt(spendAmount[c], 10) || 0;
+                          totalSpend += s * conversionRates[c];
+                          const available = (parseInt(character.Wealth[c], 10) || 0) + (parseInt(addAmount[c], 10) || 0);
+                          if (s > available) insufficient.push(c);
+                        }
+                        for (const c of Object.keys(conversionRates)) {
+                          totalWealth += ((parseInt(character.Wealth[c], 10) || 0) + (parseInt(addAmount[c], 10) || 0)) * conversionRates[c];
+                        }
+
+                        if (insufficient.length > 0 && totalWealth >= totalSpend) {
+                          return (
+                            <div style={{ marginTop: 8, marginBottom: 8, color: '#555' }}>
+                              Auto-making change from larger denominations for: {insufficient.join(', ')}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
+
                       <button onClick={handleWealthUpdate}>Update Wealth</button>
                     </div>
                   );

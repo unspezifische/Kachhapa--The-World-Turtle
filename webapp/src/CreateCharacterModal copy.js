@@ -74,7 +74,7 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
 
     // Get the list of playable races and classes from the server
     useEffect(() => {
-        axios.get('/api/races')
+        axios.get('/api/races', { headers })
             .then((response) => {
                 console.log("Races-", response.data)
                 const sortedRaces = response.data.sort((a, b) => a.name.localeCompare(b.name));
@@ -86,7 +86,7 @@ const CreateCharacterModal = ({ show, onHide, headers }) => {
     }, []);
 
     useEffect(() => {
-        axios.get('/api/classes')
+        axios.get('/api/classes', { headers })
             .then((response) => {
                 console.log("Classes-", response.data);
                 const sortedClasses = response.data.sort((a, b) => a.name.localeCompare(b.name));

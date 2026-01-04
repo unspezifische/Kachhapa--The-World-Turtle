@@ -10,6 +10,10 @@ DESTINATION="ijohnson@raspberrypi.local"
 rsync -avz Flask/requirements.txt $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying requirements.txt"
 
+# Copy the import_5etools.py script
+rsync -avz Flask/import_5etools.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
+echo "Finished copying import_5etools.py"
+
 # # Install Python dependencies on the Raspberry Pi
 # ssh $DESTINATION "pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
 # echo "Finished installing Python dependencies"
@@ -49,8 +53,9 @@ PI_DUMP_FILE="database_backup.dump"
 LOCAL_DB="local_db"
 
 # password for PG db: should be 'admin'. Whatever is in the Flask app in the line `app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@postgres:5432/db'`
-# Dump the PostgreSQL database on the Raspberry Pi
-ssh $DESTINATION "pg_dump -U admin -W -F c $PI_DB > $PI_DUMP_FILE"
+# Dump the PostgreSQL database on the Raspberry Pi (non-interactive password)
+# NOTE: avoid exposing the password in process lists/logs; PGPASSWORD is scoped to this command.
+ssh $DESTINATION "PGPASSWORD='admin' pg_dump -U admin -h localhost -F c $PI_DB > $PI_DUMP_FILE"
 echo "Finished dumping the database on the Raspberry Pi"
 
 # Copy the dump file from the Raspberry Pi to the local machine

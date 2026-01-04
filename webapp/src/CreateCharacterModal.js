@@ -250,21 +250,25 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     useEffect(() => {
         const fetchData = async () => {
             try {
+                const systemHeader = headers?.System || 'D&D 5e';
+                const requestHeaders = { ...headers, System: systemHeader };
+                const requestParams = { system: systemHeader };
+
                 const [racesResponse, classesResponse, backgroundsResponse] = await Promise.all([
-                    axios.get('/api/races'),
-                    axios.get('/api/classes'),
-                    axios.get('/api/backgrounds')
+                    axios.get('/api/races', { headers: requestHeaders, params: requestParams }),
+                    axios.get('/api/classes', { headers: requestHeaders, params: requestParams }),
+                    axios.get('/api/backgrounds', { headers: requestHeaders, params: requestParams })
                 ]);
     
-                console.log("Races-", racesResponse.data);
+                console.log("CreateCharacter- Races-", racesResponse.data);
                 const sortedRaces = racesResponse.data.sort((a, b) => a.name.localeCompare(b.name));
                 setRaces(sortedRaces);
     
-                console.log("Classes-", classesResponse.data);
+                console.log("CreateCharacter- Classes-", classesResponse.data);
                 const sortedClasses = classesResponse.data.sort((a, b) => a.name.localeCompare(b.name));
                 setClasses(sortedClasses);
     
-                console.log("Backgrounds-", backgroundsResponse.data);
+                console.log("CreateCharacter- Backgrounds-", backgroundsResponse.data);
                 const sortedBackgrounds = backgroundsResponse.data.sort((a, b) => a.name.localeCompare(b.name));
                 setBackgrounds(sortedBackgrounds);
             } catch (error) {
@@ -281,8 +285,12 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
 
     // Save the completed character
     const handleCreateCharacter = () => {
+        // Ensure a default system is always sent
+        const payload = { ...character, system: character.system || 'D&D 5e' };
+        const requestHeaders = { ...headers, System: payload.system };
+
         // Send the character data to the server
-        axios.put('/api/character', { headers, character })
+        axios.put('/api/character', payload, { headers: requestHeaders })
             .then((response) => {
                 console.log(response);
                 onHide();

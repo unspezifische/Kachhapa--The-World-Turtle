@@ -9,14 +9,24 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - Kachhapa-network
 
   rabbitmq:
-    image: rabbitmq:latest
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "a-very-long-random-string-at-least-20-characters"
     ports:
       - "5672:5672"
       - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmqctl", "status"]
       interval: 10s
@@ -33,11 +43,16 @@ services:
       rabbitmq:
         condition: service_healthy
       postgres:
-        condition: service_started
+        condition: service_healthy
     volumes:
+      - ./Flask:/app
       - myapp_socket:/tmp
     ports:
       - "5001:5000"
+    environment:
+      FLASK_ENV: development
+      FLASK_DEBUG: "1"
+      RABBIT_URL: amqp://guest:guest@rabbitmq:5672//
     networks:
       - Kachhapa-network
 
@@ -57,6 +72,7 @@ services:
 volumes:
   postgres_data:
   myapp_socket:
+  rabbitmq_data:
 
 networks:
   Kachhapa-network:

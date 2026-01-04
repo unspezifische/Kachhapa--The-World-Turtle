@@ -41,7 +41,7 @@ new_campaign = None
 if admin_user:
     campaign_data = {
         "name": "Admin's Campaign",
-        "system": "D&D 5E",
+        "system": "D&D 5e",
         # "icon": "icon_url",
         "description": "A default campaign for testing",
         "scribes": []
@@ -67,7 +67,7 @@ else:
 if admin_user and new_campaign:
     character_data = {
         # "icon": "icon_url",
-        "system": "D&D 5E",
+        "system": "D&D 5e",
         "character_name": "Admin"
     }
 
@@ -102,7 +102,7 @@ else:
 if user_user and new_campaign:
     character_data = {
         # "icon": "icon_url",
-        "system": "D&D 5E",
+        "system": "D&D 5e",
         "character_name": "Test Character",
         "Class": "Sorcerer",
         "Background": "Sage",

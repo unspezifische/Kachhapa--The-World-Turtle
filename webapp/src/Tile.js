@@ -22,6 +22,14 @@ const ResizablePaper = (props) => {
                 style={{ position: 'relative', overflow: 'hidden' }}
                 onMouseEnter={() => setHover(true)}
                 onMouseLeave={() => setHover(false)}
+                onClick={(e) => {
+                    // Allow parent to handle click if provided, else just log for debug
+                    if (props.onClick) {
+                        props.onClick(e);
+                    } else {
+                        console.log('Tile click (no handler):', { x: e.clientX, y: e.clientY });
+                    }
+                }}
             >
                 {props.children}
                 {hover && <IconButton style={{ position: 'absolute', top: 0, right: 0 }}><props.editIcon /></IconButton>}
@@ -73,7 +81,13 @@ const Tile = ({ data = [], editIcon = EditIcon }) => {
         <ResponsiveGridLayout className="layout" cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }} onResize={onResize}>
             {layout.map((item, index) => (
                 <div key={item.i} data-grid={{ x: item.x, y: item.y, w: item.w, h: item.h }}>
-                    <ResizablePaper onResizeStart={onResizeStart} onResize={onResize} onResizeStop={onResizeStop} editIcon={editIcon}>
+                    <ResizablePaper
+                        onResizeStart={onResizeStart}
+                        onResize={onResize}
+                        onResizeStop={onResizeStop}
+                        editIcon={editIcon}
+                        onClick={() => console.log('Tile clicked', { id: item.i, content: item.content, index })}
+                    >
                         <span className="text">{item.content}</span>
                     </ResizablePaper>
                 </div>
