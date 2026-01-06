@@ -36,7 +36,7 @@ from flask_migrate import Migrate   ## For database migrations
 
 from flask_compress import Compress
 
-from fuzzywuzzy import fuzz, process
+from rapidfuzz import fuzz, process
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -68,7 +68,15 @@ dashboard.bind(app)
 
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'Library')
 app.config['SECRET_KEY'] = 'secret-key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://admin:admin@postgres:5432/db'
+
+db_url = os.environ.get("DATABASE_URL")
+
+if not db_url:
+    # Bare-metal default: local Postgres on the same machine
+    # (use localhost TCP to avoid socket/peer surprises)
+    db_url = "postgresql://admin:admin@localhost:5432/db"
+
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 
 ## Token stuff
 app.config['JWT_SECRET_KEY'] = 'jwt-secret-key'
@@ -104,6 +112,7 @@ RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@127.0.0.1:5672//")
 
 socketio = SocketIO(
     app,
+    async_mode="gevent",
     message_queue=RABBIT_URL,
     cors_allowed_origins="*",
     logger=True,

@@ -35,35 +35,35 @@ const skillAbilities = {
 };
 
 const tiles = [
-  { "w": 2, "h": 4, "x": 0, "y": 0, "i": "Name" },
-  { "w": 2, "h": 4, "x": 2, "y": 0, "i": "Class" },
-  { "w": 1, "h": 3, "x": 2, "y": 3, "i": "Race" },
-  { "w": 1, "h": 4, "x": 3, "y": 0, "i": "Alignment" },
-  { "w": 1, "h": 20, "x": 0, "y": 4, "i": "Ability Scores" },
-  { "w": 1, "h": 3, "x": 1, "y": 4, "i": "Proficiency Bonus" },
-  { "w": 1, "h": 12, "x": 1, "y": 7, "i": "Saving Throws" },
-  { "w": 2, "h": 19, "x": 3, "y": 14, "i": "Skills" },
-  { "w": 2, "h": 4, "x": 3, "y": 38, "i": "Personality Traits" },
-  { "w": 2, "h": 4, "x": 1, "y": 31, "i": "Ideals" },
-  { "w": 2, "h": 4, "x": 1, "y": 35, "i": "Bonds" },
-  { "w": 2, "h": 5, "x": 3, "y": 33, "i": "Flaws" },
-  { "w": 2, "h": 9, "x": 5, "y": 0, "i": "Feats" },
-  { "w": 2, "h": 11, "x": 5, "y": 16, "i": "Attacks" },
-  { "w": 2, "h": 13, "x": 5, "y": 27, "i": "Actions" },
-  { "w": 2, "h": 7, "x": 5, "y": 40, "i": "Spells" },
-  { "w": 2, "h": 7, "x": 5, "y": 9, "i": "Equipment" },
-  { "w": 2, "h": 12, "x": 1, "y": 19, "i": "Proficiencies" },
-  { "w": 1, "h": 7, "x": 2, "y": 12, "i": "Wealth" },
-  { "w": 1, "h": 3, "x": 3, "y": 8, "i": "Initiative" },
-  { "w": 1, "h": 3, "x": 4, "y": 4, "i": "Speed" },
-  { "w": 1, "h": 3, "x": 2, "y": 6, "i": "Armor Class" },
-  { "w": 1, "h": 3, "x": 3, "y": 4, "i": "Background" },
-  { "w": 1, "h": 4, "x": 4, "y": 0, "i": "XP" },
-  { "w": 1, "h": 4, "x": 4, "y": 10, "i": "Passive Perception" },
-  { "w": 1, "h": 3, "x": 2, "y": 9, "i": "Max HP" },
-  { "w": 1, "h": 3, "x": 3, "y": 11, "i": "Current HP" },
-  { "w": 1, "h": 3, "x": 4, "y": 7, "i": "Temporary HP" }
-]
+  { w: 2, h: 4, x: 0, y: 0, i: "Name" },
+  { w: 1, h: 3, x: 2, y: 0, i: "Class" },
+  { w: 1, h: 3, x: 2, y: 3, i: "Race" },
+  { w: 1, h: 4, x: 3, y: 0, i: "Alignment" },
+  { w: 1, h: 20, x: 0, y: 4, i: "Ability Scores" },
+  { w: 1, h: 3, x: 1, y: 4, i: "Proficiency Bonus" },
+  { w: 1, h: 12, x: 1, y: 7, i: "Saving Throws" },
+  { w: 2, h: 19, x: 3, y: 14, i: "Skills" },
+  { w: 2, h: 4, x: 3, y: 38, i: "PersonalityTraits" },
+  { w: 2, h: 4, x: 1, y: 31, i: "Ideals" },
+  { w: 2, h: 4, x: 1, y: 35, i: "Bonds" },
+  { w: 2, h: 5, x: 3, y: 33, i: "Flaws" },
+  { w: 2, h: 9, x: 5, y: 0, i: "Feats" },
+  { w: 2, h: 11, x: 5, y: 16, i: "Attacks" },
+  { w: 2, h: 13, x: 5, y: 27, i: "Actions" },
+  { w: 2, h: 7, x: 5, y: 40, i: "Spells" },
+  { w: 2, h: 7, x: 5, y: 9, i: "Equipment" },
+  { w: 2, h: 12, x: 1, y: 19, i: "Proficiencies" },
+  { w: 1, h: 7, x: 2, y: 12, i: "Wealth" },
+  { w: 1, h: 3, x: 3, y: 8, i: "Initiative" },
+  { w: 1, h: 3, x: 4, y: 4, i: "Speed" },
+  { w: 1, h: 3, x: 2, y: 6, i: "Armor Class" },
+  { w: 1, h: 4, x: 3, y: 4, i: "Background" },
+  { w: 1, h: 4, x: 4, y: 0, i: "ExperiencePoints" },
+  { w: 1, h: 4, x: 4, y: 10, i: "PassivePerception" },
+  { w: 1, h: 3, x: 2, y: 9, i: "HitPointMax" },
+  { w: 1, h: 3, x: 3, y: 11, i: "CurrentHitPoints" },
+  { w: 1, h: 3, x: 4, y: 7, i: "TemporaryHitPoints" }
+];
 
 const defaultLayout = {
   lg: tiles,
@@ -167,7 +167,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           Name: nameToLoad,
           abilityScores,
           Wealth,
-          Proficiencies,
+          Proficiencies: dedupeProficiencies(Proficiencies),  // Clean up any existing duplicates
           Subclass,
           Equipment: equipmentResponse?.data?.equipment ?? prev.Equipment,
           Spells: spellsResponse?.data?.spells ?? prev.Spells,
@@ -407,21 +407,25 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
       if (coinsToSpend <= 0) continue;
       const neededCp = coinsToSpend * conversionRates[currency];
 
-      // Option 1: same denom
+      // Step 1: Use what's available in the same denomination first
       const availableSame = parseInt(tempWealth[currency], 10) || 0;
-      if (availableSame >= coinsToSpend) {
-        tempWealth[currency] = availableSame - coinsToSpend;
-        console.log(`Wealth Update - used ${coinsToSpend} ${currency} directly`);
-        continue;
+      const usedSame = Math.min(availableSame, coinsToSpend);
+      tempWealth[currency] = availableSame - usedSame;
+      let remainingCp = (coinsToSpend - usedSame) * conversionRates[currency];
+      
+      if (usedSame > 0) {
+        console.log(`Wealth Update - used ${usedSame} ${currency} from same denomination, remaining needed: ${remainingCp}cp`);
       }
+      
+      // If fully covered, continue to next spend
+      if (remainingCp <= 0) continue;
 
-      // Option 2: smaller denominations only
+      // Step 2: smaller denominations only
       const smaller = smallerOf(currency);
       let totalSmallCp = 0;
       for (const s of smaller) totalSmallCp += (parseInt(tempWealth[s], 10) || 0) * conversionRates[s];
-      if (totalSmallCp >= neededCp) {
+      if (totalSmallCp >= remainingCp) {
         // consume from smaller denominations, largest smaller first
-        let remainingCp = neededCp;
         for (const donor of smaller) {
           if (remainingCp <= 0) break;
           const rate = conversionRates[donor];
@@ -435,13 +439,12 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
         continue;
       }
 
-      // Option 3: combine smaller + breaking larger denominations
+      // Step 3: combine smaller + breaking larger denominations
       const larger = largerOf(currency);
       let totalLargeCp = 0;
       for (const L of larger) totalLargeCp += (parseInt(tempWealth[L], 10) || 0) * conversionRates[L];
-      if (totalSmallCp + totalLargeCp >= neededCp) {
+      if (totalSmallCp + totalLargeCp >= remainingCp) {
         // First consume all smaller as far as possible
-        let remainingCp = neededCp;
         for (const donor of smaller) {
           if (remainingCp <= 0) break;
           const rate = conversionRates[donor];
@@ -764,6 +767,18 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     return Math.ceil(level / 4) + 1;
   }
 
+  // Remove duplicate proficiencies (case-insensitive comparison)
+  function dedupeProficiencies(proficiencies) {
+    if (!Array.isArray(proficiencies)) return [];
+    const seen = new Set();
+    return proficiencies.filter(p => {
+      const normalized = String(p || '').toLowerCase().trim();
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+  }
+
   // Return a sensible default base walking speed (in feet) for a given race.
   // TODO: Prefer retrieving this from the race API when available.
   function getBaseSpeed(race) {
@@ -1051,8 +1066,8 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             const classData = classResult.value.data || {};
             console.log('Class info from Flask-', classData);
 
-          if (raceResult.status === 'fulfilled' && raceResult.value) {
-            const raceData = raceResult.value.data;
+            // Extract subclass options from class data
+            if (classData.subclass && Array.isArray(classData.subclass)) {
               const names = classData.subclass
                 .map(sc => sc && (sc.name || sc.shortName))
                 .filter(Boolean);
@@ -1070,11 +1085,11 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             setHitPoints(classHitPoints);
 
             classFeats = buildClassFeats(classData, prevState.Level, prevState.Class, prevState.Subclass || newCharacterState.Subclass);
-            newCharacterState.Proficiencies = [
+            newCharacterState.Proficiencies = dedupeProficiencies([
               ...(prevState.Proficiencies || []),
               ...(classData.armor_proficiencies || []),
               ...(classData.weapon_proficiencies || [])
-            ];
+            ]);
           }
           if (classResult.status === 'rejected') {
             console.error('Error fetching class info:', classResult.reason);
@@ -1089,10 +1104,10 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             console.log("raceData:", raceData);
   
             // Safely append languages (may be undefined) and traits
-            newCharacterState.Proficiencies = [
+            newCharacterState.Proficiencies = dedupeProficiencies([
               ...(newCharacterState.Proficiencies || []),
               ...(raceData.languages || [])
-            ];
+            ]);
             newCharacterState.Speed = raceData.speed || newCharacterState.Speed;
             const raceTraits = raceData?.traits
               ? Object.entries(raceData.traits).map(([name, val]) => ({
@@ -2027,7 +2042,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                           if (e.target.checked) {
                             setCharacter({
                               ...character,
-                              Proficiencies: [...(character.Proficiencies || []), skill],
+                              Proficiencies: dedupeProficiencies([...(character.Proficiencies || []), skill]),
                             });
                           } else {
                             setCharacter({
@@ -2052,7 +2067,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                           if (e.target.checked) {
                             setCharacter({
                               ...character,
-                              Proficiencies: [...(character.Proficiencies || []), Throw],
+                              Proficiencies: dedupeProficiencies([...(character.Proficiencies || []), Throw]),
                             });
                           } else {
                             setCharacter({

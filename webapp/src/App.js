@@ -30,7 +30,8 @@ import { use } from 'react';
 
 
 function App() {
-  const SOCKET_URL = window.location.hostname === 'localhost' ? 'ws://localhost' : 'ws://app.raspberrypi.local';
+  // Use current origin for socket; socket.io will handle ws upgrade. Keeps host consistent for all served domains.
+  const SOCKET_URL = window.location.origin;
 
   const [token, setToken] = useState(localStorage.getItem('token') || '');
 
