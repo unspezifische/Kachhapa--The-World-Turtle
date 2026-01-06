@@ -22,6 +22,7 @@ services:
     hostname: rabbitmq
     environment:
       RABBITMQ_ERLANG_COOKIE: "a-very-long-random-string-at-least-20-characters"
+      DATABASE_URL: postgresql://admin:admin@postgres:5432/db
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -46,6 +47,7 @@ services:
         condition: service_healthy
     volumes:
       - ./Flask:/app
+      - ./5etools-src:/5etools-src:ro  # Mount 5etools data as read-only
       - myapp_socket:/tmp
     ports:
       - "5001:5000"

@@ -156,14 +156,6 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
           {/* Link to 5e Tools (use current host so it works in localhost or on the Pi) */}
           {accountType === 'DM' &&
           <>
-            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/5etools/')}>
-              <NavIcon>
-                <AutoStoriesIcon />
-              </NavIcon>
-              <NavText>
-                Compendium
-              </NavText>
-            </NavItem>
             <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/dashboard/')}>
               <NavIcon>
                 <DashboardIcon />
@@ -178,6 +170,14 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
               </NavIcon>
               <NavText>
                 Flask Admin
+              </NavText>
+            </NavItem>
+            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/5etools/')}>
+              <NavIcon>
+                <AutoStoriesIcon />
+              </NavIcon>
+              <NavText>
+                Compendium
               </NavText>
             </NavItem>
           </>

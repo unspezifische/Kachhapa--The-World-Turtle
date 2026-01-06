@@ -1,12 +1,26 @@
 [Unit]
-Description=Gunicorn instance to support API and WebSocket operations for Kachhapa
+Description=Gunicorn (gevent-websocket) for Kachhapa (API + Socket.IO)
 After=network.target
 
 [Service]
+Type=simple
 User=ijohnson
 Group=www-data
 WorkingDirectory=/home/ijohnson/Kachhapa/Flask
-ExecStart=/home/ijohnson/.local/bin/gunicorn -k eventlet -w 4 --bind unix:/home/ijohnson/Kachhapa/Flask/myapp.sock app:app
+
+Environment="DATABASE_URL=postgresql://admin:admin@localhost:5432/db"
+
+# Make sure the socket ends up group-readable/writeable
+UMask=0007
+
+ExecStart=/home/ijohnson/Kachhapa/venv/bin/gunicorn \
+  -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 4 \
+  --bind unix:/home/ijohnson/Kachhapa/Flask/myapp.sock \
+  --umask 007 \
+  app:app
+
+Restart=on-failure
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target

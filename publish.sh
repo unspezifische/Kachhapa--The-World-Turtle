@@ -15,8 +15,8 @@ rsync -avz Flask/import_5etools.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
 echo "Finished copying import_5etools.py"
 
 # # Install Python dependencies on the Raspberry Pi
-# ssh $DESTINATION "pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
-# echo "Finished installing Python dependencies"
+ssh $DESTINATION "/home/ijohnson/Kachhapa/venv/bin/pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
+echo "Finished installing Python dependencies"
 
 # Copy the Flask app
 rsync -avz Flask/app.py $DESTINATION:/home/ijohnson/Kachhapa/Flask/
@@ -36,11 +36,11 @@ echo "Finished copying app.py"
 # echo "Finished copying races"
 
 # Copy the templates directory for wiki pages
-rsync -avz Flask/templates/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/templates
+rsync -avz Flask/templates/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/templates/
 echo "Finished copying the templates directory"
 
 # Copy the static directory for the server (libraries for wiki stuff)
-rsync -avz Flask/static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static
+rsync -avz Flask/static/ $DESTINATION:/home/ijohnson/Kachhapa/Flask/static/
 echo "Finished copying the static directory"
 
 # Now that all files are up to date on the Pi, restart Flask in the background
@@ -62,8 +62,10 @@ echo "Finished dumping the database on the Raspberry Pi"
 scp $DESTINATION:$PI_DUMP_FILE .
 echo "Finished copying the database dump to the local machine"
 
-# Restart Flask on the Pi
-scp myapp.service $DESTINATION:/home/ijohnson/Kachhapa/Flask
+# Push updated systemd service file to the Pi
+scp myapp.service $DESTINATION:/home/ijohnson/myapp.service
+ssh -t $DESTINATION "sudo mv /home/ijohnson/myapp.service /etc/systemd/system/myapp.service && sudo systemctl daemon-reload"
+echo "Finished updating myapp.service"
 
 # Push updated Nginx configuration to the Pi & restart Nginx
 scp nginx.conf $DESTINATION:/etc/nginx/nginx.conf

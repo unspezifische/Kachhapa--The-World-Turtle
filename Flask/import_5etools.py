@@ -56,6 +56,8 @@ DEFAULT_DATA_DIRS = [
     ROOT / "5etools-src" / "data",
     ROOT / "5etools" ,
     ROOT / "5etools-src",
+    Path("/5etools-src") / "data",  # Docker mount location
+    Path("/5etools-src"),            # Docker mount location
     Path("/var/www/5etools") ,
     Path("/var/www/5etools") / "data",
 ]

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';  // Makes API calls
 import Papa from 'papaparse'; // parses CSV file
-import { Stack, Container, Row, Col, Table, Button, ButtonGroup, Modal, ModalDialog, Form } from 'react-bootstrap';
+import { Stack, Container, Row, Col, Table, Button, Modal, Form } from 'react-bootstrap';
 
 // Mainly used for displaying error messages from the server
 import { ToastContainer, toast } from 'react-toastify';
@@ -17,6 +17,14 @@ import DeleteIcon from '@mui/icons-material/Delete';
 
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './InventoryView.css';
+
+const currencyValues = {
+  Copper: 1,
+  Silver: 10, // 1 Silver is worth 10 Copper
+  Electrum: 50, // 1 Electrum is worth 50 Copper
+  Gold: 100, // 1 Gold is worth 100 Copper
+  Platinum: 1000, // 1 Platinum is worth 1000 Copper
+};
 
 export default function InventoryView({ username, characterName, accountType, headers, socket, campaignID, isLoading, setIsLoading }) {
   const [inventory, setInventory] = useState([]);
@@ -64,20 +72,11 @@ export default function InventoryView({ username, characterName, accountType, he
   const [newItemCapacity, setNewItemCapacity] = useState('');
 
   // Rings, Wands, and Scrolls stats
-  const [newItemSpell, setNewItemSpell] = useState('');
   const [newItemCharges, setNewItemCharges] = useState('');
 
   // Used for updating item details
   const [showViewItemDetails, setShowViewItemDetails] = useState(false);
   const [showEditItemDetails, setShowEditItemDetails] = useState(false);
-
-  const currencyValues = {
-    'Copper': 1,
-    'Silver': 10, // 1 Silver is worth 10 Copper
-    'Electrum': 50, // 1 Electrum is worth 50 Copper
-    'Gold': 100, // 1 Gold is worth 100 Copper
-    'Platinum': 1000, // 1 Platinum is worth 1000 Copper
-  };
 
   // Used for issuing items to players
   const [players, setPlayers] = useState([]);
@@ -92,16 +91,16 @@ export default function InventoryView({ username, characterName, accountType, he
   };
 
   // Define a function to fetch players
-  const fetchPlayers = () => {
+  const fetchPlayers = useCallback(() => {
     axios.get('/api/players', { headers: headers })
     .then(response => {
       console.log("INVENTORY VIEW- players:", response.data.players)
       setPlayers(response.data.players.filter(player => player.character_name !== characterName));
     })
     .catch(error => {
-      console.error('Failed to fetch players:', error.response.data);
+      console.error('Failed to fetch players:', error.response?.data || error);
     })
-  };
+  }, [headers, characterName]);
 
   useEffect(() => {
     console.log("player list updated:", players);
@@ -116,10 +115,10 @@ export default function InventoryView({ username, characterName, accountType, he
         socket.off('active_users');
       };
     }
-  }, [socket]);
+  }, [socket, fetchPlayers]);
 
   // Update Player Inventory on change
-  function fetchInventory() {
+  const fetchInventory = useCallback(() => {
     console.log("**** Fetching Inventory ****");
     console.log("accountType:", accountType);
     if (accountType === 'Player') {
@@ -129,7 +128,7 @@ export default function InventoryView({ username, characterName, accountType, he
         setInventory(response.data.inventory); // Save all inventory items in state
       })
       .catch(error => {
-        console.error('Error loading inventory:', error.response.data);
+        console.error('Error loading inventory:', error.response?.data || error);
       });
     } else if (accountType === "DM") {
       axios.get('/api/items', { headers })
@@ -139,15 +138,15 @@ export default function InventoryView({ username, characterName, accountType, he
         // setSortedInventory(inventory);
       })
       .catch(error => {
-        console.error('Error loading inventory:', error.response.data);
+        console.error('Error loading inventory:', error.response?.data || error);
       });
     }
-  };
+  }, [accountType, headers]);
 
   useEffect(() => {
     console.log("INVENTORY PAGE- headers:", headers)
     fetchInventory();
-  }, [headers]);
+  }, [fetchInventory]);
 
   // Runs fetchInventory when the socket message is received
   useEffect(() => {
@@ -193,8 +192,7 @@ export default function InventoryView({ username, characterName, accountType, he
   useEffect(() => {
     // console.log("Sorting inventory by key", sortConfig.key);
 
-    let newSortedInventory = [...sortedInventory];
-    newSortedInventory = sortedInventory.slice().sort((a, b) => {
+    let newSortedInventory = inventory.slice().sort((a, b) => {
       // Equipped items always come first
       if (a && a.equipped && b && !b.equipped) {
         return -1;
@@ -272,17 +270,7 @@ export default function InventoryView({ username, characterName, accountType, he
         socket.off('inventory_update');
       };
     }
-  }, [headers, socket]);
-
-
-  const [inventoryItem, setInventoryItem] = useState(null);
-
-  // Whenever the selected item changes, also update the inventory item
-  useEffect(() => {
-    setInventoryItem(selectedItem);
-    console.log("selectedItem:", selectedItem);
-  }, [selectedItem]);
-
+  }, [headers, socket, characterName]);
 
   //*********** Make the Table Arrangeable ****************//
   const [columnOrder, setColumnOrder] = useState(['Name', 'Type', 'Cost', 'Quantity', 'Value', 'Description']);
@@ -438,7 +426,7 @@ export default function InventoryView({ username, characterName, accountType, he
                 }
               } else if (newKey === 'Weight') {
                 console.log(item["Name"] + " weighs " + item[key] + " pounds");
-                if (item[key] == 'N/A' || item[key]['Weight'] == 'NA' || item[key]['Weight'] == 'n/a' || item[key]['Weight'] == 'na' || item[key]['Weight'] == 'N/a' || item[key]['Weight'] == 'n/A' || item[key]['Weight'] == ' ' || item[key]['Weight'] == '') {
+                if (item[key] === 'N/A' || item[key]['Weight'] === 'NA' || item[key]['Weight'] === 'n/a' || item[key]['Weight'] === 'na' || item[key]['Weight'] === 'N/a' || item[key]['Weight'] === 'n/A' || item[key]['Weight'] === ' ' || item[key]['Weight'] === '') {
                   newItem['Weight'] = 0;
                 } else {
                   // Convert the 'Weight' value to an integer
@@ -467,7 +455,7 @@ export default function InventoryView({ username, characterName, accountType, he
                 newItem['Speed'] = parseInt(speed);
                 newItem['Units'] = speedUnit;
               } else if (newKey === 'Capacity') {
-                if (item['capacity'] == 'N/A' || item['capacity'] == 'NA' || item['capacity'] == 'n/a' || item['capacity'] == 'na' || item['capacity'] == 'N/a' || item['capacity'] == 'n/A' || item['capacity'] == ' ' || item['capacity'] == '') {
+                if (item['capacity'] === 'N/A' || item['capacity'] === 'NA' || item['capacity'] === 'n/a' || item['capacity'] === 'na' || item['capacity'] === 'N/a' || item['capacity'] === 'n/A' || item['capacity'] === ' ' || item['capacity'] === '') {
                   newItem[newKey] = 0;
                 } else {
                   console.log(item["Name"] + " has a capacity of " + item[key]);
@@ -532,32 +520,6 @@ export default function InventoryView({ username, characterName, accountType, he
     let blankFields = ['Name', 'Type', 'Cost', 'Description'];
     return blankFields.every(field => item[field] === '');
   };
-
-  // Used to add a new line to the CSV Table
-  const handleInputChange = (index, fieldName, value) => {
-    // Create a new copy of the uploadedItems array
-    let newUploadedItems = [...uploadedItems];
-
-    // In your handleInputChange function
-    if (fieldName === 'Stealth') {
-      // If the field is 'Stealth', convert the value to a boolean
-      newUploadedItems[index][fieldName] = (value === 'true');
-    } else {
-      newUploadedItems[index][fieldName] = value;
-    }
-
-    // If the item at the given index doesn't exist, create it
-    if (!newUploadedItems[index]) {
-      newUploadedItems[index] = {};
-    }
-
-    // Update the field of the item at the given index
-    newUploadedItems[index][fieldName] = value;
-
-    // Update the uploadedItems state
-    setUploadedItems(newUploadedItems);
-  };
-
 
   /******* Create a New Item ********/
   const createItem = async () => {
@@ -649,7 +611,6 @@ export default function InventoryView({ username, characterName, accountType, he
       setNewItemCapacity('');
       setNewItemSpeed('');
       setNewItemSpeedUnit('');
-      setNewItemSpell('');
       setNewItemCharges('');
 
       // setInventory(prevInventory => [...prevInventory, response.data.item]);
@@ -677,7 +638,6 @@ export default function InventoryView({ username, characterName, accountType, he
     setNewItemCapacity('');
     setNewItemSpeed('');
     setNewItemSpeedUnit('');
-    setNewItemSpell('');
     setNewItemCharges('');
 
     setCreatingItem(false);
@@ -732,10 +692,6 @@ export default function InventoryView({ username, characterName, accountType, he
     }
   };
 
-  // Use it when displaying currency to user
-  const fullCurrencyName = convertCurrencyAbbreviation(newItemCurrency);
-  /**************************************/
-
   const handleItemSelection = (item) => {
     console.log("INVENTORY- getting further details for item:", item);
     axios.get(`/api/inventory/${item.id}`, { headers })
@@ -763,12 +719,11 @@ export default function InventoryView({ username, characterName, accountType, he
       text: `${characterName} gave you ${quantity} ${selectedItem.name}`,
       recipients: [selectedPlayer.userID],
       item: { ...selectedItem, quantity: quantity },
-      campaignID: campaignID,
     };
 
     socket.emit('sendMessage', messageObj);
     setShowViewItemDetails(false);
-  }, [ username, characterName, quantity, selectedItem, selectedPlayer, socket]);
+  }, [ username, characterName, quantity, selectedItem, selectedPlayer, socket, campaignID, headers]);
 
   const dropItem = (item, quantity) => {
     // console.log("INVENTORY- Dropping item:", item)

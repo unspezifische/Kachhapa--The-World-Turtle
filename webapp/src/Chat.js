@@ -48,6 +48,11 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   }, [characterName]);
 
   useEffect(() => {
+    if (!socket) {
+      console.log("CHAT- Socket not connected yet");
+      return;
+    }
+
     const handleMessage = (message) => {
       console.log("Received message:", message);
       if (message.sender === headers.userID || message.recipients.includes(headers.userID)) {
@@ -75,15 +80,24 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
       socket.off('message', handleMessage);
       socket.off('active_users', handleActiveUsers);
     }
-  }, [socket, characterName]);
+  }, [socket, characterName, headers.userID, username, campaignID]);
 
   const getUsers = () => {
+    if (!socket) {
+      console.log("CHAT- Socket not connected");
+      return;
+    }
     console.log("Requesting active users...");
     socket.emit('request_active_users', { campaignID });
   }
 
   const sendMessage = (event, item = null) => {
     event.preventDefault();
+
+    if (!socket) {
+      setError('Socket not connected.');
+      return;
+    }
 
     if (selectedUsers.length === 0) {
       setError('No recipients selected.');
