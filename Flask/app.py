@@ -1313,6 +1313,8 @@ def get_character():
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
         campaignID = request.headers.get('CampaignID')
+        
+        app.logger.info("[DEBUG] GET /api/character - username=%s, campaignID=%s", username, campaignID)
 
         stmt = select(campaign_members.c.characterID).where(
             campaign_members.c.campaignID == campaignID, 
@@ -1322,17 +1324,24 @@ def get_character():
         result = db.session.execute(stmt).first()
 
         characterID = result.characterID if result else None
+        app.logger.info("[DEBUG] GET /api/character - characterID=%s", characterID)
 
         character = Character.query.filter_by(id=characterID).first()
-        app.logger.debug("GET Character- character: %s", character.to_dict() if character else "None")
+        character_data = character.to_dict() if character else None
+        app.logger.info("[DEBUG] GET /api/character - character data: %s", character_data)
+        
         if character is None:
+            app.logger.warning("[DEBUG] GET /api/character - Character not found for user in campaign")
             return jsonify({'error': 'Character not found for user in this campaign.'}), 404
 
+        app.logger.info("[DEBUG] GET /api/character - Returning character: %s", character.character_name)
         return jsonify(character.to_dict()), 200
 
     except InvalidTokenError:
+        app.logger.error("[DEBUG] GET /api/character - InvalidTokenError")
         return jsonify({'error': 'InvalidTokenError- GET /api/character'}), 401
     except ExpiredSignatureError:
+        app.logger.error("[DEBUG] GET /api/character - ExpiredSignatureError")
         return jsonify({'error': 'Expired token'}), 401
 
 
@@ -1350,17 +1359,25 @@ def get_character_by_name():
     """
     try:
         campaign_id = request.headers.get('CampaignID')
+        character_name = request.args.get('name')
+        
+        app.logger.debug("[DEBUG] GET /api/character_by_name - campaign_id=%s, name=%s", campaign_id, character_name)
+        
         if not campaign_id:
+            app.logger.warning("[DEBUG] GET /api/character_by_name - Missing CampaignID header")
             return jsonify({'error': 'CampaignID header is required'}), 400
 
-        character_name = request.args.get('name')
         if not character_name:
+            app.logger.warning("[DEBUG] GET /api/character_by_name - Missing name query param")
             return jsonify({'error': 'name query param is required'}), 400
 
         # Ensure the requested character is part of this campaign
         stmt = select(campaign_members.c.characterID).where(campaign_members.c.campaignID == campaign_id)
         character_ids = [row.characterID for row in db.session.execute(stmt) if row.characterID]
+        app.logger.debug("[DEBUG] GET /api/character_by_name - Found %d characters in campaign", len(character_ids))
+        
         if not character_ids:
+            app.logger.warning("[DEBUG] GET /api/character_by_name - No characters found in campaign")
             return jsonify({'error': 'Character not found'}), 404
 
         character = Character.query.filter(
@@ -1369,15 +1386,19 @@ def get_character_by_name():
         ).first()
 
         if not character:
+            app.logger.warning("[DEBUG] GET /api/character_by_name - Character '%s' not found in campaign", character_name)
             return jsonify({'error': 'Character not found'}), 404
 
+        app.logger.debug("[DEBUG] GET /api/character_by_name - Found character: %s (ID: %s)", character.character_name, character.id)
         return jsonify(character.to_dict()), 200
     except InvalidTokenError:
+        app.logger.error("[DEBUG] GET /api/character_by_name - InvalidTokenError")
         return jsonify({'error': 'InvalidTokenError- GET /api/character_by_name'}), 401
     except ExpiredSignatureError:
+        app.logger.error("[DEBUG] GET /api/character_by_name - ExpiredSignatureError")
         return jsonify({'error': 'Expired token'}), 401
     except Exception:
-        app.logger.exception('Error fetching character by name')
+        app.logger.exception("[DEBUG] GET /api/character_by_name - Exception")
         return jsonify({'error': 'internal server error'}), 500
 
 ## Update a user's Character Profile
@@ -3292,6 +3313,7 @@ def get_chat_history():
     characterID = result.characterID if result else None
 
     if characterID is None:
+        app.logger.error("Character not found for user_id: %s in campaign_id: %s", user.id, campaignID)
         return jsonify({'message': 'Character not found'}), 404
 
     # Create a dictionary mapping user IDs to character IDs for the specified campaign

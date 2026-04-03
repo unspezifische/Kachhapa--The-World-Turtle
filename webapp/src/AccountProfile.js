@@ -52,7 +52,8 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
       console.log("AccountProfile- selected character:", character);
       setAccountType('Player');
       console.log("AccountProfile- selected character name:", character.name);
-      // setCharacterName(character.name); // Set the character name
+      // Set the character name for downstream pages (Chat/Inventory/Journal)
+      setCharacterName(character.name || character.Name || character.character_name || '');
 
       // Set the selected campaign with the required format
       setSelectedCampaign({
@@ -107,8 +108,8 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
           if (affiliatedCharacters.length > 0) {
             console.log("Selected Character-", affiliatedCharacters[0]);
             console.log("Selected Character ID-", affiliatedCharacters[0].id);
-            console.log("Selected Character Name-", affiliatedCharacters[0].name);
-            setCharacterName(affiliatedCharacters[0].name);
+            console.log("Selected Character Name-", affiliatedCharacters[0].name || affiliatedCharacters[0].Name || affiliatedCharacters[0].character_name);
+            setCharacterName(affiliatedCharacters[0].name || affiliatedCharacters[0].Name || affiliatedCharacters[0].character_name || '');
             // setCharacterID(affiliatedCharacters[0].id);
             navigate('/characterSheet');
           } else {
@@ -345,7 +346,8 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
                       </Col>
                       <Col xs={8}>
                         <Card.Body>
-                          <Card.Title>{character.name}</Card.Title>
+                          <Card.Title>{character.Name}</Card.Title>
+                          <Card.Subtitle className="mb-2 text-muted">{character.Class}</Card.Subtitle>
                         </Card.Body>
                       </Col>
                     </Row>

@@ -37,6 +37,7 @@ function App() {
 
   const [username, setUsername] = useState('');
   const [userID, setUserID] = useState(null);
+  const [character, setCharacter] = useState(null);
   const [characterName, setCharacterName] = useState('');
   const [characterID, setCharacterID] = useState(null);
   const [accountType, setAccountType] = useState('');
@@ -63,9 +64,11 @@ function App() {
       axios.get(`/api/character`, { headers: headers })
         .then((res) => {
           console.log('App- Character:', res.data);
-          setCharacterName(res.data.name);
-          setCharacterID(res.data.id);
-          console.log("App- character name has been set!");
+          setCharacter(res.data);
+          const resolvedName = res.data?.Name || res.data?.name || res.data?.character_name || '';
+          setCharacterName(resolvedName);
+          setCharacterID(res.data?.id ?? null);
+          console.log(`App- character name has been set to ${resolvedName} with id ${res.data?.id ?? 'N/A'}!`);
         })
         .catch((err) => {
           console.error(err);
@@ -278,7 +281,7 @@ function App() {
                   {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
                   <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} />} />
                   <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
-                    <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} />} />
+                  <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} />} />
 
                   {/* Catch-all route for wiki pages */}
                   <Route path="/:campaign_name/:page_title" render={({ match }) => {
