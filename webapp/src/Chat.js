@@ -6,6 +6,7 @@ import "./Chat.css"
 import SendIcon from '@mui/icons-material/Send';
 import ChatIcon from '@mui/icons-material/Chat';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { use } from 'react';
 
 function Chat({ headers, socket, characterName, username, campaignID }) {
   const [message, setMessage] = useState('');
@@ -48,6 +49,10 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   }, [characterName]);
 
   useEffect(() => {
+    console.log("CHAT- messages updated:", messages);
+  }, [messages]);
+
+  useEffect(() => {
     if (!socket) {
       console.log("CHAT- Socket not connected yet");
       return;
@@ -87,7 +92,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
       console.log("CHAT- Socket not connected");
       return;
     }
-    console.log("Requesting active users...");
+    console.log("CHAT- Requesting active users...");
     socket.emit('request_active_users', { campaignID });
   }
 
@@ -123,12 +128,12 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   };
 
   const handleChange = (selected) => {
-    console.log("Selected users:", selected);
+    console.log("CHAT- Selected users:", selected);
     setSelectedUsers(selected);
   };
 
   const replyAll = (message) => {
-    console.log("Replying to message:", message);
+    console.log("CHAT- Replying to message:", message);
     
     const allUserIDs = message.recipients;
     const filteredUserIDs = allUserIDs.filter(userID => userID !== headers.userID);
@@ -144,7 +149,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   
     const className = `${isCurrentUser ? "message sent" : "message received"} ${isCurrentUser ? "grouped" : ""} ${isSameGroup ? "" : "new-group"}`;
   
-    console.log("Message Type-", message.type);
+    console.log("CHAT- Message Type-", message.type);
     return (
       <div
         key={i}

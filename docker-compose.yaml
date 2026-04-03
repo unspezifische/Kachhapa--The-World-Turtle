@@ -54,6 +54,7 @@ services:
     environment:
       FLASK_ENV: development
       FLASK_DEBUG: "1"
+      DATABASE_URL: postgresql://admin:admin@postgres:5432/db
       RABBIT_URL: amqp://guest:guest@rabbitmq:5672//
     networks:
       - Kachhapa-network

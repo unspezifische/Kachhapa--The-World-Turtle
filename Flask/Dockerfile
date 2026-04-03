@@ -11,5 +11,5 @@ RUN pip install -r requirements.txt --no-cache-dir
 # Copy the rest of the application code
 COPY Flask/ .
 
-# Command to run the app with Gunicorn, using eventlet
-CMD ["gunicorn", "-k", "eventlet", "-w", "1", "--bind", "unix:/tmp/myapp.socket", "--reload", "app:app"]
+# Command to run the app with Gunicorn, using gevent with websocket support
+CMD ["gunicorn", "-k", "gevent", "-w", "1", "--bind", "unix:/tmp/myapp.socket", "--reload", "--worker-class", "geventwebsocket.gunicorn.workers.GeventWebSocketWorker", "app:app"]

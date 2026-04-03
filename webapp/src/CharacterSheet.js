@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Responsive, WidthProvider } from 'react-grid-layout';
 import { Row, Col, Button, ButtonGroup, Modal, ModalDialog, Form, Table, Placeholder } from 'react-bootstrap';
-import { Paper } from '@mui/material';
+import { Paper, LinearProgress, Box, Typography, Tooltip } from '@mui/material';
 
 import axios from 'axios';  // Makes API calls
 
@@ -43,7 +43,7 @@ const tiles = [
   { w: 1, h: 3, x: 1, y: 4, i: "Proficiency Bonus" },
   { w: 1, h: 12, x: 1, y: 7, i: "Saving Throws" },
   { w: 2, h: 19, x: 3, y: 14, i: "Skills" },
-  { w: 2, h: 4, x: 3, y: 38, i: "PersonalityTraits" },
+  { w: 2, h: 4, x: 3, y: 38, i: "Personality Traits" },
   { w: 2, h: 4, x: 1, y: 31, i: "Ideals" },
   { w: 2, h: 4, x: 1, y: 35, i: "Bonds" },
   { w: 2, h: 5, x: 3, y: 33, i: "Flaws" },
@@ -58,11 +58,11 @@ const tiles = [
   { w: 1, h: 3, x: 4, y: 4, i: "Speed" },
   { w: 1, h: 3, x: 2, y: 6, i: "Armor Class" },
   { w: 1, h: 4, x: 3, y: 4, i: "Background" },
-  { w: 1, h: 4, x: 4, y: 0, i: "ExperiencePoints" },
-  { w: 1, h: 4, x: 4, y: 10, i: "PassivePerception" },
-  { w: 1, h: 3, x: 2, y: 9, i: "HitPointMax" },
-  { w: 1, h: 3, x: 3, y: 11, i: "CurrentHitPoints" },
-  { w: 1, h: 3, x: 4, y: 7, i: "TemporaryHitPoints" }
+  { w: 1, h: 4, x: 4, y: 0, i: "XP" },
+  { w: 1, h: 4, x: 4, y: 10, i: "Passive Perception" },
+  { w: 1, h: 3, x: 2, y: 9, i: "Max HP" },
+  { w: 1, h: 3, x: 3, y: 11, i: "Current Hit Points" },
+  { w: 1, h: 3, x: 4, y: 7, i: "Temporary Hit Points" }
 ];
 
 const defaultLayout = {
@@ -81,6 +81,8 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   const [layout, setLayout] = useState({ tiles });
   const [characters, setCharacters] = useState([]);
 
+  console.log('[CharacterSheet] Component rendered with props:', { characterName, headersPresent: !!headers, setCharacterNamePresent: !!setCharacterName });
+
   const [playerClasses, setPlayerClasses] = useState([]);
   const [playerRaces, setPlayerRaces] = useState([]);
   const alignments = ['Lawful Good', 'Neutral Good', 'Chaotic Good', 'Lawful Neutral', 'Neutral', 'Chaotic Neutral', 'Lawful Evil', 'Neutral Evil', 'Chaotic Evil'];
@@ -95,6 +97,68 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   const prevClassRef = useRef(null);
   const prevSubclassRef = useRef(null);
   const prevRaceRef = useRef(null);
+
+  const normalizeCharacterPayload = (data, nameFallback = '') => {
+    if (!data || typeof data !== 'object') return null;
+
+    const resolvedName = data.Name || data.name || data.character_name || data.characterName || nameFallback || '';
+    const abilityScores = {
+      strength: data.strength ?? data.Strength ?? 0,
+      dexterity: data.dexterity ?? data.Dexterity ?? 0,
+      constitution: data.constitution ?? data.Constitution ?? 0,
+      intelligence: data.intelligence ?? data.Intelligence ?? 0,
+      wisdom: data.wisdom ?? data.Wisdom ?? 0,
+      charisma: data.charisma ?? data.Charisma ?? 0,
+    };
+    const Wealth = {
+      cp: data.cp ?? data.CP ?? 0,
+      sp: data.sp ?? data.SP ?? 0,
+      ep: data.ep ?? data.EP ?? 0,
+      gp: data.gp ?? data.GP ?? 0,
+      pp: data.pp ?? data.PP ?? 0,
+    };
+
+    const Proficiencies = data.Proficiencies ?? data.proficiencies ?? [];
+    const Subclass = data.Subclass ?? data.subclass ?? null;
+
+    const cleaned = { ...data };
+    delete cleaned.strength;
+    delete cleaned.Strength;
+    delete cleaned.dexterity;
+    delete cleaned.Dexterity;
+    delete cleaned.constitution;
+    delete cleaned.Constitution;
+    delete cleaned.intelligence;
+    delete cleaned.Intelligence;
+    delete cleaned.wisdom;
+    delete cleaned.Wisdom;
+    delete cleaned.charisma;
+    delete cleaned.Charisma;
+    delete cleaned.cp;
+    delete cleaned.CP;
+    delete cleaned.sp;
+    delete cleaned.SP;
+    delete cleaned.ep;
+    delete cleaned.EP;
+    delete cleaned.gp;
+    delete cleaned.GP;
+    delete cleaned.pp;
+    delete cleaned.PP;
+    delete cleaned.Proficiencies;
+    delete cleaned.proficiencies;
+    delete cleaned.Subclass;
+    delete cleaned.subclass;
+
+    return {
+      cleaned,
+      resolvedName,
+      abilityScores,
+      Wealth,
+      Proficiencies,
+      Subclass,
+      id: data.id ?? data.ID ?? data.character_id ?? null,
+    };
+  };
 
   // Fetch all available characters
   const fetchAllCharacters = () => {
@@ -114,57 +178,48 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   };
 
   const loadCharacter = (nameToLoad) => {
-    if (!nameToLoad) return;
+    if (!nameToLoad) {
+      console.log('[CharacterSheet] loadCharacter: nameToLoad is empty, returning');
+      return;
+    }
     setLoading(true);
+    console.log(`[CharacterSheet] loadCharacter: Starting to load "${nameToLoad}"`);
+    console.log('[CharacterSheet] loadCharacter: headers:', headers);
+
+    // Filter out undefined/null headers to prevent axios errors
+    const cleanHeaders = Object.fromEntries(
+      Object.entries(headers || {}).filter(([_, v]) => v != null)
+    );
+    console.log('[CharacterSheet] loadCharacter: cleanHeaders:', cleanHeaders);
 
     // Use a character-specific header for dependent endpoints (equipment/spells)
-    const characterHeaders = { ...headers, CharacterName: nameToLoad };
+    const characterHeaders = { ...cleanHeaders, CharacterName: nameToLoad };
+    console.log('[CharacterSheet] loadCharacter: Fetching from /api/character_by_name, /api/equipment, /api/prepared_spells');
 
     return Promise.all([
-      axios.get('/api/character_by_name', { headers, params: { name: nameToLoad } }),
+      axios.get('/api/character_by_name', { headers: cleanHeaders, params: { name: nameToLoad } }),
       axios.get('/api/equipment', { headers: characterHeaders }),
       axios.get('/api/prepared_spells', { headers: characterHeaders })
     ])
       .then(([characterResponse, equipmentResponse, spellsResponse]) => {
-        const {
-          strength,
-          dexterity,
-          constitution,
-          intelligence,
-          wisdom,
-          charisma,
-          cp,
-          sp,
-          ep,
-          gp,
-          pp,
-          Proficiencies,
-          Subclass,
-          ...rest
-        } = characterResponse.data;
-
-        const abilityScores = {
-          strength,
-          dexterity,
-          constitution,
-          intelligence,
-          wisdom,
-          charisma,
-        };
-
-        const Wealth = {
-          cp,
-          sp,
-          ep,
-          gp,
-          pp,
-        };
+        console.log('[CharacterSheet] loadCharacter: All requests completed');
+        console.log('[CharacterSheet] Character data:', characterResponse.data);
+        console.log('[CharacterSheet] Equipment count:', equipmentResponse?.data?.equipment?.length ?? 0);
+        console.log('[CharacterSheet] Spells count:', spellsResponse?.data?.spells?.length ?? 0);
+        
+        const normalized = normalizeCharacterPayload(characterResponse?.data, nameToLoad);
+        if (!normalized) {
+          console.warn('[CharacterSheet] loadCharacter: normalizeCharacterPayload returned null');
+          return;
+        }
+        const { cleaned, resolvedName, abilityScores, Wealth, Proficiencies, Subclass, id } = normalized;
+        console.log('[CharacterSheet] loadCharacter: Normalized data:', { resolvedName, id, Class: cleaned?.Class, Race: cleaned?.Race, Level: cleaned?.Level });
 
         setCharacter(prev => ({
           ...prev,
-          ...rest,
-          id: characterResponse.data.id,  // Track character ID for saves
-          Name: nameToLoad,
+          ...cleaned,
+          id: id ?? prev.id,  // Track character ID for saves
+          Name: resolvedName,
           abilityScores,
           Wealth,
           Proficiencies: dedupeProficiencies(Proficiencies),  // Clean up any existing duplicates
@@ -174,7 +229,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
         }));
       })
       .catch(error => {
-        console.error('Error loading character:', error);
+        console.error('[CharacterSheet] loadCharacter: Error -', error);
       })
       .finally(() => {
         setLoading(false);
@@ -346,6 +401,11 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     Actions: [''], // List of actions the player can take
     Attacks: [''], // List of attacks the player can make
   });
+
+  useEffect(() => {
+    console.log("Character:", character);
+  }, [character]);
+
 
   // Track per-currency add/spend amounts as objects so we can compute change correctly
   const [addAmount, setAddAmount] = useState({ pp: 0, gp: 0, ep: 0, sp: 0, cp: 0 });
@@ -556,65 +616,50 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   useEffect(() => {
     // If the page was opened with a specific characterName, load it explicitly.
     // Otherwise fall back to the backend's "current character" resolution.
+    console.log(`[CharacterSheet] Effect triggered - characterName="${characterName}", headers.campaignID="${headers?.campaignID}"`);
+    
     if (characterName) {
+      console.log(`[CharacterSheet] Loading character by name: ${characterName}`);
       loadCharacter(characterName);
       return;
     }
 
     console.log("character.Name:", character.Name);
-    axios.get(`/api/character`, { headers: headers })
+    console.log('[CharacterSheet] Fetching current character from /api/character');
+    
+    // Filter out undefined/null headers to prevent axios errors
+    const cleanHeaders = Object.fromEntries(
+      Object.entries(headers || {}).filter(([_, v]) => v != null)
+    );
+    
+    axios.get(`/api/character`, { headers: cleanHeaders })
       .then(response => {
-        console.log('Fetched character data:', response.data);
-        const {
-          strength,
-          dexterity,
-          constitution,
-          intelligence,
-          wisdom,
-          charisma,
-          cp,
-          sp,
-          ep,
-          gp,
-          pp,
-          Proficiencies,
-          Subclass,
-          ...rest
-        } = response.data;
-
-        const abilityScores = {
-          strength,
-          dexterity,
-          constitution,
-          intelligence,
-          wisdom,
-          charisma,
-        };
-
-        const Wealth = {
-          cp,
-          sp,
-          ep,
-          gp,
-          pp,
-        };
+        console.log('[CharacterSheet] /api/character response:', response.data);
+        const normalized = normalizeCharacterPayload(response?.data, characterName || '');
+        if (!normalized) {
+          console.warn('[CharacterSheet] normalizeCharacterPayload returned null');
+          return;
+        }
+        const { cleaned, resolvedName, abilityScores, Wealth, Proficiencies, Subclass, id } = normalized;
+        console.log('[CharacterSheet] Normalized payload:', { resolvedName, id, Class: cleaned?.Class, Race: cleaned?.Race });
 
         setCharacter(prevState => ({
           ...prevState,
-          ...rest,
-          id: response.data.id,  // Track character ID for saves
+          ...cleaned,
+          id: id ?? prevState.id,  // Track character ID for saves
+          Name: resolvedName || prevState.Name,
           abilityScores,
           Wealth,
-          Proficiencies,
+          Proficiencies: dedupeProficiencies(Proficiencies),
           Subclass,
         }));
 
         setLoading(false);
       })
       .catch(error => {
-        console.error(error);
+        console.error('[CharacterSheet] /api/character error:', error);
       });
-  }, [])
+  }, [characterName, headers])
 
   // // Log the character data whenever it changes
   // useEffect(() => {
@@ -1382,18 +1427,37 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </>
         );
       case 'XP':
+      case 'ExperiencePoints':
+      case 'Experience Points':
+        const xpProgress = character?.pointsToNextLevel 
+          ? Math.min((character.ExperiencePoints / character.pointsToNextLevel) * 100, 100) 
+          : 0;
         return (
           <>
             <h3 className="center-title">XP</h3>
-            <div className="center-title">
-              {character?.ExperiencePoints && character?.pointsToNextLevel ? (
-                `${character.ExperiencePoints} / ${character.pointsToNextLevel}`
-              ) : (
-                <Placeholder as="span" animation="glow">
-                  <Placeholder xs={6} />
-                </Placeholder>
-              )}
-            </div>
+            {character?.ExperiencePoints !== undefined && character?.pointsToNextLevel ? (
+              <Tooltip 
+                title={`${character.ExperiencePoints} XP`}
+                arrow
+                placement="top"
+              >
+                <Box sx={{ width: '100%', padding: '10px 0', display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ flex: 1 }}>
+                    <LinearProgress 
+                      variant="determinate" 
+                      value={xpProgress}
+                    />
+                  </Box>
+                  <Typography>
+                    {character.pointsToNextLevel}
+                  </Typography>
+                </Box>
+              </Tooltip>
+            ) : (
+              <Placeholder as="span" animation="glow">
+                <Placeholder xs={6} />
+              </Placeholder>
+            )}
           </>
         );
       case 'Race':
@@ -1540,6 +1604,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </div>
         );
       case 'Max HP':
+      case 'HitPointMax':
         return (
           <>
             <div className="label">Max HP</div>
@@ -1555,6 +1620,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </>
         );
       case 'Current HP':
+      case 'CurrentHitPoints':
         return (
           <>
             <span className="label">Current HP</span>
@@ -1572,6 +1638,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </>
         );
       case 'Temporary HP':
+      case 'TemporaryHitPoints':
         return (
           <>
             <div className="label">Temporary HP</div>
@@ -1718,6 +1785,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </>
         );
       case 'Passive Perception':
+      case 'PassivePerception':
         return (
           <>
             <div className="label">Passive Perception</div>
@@ -1753,6 +1821,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </>
         );
       case 'Personality Traits':
+      case 'PersonalityTraits':
         return (
           <>
             <h4 className='center-title'>Personality Traits:</h4>
@@ -1864,30 +1933,31 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             {(() => {
               // Determine what type of input to display based on the tileId
               switch (editingTileId) {
-                case 'Name': {
-                  return (
-                    <Form.Group>
-                      <Form.Label>Select character</Form.Label>
-                      <Form.Control
-                        as="select"
-                        value={character.Name || ''}
-                        onChange={e => switchCharacter(e.target.value)}
-                      >
-                        <option value="" disabled>Select character</option>
-                        {(() => {
-                          const options = [...characters];
-                          if (character.Name && !options.includes(character.Name)) options.unshift(character.Name);
-                          if (options.length === 0) return <option disabled>No characters found</option>;
-                          return options.map(name => (
-                            <option key={name} value={name}>{name}</option>
-                          ));
-                        })()}
-                      </Form.Control>
-                    </Form.Group>
-                  );
-                }
+                // case 'Name': {
+                //   return (
+                //     <Form.Group>
+                //       <Form.Label>Select character</Form.Label>
+                //       <Form.Control
+                //         as="select"
+                //         value={character.Name || ''}
+                //         onChange={e => switchCharacter(e.target.value)}
+                //       >
+                //         <option value="" disabled>Select character</option>
+                //         {(() => {
+                //           const options = [...characters];
+                //           if (character.Name && !options.includes(character.Name)) options.unshift(character.Name);
+                //           if (options.length === 0) return <option disabled>No characters found</option>;
+                //           return options.map(name => (
+                //             <option key={name} value={name}>{name}</option>
+                //           ));
+                //         })()}
+                //       </Form.Control>
+                //     </Form.Group>
+                //   );
+                // }
                 case 'Background':
                 case 'Personality Traits':
+                case 'PersonalityTraits':
                 case 'Bonds':
                 case 'Ideals':
                 case 'Flaws':
@@ -1912,6 +1982,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                   // Map UI-facing tile ids to canonical character keys
                   const map = {
                     'XP': 'ExperiencePoints',
+                    'ExperiencePoints': 'ExperiencePoints',
                     'Current HP': 'CurrentHitPoints',
                     'Temporary HP': 'TemporaryHitPoints'
                   };
@@ -1943,6 +2014,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                           ...character,
                           [editingTileId]: e.target.value,
                           Subclass: null,
+                          icon: e.target.value ? `${e.target.value}.webp` : character.icon,
                         });
                       }}>
                         <option value="" disabled>Select class</option>
@@ -2287,6 +2359,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                     </div>
                   );
                 }
+                case "HitPointMax":
                 case 'Max HP':
                   return (
                     <>
