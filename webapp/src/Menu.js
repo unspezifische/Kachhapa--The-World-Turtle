@@ -1,215 +1,318 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
-import SideNav, { NavItem, NavIcon, NavText } from '@trendmicro/react-sidenav';
+import React, { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 
-import '@trendmicro/react-sidenav/dist/react-sidenav.css';
-import 'bootstrap/dist/css/bootstrap.min.css';
+import Box from '@mui/material/Box';
+import Drawer from '@mui/material/Drawer';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import IconButton from '@mui/material/IconButton';
+import Divider from '@mui/material/Divider';
+import Switch from '@mui/material/Switch';
+import Tooltip from '@mui/material/Tooltip';
 
-import ConstructionIcon from '@mui/icons-material/Construction';    // DM Tools
-import PersonIcon from '@mui/icons-material/Person';                // Profile Page
-import BackpackIcon from '@mui/icons-material/Backpack';            // Inventory
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';      // SpellBook
-import HistoryEduIcon from '@mui/icons-material/HistoryEdu';        // Journal
-import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';    // Library
-import HikingIcon from '@mui/icons-material/Hiking';                // Wiki
-import MapIcon from '@mui/icons-material/Map';                      // Link to Settlement page
-import AutoStoriesIcon from '@mui/icons-material/AutoStories';      // 5e Tools Compendium
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';  // Admin
-import DashboardIcon from '@mui/icons-material/Dashboard';          // Dashboard
-import AccountCircleIcon from '@mui/icons-material/AccountCircle';  // Account Profile
-import LogoutIcon from '@mui/icons-material/Logout';  // Log Out
+import MenuIcon from '@mui/icons-material/Menu';
+import CloseIcon from '@mui/icons-material/Close';
+import ConstructionIcon from '@mui/icons-material/Construction';
+import PersonIcon from '@mui/icons-material/Person';
+import BackpackIcon from '@mui/icons-material/Backpack';
+import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
+import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';
+import CalendarIcon from '@mui/icons-material/CalendarToday';
+import HikingIcon from '@mui/icons-material/Hiking';
+import AutoStoriesIcon from '@mui/icons-material/AutoStories';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import DarkModeIcon from '@mui/icons-material/DarkMode';
+import LightModeIcon from '@mui/icons-material/LightMode';
+import LogoutIcon from '@mui/icons-material/Logout';
 
+const DRAWER_WIDTH = 240;
+const COLLAPSED_WIDTH = 72;
 
-function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign }) {
-  const [isOpen, setIsOpen] = useState(false); // Start closed on desktop
-  const navigate = useNavigate(); // used to navigate between pages
-  const location = useLocation(); // used to get the current location
+function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, theme, setTheme }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  const toggleOpen = () => setIsOpen(!isOpen);
-  const toggleClosed = () => setIsOpen(false);
-
-
+  const toggleOpen = () => setIsOpen((prev) => !prev);
+  const closeDrawer = () => setIsOpen(false);
 
   function navigateToExternalLink(url) {
-    // window.location.href = url;
     window.open(url, '_blank');
   }
 
   function openWiki() {
     if (selectedCampaign && selectedCampaign.name) {
-      console.log("selectedCampaign: ", selectedCampaign);
-
-      // Store headers in local storage
       localStorage.setItem('userID', headers['userID']);
       localStorage.setItem('characterName', headers['characterName']);
-      console.log("Stored header in local storage");
-        
-            // Get the current URL components
+
       const protocol = window.location.protocol;
       const host = window.location.host;
-      
-      // Construct the base URL dynamically
       const baseUrl = `${protocol}//${host}/`;
-      
-      // Construct the destination URL without encoding
-      var destinationURL = baseUrl + encodeURIComponent(selectedCampaign.name) + "/Main Page";
-      var destinationPage = encodeURIComponent(selectedCampaign.name) + "/Main Page";
-      console.log("Destination URL: " + destinationURL);
-      console.log("Destination Page: " + destinationPage);
-      
-      // Encode the entire destination URL
-      var encodedDestination = encodeURIComponent(destinationPage);
-      console.log("Encoded URL: " + encodedDestination);
-      
-      // Include the encoded destination URL as a query parameter in the login URL
-      // var loginUrl = `${baseUrl}login?redirect=/${encodedDestination}`;
-      var loginUrl = `${baseUrl}login?redirect=/wiki/${encodedDestination}`;
-      console.log("URL with Redirect: " + loginUrl);
-      
-      // Open the login URL in a new window
+
+      const destinationPage = encodeURIComponent(selectedCampaign.name) + "/Main Page";
+      const loginUrl = `${baseUrl}login?redirect=/wiki/${encodeURIComponent(destinationPage)}`;
+
       window.open(loginUrl, '_blank');
-    } else {
-        console.log("No selected campaign or campaign name");
     }
   }
 
   function logOut() {
-    // Clear local storage
     localStorage.clear();
-    console.log("Cleared local storage");
-
-    // Refresh the page to log out
     window.location.reload();
   }
 
+  function handleThemeToggle() {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  }
+
+  const navItems = [
+    ...(accountType === 'DM'
+      ? [{ key: 'dmTools', label: 'DM Tools', icon: <ConstructionIcon />, onClick: () => navigate('/dmTools') }]
+      : []),
+
+    ...(accountType === 'Player'
+      ? [{ key: 'characterSheet', label: 'Character Profile', icon: <PersonIcon />, onClick: () => navigate('/characterSheet') }]
+      : []),
+
+    { key: 'inventoryView', label: 'Inventory', icon: <BackpackIcon />, onClick: () => navigate('/inventoryView') },
+    { key: 'journal', label: 'Journal', icon: <HistoryEduIcon />, onClick: () => navigate('/journal') },
+    { key: 'library', label: 'Library', icon: <LocalLibraryIcon />, onClick: () => navigate('/library') },
+    { key: 'calendar', label: 'Calendar', icon: <CalendarIcon />, onClick: () => navigate('/calendar') },
+
+    ...(accountType === 'DM'
+      ? [{ key: 'compendium', label: 'Compendium', icon: <AutoStoriesIcon />, onClick: () => navigateToExternalLink(window.location.origin + '/5etools/') }]
+      : []),
+
+    { key: 'wiki', label: 'Wiki', icon: <HikingIcon />, onClick: openWiki },
+
+    ...(accountType === 'DM'
+      ? [
+        { key: 'dashboard', label: 'Flask Dashboard', icon: <DashboardIcon />, onClick: () => navigateToExternalLink(window.location.origin + '/dashboard/') },
+        { key: 'admin', label: 'Flask Admin', icon: <AdminPanelSettingsIcon />, onClick: () => navigateToExternalLink(window.location.origin + '/admin/') },
+      ]
+      : []),
+
+    {
+      key: 'accountProfile',
+      label: 'Account Profile',
+      icon: <AccountCircleIcon />,
+      onClick: () => {
+        setSelectedCampaign({ id: null, name: null, dmId: null, ownerId: null });
+        navigate('/accountProfile');
+      },
+    },
+  ];
+
+  const utilityItems = [
+    {
+      key: 'theme',
+      label: theme === 'dark' ? 'Light Mode' : 'Dark Mode',
+      icon: theme === 'dark' ? <LightModeIcon /> : <DarkModeIcon />,
+      custom: true,
+    },
+    {
+      key: 'logout',
+      label: 'Log Out',
+      icon: <LogoutIcon />,
+      onClick: logOut,
+    },
+  ];
+
+  const paperStyles = {
+    width: isOpen ? DRAWER_WIDTH : COLLAPSED_WIDTH,
+    overflowX: 'hidden',
+    backgroundColor: 'var(--menu-bg)',
+    color: 'rgba(255,255,255,0.94)',
+    borderRight: '1px solid rgba(255,255,255,0.08)',
+    transition: 'width 0.2s ease',
+    boxSizing: 'border-box',
+  };
+
+  const itemButtonSx = {
+    minHeight: 64,
+    px: 2,
+    justifyContent: isOpen ? 'initial' : 'center',
+    '&:hover': {
+      backgroundColor: 'var(--menu-bg-hover)',
+    },
+  };
+
+  const activeItemSx = {
+    backgroundColor: 'var(--menu-bg-selected)',
+  };
+
+  const iconSx = {
+    minWidth: 0,
+    width: 40,
+    mr: isOpen ? 1.5 : 'auto',
+    justifyContent: 'center',
+    color: 'rgba(255,255,255,0.9)',
+    '& svg': {
+      fontSize: '1.8rem',
+    },
+  };
+
   return (
-    <>
-      <SideNav
-        onSelect={(selected) => {
-          console.log("MENU- Current location: " + location.pathname);
-          console.log("MENU- Navigating to: " + selected);
-          if (selected === "accountProfile") {
-            setSelectedCampaign({ id: null, name: null, dmId: null, ownerId: null });
-          }
-          navigate(selected);
-          toggleClosed();
+    <Box className="menu-shell" sx={{ height: '100%' }}>
+      <Drawer
+        variant="permanent"
+        open={isOpen}
+        sx={{
+          width: isOpen ? DRAWER_WIDTH : COLLAPSED_WIDTH,
+          flexShrink: 0,
+          whiteSpace: 'nowrap',
+          '& .MuiDrawer-paper': paperStyles,
         }}
-        onToggle={toggleOpen}
-        expanded={isOpen}
-        className="d-none d-md-block menu-column"
       >
-        <SideNav.Toggle />
-        <SideNav.Nav>
-          {accountType === 'DM' &&
-            <NavItem eventKey="dmTools" className={location.pathname === "/dmTools" ? "active" : ""}>
-              <NavIcon>
-                <ConstructionIcon />
-              </NavIcon>
-              <NavText>
-                DM Tools
-              </NavText>
-            </NavItem>
-          }
-          {accountType === 'Player' &&
-            <NavItem eventKey="characterSheet" className={location.pathname === "/characterSheet" ? "active" : ""}>
-              <NavIcon>
-                <PersonIcon />
-              </NavIcon>
-              <NavText>
-                Character Profile
-              </NavText>
-            </NavItem>
-          }
-          <NavItem eventKey="inventoryView" className={location.pathname === "/inventoryView" ? "active" : ""}>
-            <NavIcon>
-              <BackpackIcon />
-            </NavIcon>
-            <NavText>
-              Inventory
-            </NavText>
-          </NavItem>
-          {/* Comment out this block if Spellbook isn't ready in time */}
-          {/* <NavItem eventKey="Spellbook" className={location.pathname === "/Spellbook" ? "active" : ""}>
-            <NavIcon>
-              <AutoFixHighIcon />
-            </NavIcon>
-            <NavText>
-              Spellbook
-            </NavText>
-          </NavItem> */}
-          <NavItem eventKey="journal" className={location.pathname === "/journal" ? "active" : ""}>
-            <NavIcon>
-              <HistoryEduIcon />
-            </NavIcon>
-            <NavText>
-              Journal
-            </NavText>
-          </NavItem>
-          <NavItem eventKey="library" className={location.pathname === "/library" ? "active" : ""}>
-            <NavIcon>
-              <LocalLibraryIcon />
-            </NavIcon>
-            <NavText>
-              Library
-            </NavText>
-          </NavItem>
-          {/* Link to 5e Tools (use current host so it works in localhost or on the Pi) */}
-          {accountType === 'DM' &&
-          <>
-            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/dashboard/')}>
-              <NavIcon>
-                <DashboardIcon />
-              </NavIcon>
-              <NavText>
-                Flask Dashbaord
-              </NavText>
-            </NavItem>
-            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/admin/')}>
-              <NavIcon>
-                <AdminPanelSettingsIcon />
-              </NavIcon>
-              <NavText>
-                Flask Admin
-              </NavText>
-            </NavItem>
-            <NavItem onClick={() => navigateToExternalLink(window.location.origin + '/5etools/')}>
-              <NavIcon>
-                <AutoStoriesIcon />
-              </NavIcon>
-              <NavText>
-                Compendium
-              </NavText>
-            </NavItem>
-          </>
-          }
-          {/* External Links */}
-          <NavItem onClick={() => openWiki()}>
-            <NavIcon>
-              <HikingIcon />
-            </NavIcon>
-            <NavText>
-              Wiki
-            </NavText>
-          </NavItem>
-          <NavItem eventKey="accountProfile" className={location.pathname === "/accountProfile" ? "active" : ""}>
-            <NavIcon>
-              <AccountCircleIcon />
-            </NavIcon>
-            <NavText>
-              Account Profile
-            </NavText>
-          </NavItem>
-          <NavItem onClick={() => logOut()}>
-            <NavIcon>
-              <LogoutIcon />
-            </NavIcon>
-            <NavText>
-              Log Out
-            </NavText>
-          </NavItem>
-        </SideNav.Nav>
-      </SideNav>
-    </>
+        <Box
+          sx={{
+            height: 72,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: isOpen ? 'space-between' : 'center',
+            px: isOpen ? 1 : 0,
+            borderBottom: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
+          <IconButton
+            onClick={toggleOpen}
+            sx={{
+              color: 'rgba(255,255,255,0.9)',
+            }}
+          >
+            {isOpen ? <CloseIcon /> : <MenuIcon />}
+          </IconButton>
+        </Box>
+
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            height: 'calc(100% - 72px)',
+          }}
+        >
+          <List sx={{ flex: '1 1 auto', overflowY: 'auto', pt: 0 }}>
+            {navItems.map((item) => {
+              const isActive =
+                item.key === 'accountProfile'
+                  ? location.pathname === '/accountProfile'
+                  : location.pathname === `/${item.key}`;
+
+              const button = (
+                <ListItemButton
+                  onClick={() => {
+                    item.onClick();
+                    closeDrawer();
+                  }}
+                  sx={{
+                    ...itemButtonSx,
+                    ...(isActive ? activeItemSx : {}),
+                  }}
+                >
+                  <ListItemIcon sx={iconSx}>{item.icon}</ListItemIcon>
+                  <ListItemText
+                    primary={item.label}
+                    sx={{
+                      opacity: isOpen ? 1 : 0,
+                      whiteSpace: 'nowrap',
+                      '& .MuiTypography-root': {
+                        fontSize: '1rem',
+                      },
+                    }}
+                  />
+                </ListItemButton>
+              );
+
+              return (
+                <ListItem key={item.key} disablePadding sx={{ display: 'block' }}>
+                  {isOpen ? button : <Tooltip title={item.label} placement="right">{button}</Tooltip>}
+                </ListItem>
+              );
+            })}
+          </List>
+
+          <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)' }} />
+
+          <List sx={{ flexShrink: 0, pb: 1 }}>
+            <ListItem disablePadding sx={{ display: 'block' }}>
+              <ListItemButton sx={itemButtonSx}>
+                <ListItemIcon sx={iconSx}>
+                  {theme === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}
+                </ListItemIcon>
+
+                {isOpen ? (
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      pr: 1,
+                    }}
+                  >
+                    <ListItemText
+                      primary={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                      sx={{
+                        '& .MuiTypography-root': {
+                          fontSize: '1rem',
+                          whiteSpace: 'nowrap',
+                        },
+                      }}
+                    />
+                    <Switch
+                      checked={theme === 'light'}
+                      onChange={handleThemeToggle}
+                      color="default"
+                    />
+                  </Box>
+                ) : (
+                  <Tooltip title={theme === 'dark' ? 'Light Mode' : 'Dark Mode'} placement="right">
+                    <Box
+                      onClick={handleThemeToggle}
+                      sx={{
+                        position: 'absolute',
+                        inset: 0,
+                        cursor: 'pointer',
+                      }}
+                    />
+                  </Tooltip>
+                )}
+              </ListItemButton>
+            </ListItem>
+
+            <ListItem disablePadding sx={{ display: 'block' }}>
+              {isOpen ? (
+                <ListItemButton onClick={logOut} sx={itemButtonSx}>
+                  <ListItemIcon sx={iconSx}><LogoutIcon /></ListItemIcon>
+                  <ListItemText
+                    primary="Log Out"
+                    sx={{
+                      opacity: 1,
+                      '& .MuiTypography-root': {
+                        fontSize: '1rem',
+                        whiteSpace: 'nowrap',
+                      },
+                    }}
+                  />
+                </ListItemButton>
+              ) : (
+                <Tooltip title="Log Out" placement="right">
+                  <ListItemButton onClick={logOut} sx={itemButtonSx}>
+                    <ListItemIcon sx={iconSx}><LogoutIcon /></ListItemIcon>
+                  </ListItemButton>
+                </Tooltip>
+              )}
+            </ListItem>
+          </List>
+        </Box>
+      </Drawer>
+    </Box>
   );
 }
 

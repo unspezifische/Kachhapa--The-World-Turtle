@@ -1,0 +1,103 @@
+{
+  "slug": "harptos",
+  "calendar_type": "faerunian",
+  "display_name": "Calendar of Harptos",
+  "hours_per_day": 24,
+  "minutes_per_hour": 60,
+  "weekdays": [
+    { "name": "First-day", "short_name": "I" },
+    { "name": "Second-day", "short_name": "II" },
+    { "name": "Third-day", "short_name": "III" },
+    { "name": "Fourth-day", "short_name": "IV" },
+    { "name": "Fifth-day", "short_name": "V" },
+    { "name": "Sixth-day", "short_name": "VI" },
+    { "name": "Seventh-day", "short_name": "VII" },
+    { "name": "Eighth-day", "short_name": "VIII" },
+    { "name": "Ninth-day", "short_name": "IX" },
+    { "name": "Tenth-day", "short_name": "X" }
+  ],
+  "months": [
+    { "name": "Hammer", "subtitle": "Deepwinter", "length": 30 },
+    { "name": "Alturiak", "subtitle": "The Claw of Winter", "length": 30 },
+    { "name": "Ches", "subtitle": "The Claw of Sunsets", "length": 30 },
+    { "name": "Tarsakh", "subtitle": "The Claw of Storms", "length": 30 },
+    { "name": "Mirtul", "subtitle": "The Melting", "length": 30 },
+    { "name": "Kythorn", "subtitle": "The Time of Flowers", "length": 30 },
+    { "name": "Flamerule", "subtitle": "Summertide", "length": 30 },
+    { "name": "Eleasis", "subtitle": "Highsun", "length": 30 },
+    { "name": "Eleint", "subtitle": "The Fading", "length": 30 },
+    { "name": "Marpenoth", "subtitle": "Leaffall", "length": 30 },
+    { "name": "Uktar", "subtitle": "The Rotting", "length": 30 },
+    { "name": "Nightal", "subtitle": "The Drawing Down", "length": 30 }
+  ],
+  "leap_rule": {
+    "type": "harptos_shieldmeet"
+  },
+  "moons": [
+    {
+      "name": "Selûne",
+      "cycle_length_days": 30,
+      "phase_offset": 0
+    }
+  ],
+  "holidays": [
+    { "name": "Midwinter", "month_index": 0, "day": 31, "intercalary": true },
+    { "name": "Greengrass", "month_index": 3, "day": 31, "intercalary": true },
+    { "name": "Midsummer", "month_index": 6, "day": 31, "intercalary": true },
+    { "name": "Highharvestide", "month_index": 8, "day": 31, "intercalary": true },
+    { "name": "Feast of the Moon", "month_index": 10, "day": 31, "intercalary": true },
+    { "name": "Shieldmeet", "month_index": 6, "day": 32, "intercalary": true, "leap_only": true }
+  ],
+  "time_periods": [
+    {
+      "name": "Dawn",
+      "start_hour": 5,
+      "end_hour": 7
+    },
+    {
+      "name": "Morning",
+      "start_hour": 7,
+      "end_hour": 11
+    },
+    {
+      "name": "Highsun",
+      "start_hour": 11,
+      "end_hour": 13
+    },
+    {
+      "name": "Afternoon",
+      "start_hour": 13,
+      "end_hour": 17
+    },
+    {
+      "name": "Dusk",
+      "start_hour": 17,
+      "end_hour": 19
+    },
+    {
+      "name": "Evening",
+      "start_hour": 19,
+      "end_hour": 22
+    },
+    {
+      "name": "Night",
+      "start_hour": 22,
+      "end_hour": 0
+    },
+    {
+      "name": "Midnight",
+      "start_hour": 0,
+      "end_hour": 1
+    },
+    {
+      "name": "Moondark",
+      "start_hour": 1,
+      "end_hour": 4
+    },
+    {
+      "name": "Night's End",
+      "start_hour": 4,
+      "end_hour": 5
+    }
+  ]
+}

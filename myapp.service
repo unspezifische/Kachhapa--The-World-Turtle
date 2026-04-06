@@ -13,6 +13,8 @@ Environment="DATABASE_URL=postgresql://admin:admin@localhost:5432/db"
 # Make sure the socket ends up group-readable/writeable
 UMask=0007
 
+ExecStartPre=/home/ijohnson/Kachhapa/venv/bin/flask set-all-users-offline
+
 ExecStart=/home/ijohnson/Kachhapa/venv/bin/gunicorn \
   -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 4 \
   --bind unix:/home/ijohnson/Kachhapa/Flask/myapp.sock \
