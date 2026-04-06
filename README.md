@@ -62,3 +62,5 @@ Features:
     - A travel system is being developed to calculate time and distance between points, including options for walking, riding, or flying. In-world Time of Day will adjust accordingly.
     - Integration with OpenLayers and GeoJSON for handling map layers and data.
 
+## Database Updates
+If, in the course of development, the tables change in Flask, it will be necessary to upgrade the database to match the new Flask configuration. To do this, navigate either to the Docker container running Flask or the command line, and type `flask db migrate -m "explain what changed"`, then `flask db upgrade` to commit those changes.

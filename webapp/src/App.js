@@ -1,40 +1,34 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
-// import axios from 'axios';
 import io from 'socket.io-client';
+import { Container, Row, Col, Alert, Button, Spinner, Modal } from 'react-bootstrap';
+import axios from 'axios';
 
-import { Table, Container, Row, Col, Alert, Button } from 'react-bootstrap';
-import { Spinner } from 'react-bootstrap';
-
-import UserContext from './UserContext'; // import the context
+import UserContext from './UserContext';
 import Login from './Login';
 import Register from './Register';
 
 import Menu from './Menu';
-
 import DMTools from './DMTools';
 import CharacterSheet from './CharacterSheet';
 import InventoryView from './InventoryView';
-// import Spellbook from './Spellbook';
 import Journal from './Journal';
 import Library from './Library';
+import Calendar from './Calendar';
 import AccountProfile from './AccountProfile';
-
 import Chat from './Chat';
-
+import ChatIcon from '@mui/icons-material/Chat';
 
 import './App.css';
 import 'bootstrap/dist/css/bootstrap.min.css';
-import axios from 'axios';
-import { use } from 'react';
-
 
 function App() {
-  // Use current origin for socket; socket.io will handle ws upgrade. Keeps host consistent for all served domains.
   const SOCKET_URL = window.location.origin;
 
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const [showChat, setShowChat] = useState(false);
 
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
   const [username, setUsername] = useState('');
   const [userID, setUserID] = useState(null);
   const [character, setCharacter] = useState(null);
@@ -42,218 +36,206 @@ function App() {
   const [characterID, setCharacterID] = useState(null);
   const [accountType, setAccountType] = useState('');
 
-
-  // // Debugging
-  // useEffect(() => {
-  //   console.log('characterName:', characterName);
-  // }, [characterName]);
-
-  // useEffect(() => {
-  //   console.log('headers:', headers);
-  // }, [headers]);
-
-  // State variables from useAuthHandler
   const [isLoading, setIsLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
 
+  const socketRef = useRef(null);
+  const [socketLoading, setSocketLoading] = useState(true);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [inCombat, setInCombat] = useState(false);
+
+  const [initiativeOrder, setInitiativeOrder] = useState(0);
+  const [currentTurn, setCurrentTurn] = useState(1);
+  const [show, setShow] = useState(false);
+  const [turnInfo, setTurnInfo] = useState({ current: null, next: null });
+  const [combatants, setCombatants] = useState([]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
   useEffect(() => {
     if (selectedCampaign.id) {
-      console.log('Selected Campaign:', selectedCampaign);
-      // Update characterName based on selectedCampaign
-      axios.get(`/api/character`, { headers: headers })
+      axios.get(`/api/character`, { headers })
         .then((res) => {
-          console.log('App- Character:', res.data);
           setCharacter(res.data);
           const resolvedName = res.data?.Name || res.data?.name || res.data?.character_name || '';
           setCharacterName(resolvedName);
           setCharacterID(res.data?.id ?? null);
-          console.log(`App- character name has been set to ${resolvedName} with id ${res.data?.id ?? 'N/A'}!`);
         })
-        .catch((err) => {
-          console.error(err);
-        });
+        .catch((err) => console.error(err));
     }
   }, [selectedCampaign]);
 
-  useEffect(() => {
-    console.log("App- characterName:", characterName);
-  }, [characterName]);
-
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token}`,
-    'userID': userID,
-    'username': username,
-    'characterID': characterID,
-    'campaignID': selectedCampaign.id,
+    userID,
+    username,
+    characterID,
+    campaignID: selectedCampaign.id,
   }), [token, userID, username, selectedCampaign, characterID]);
 
-  // Socket Stuff
-  const socketRef = useRef(null);
-  const [socketLoading, setSocketLoading] = useState(true);
-
-  const [inCombat, setInCombat] = useState(false);
-
-
-  // Web Socket setup and maintance
   useEffect(() => {
-    if (!token) return;
-
-    setSocketLoading(true);
-    console.log("Creating new socket connection");
-
-    const newSocket = io(SOCKET_URL, {
-      path: '/socket.io/',
-      transports: ['websocket'],
-      query: { token, campaignID: selectedCampaign.id },
-      reconnectionAttempts: 5,
-      reconnectionDelay: 2000
-    });
-    
-    newSocket.on('connect', () => {
-      console.log("Socket Connected");
-      socketRef.current = newSocket;
-      setSocketLoading(false);
-    });
-
-    newSocket.on('connect_error', (error) => {
-      console.error("Socket Connection Error:", error);
-    });
-
-    newSocket.on('token_expired', () => {
-      console.log("Token Expired");
-      localStorage.removeItem('token');
-      // Handle token expiration clientside?
-    });
-
-    newSocket.on('request_campaignID', () => {
-      console.log('Server is requesting campaign ID');
-      if (selectedCampaign.id) {
-        newSocket.emit('send_campaignID', { campaignID: selectedCampaign.id });
-      } else {
-        // Handle the case where campaignID is not available
-        console.error('Campaign ID is not available');
-      }
-    });
-
-    newSocket.on('disconnect', (reason) => {
-      console.warn("Socket Disconnected:", reason);
-      if (reason === 'io server disconnect') {
-        newSocket.connect();
-      }
-      else {
-        newSocket.emit('user_disconnected', {
-          campaign_id: selectedCampaign.id,
-          user_id: userID
-        });
-      }
-    });
-
-    return () => {
+    if (!token || !selectedCampaign?.id) {
       if (socketRef.current) {
         socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      setSocketConnected(false);
+      setSocketLoading(false);
+      return;
+    }
+
+    setSocketLoading(true);
+
+    const socket = io(SOCKET_URL, {
+      path: '/socket.io/',
+      transports: ['websocket'],
+      query: {
+        token,
+        campaignID: selectedCampaign.id,
+      },
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 2000,
+      autoConnect: true,
+    });
+
+    socketRef.current = socket;
+
+    const handleConnect = () => {
+      setSocketConnected(true);
+      setSocketLoading(false);
+
+      if (username && selectedCampaign?.id) {
+        socket.emit('join_room', {
+          username,
+          campaign_id: selectedCampaign.id,
+        });
       }
     };
-  }, [token, selectedCampaign.id]);
 
-  // Emit join_room event when selectedCampaign changes (which should only occur after the user has already logged in)
-  useEffect(() => {
-    if (socketRef.current && selectedCampaign.id && username) {
-      console.log(`Joining room for campaign ID: ${selectedCampaign.id}`);
-      // socketRef.current.join(selectedCampaign.id);
-      socketRef.current.emit('join_room', { username, campaign_id: selectedCampaign.id });
-    }
-  }, [socketRef.current, selectedCampaign.id, username]);
+    const handleConnectError = (error) => {
+      console.error('Socket Connection Error:', error);
+      setSocketConnected(false);
+      setSocketLoading(false);
+    };
 
-  // Web Socket event listeners for Initative Tracking
+    const handleDisconnect = (reason) => {
+      console.warn('Socket Disconnected:', reason);
+      setSocketConnected(false);
+
+      if (reason === 'io server disconnect') {
+        socket.connect();
+      }
+    };
+
+    const handleTokenExpired = () => {
+      localStorage.removeItem('token');
+    };
+
+    const handleRequestCampaignID = () => {
+      if (selectedCampaign?.id) {
+        socket.emit('send_campaignID', { campaignID: selectedCampaign.id });
+      }
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('connect_error', handleConnectError);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('token_expired', handleTokenExpired);
+    socket.on('request_campaignID', handleRequestCampaignID);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('connect_error', handleConnectError);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('token_expired', handleTokenExpired);
+      socket.off('request_campaignID', handleRequestCampaignID);
+      socket.disconnect();
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+
+      setSocketConnected(false);
+    };
+  }, [token, selectedCampaign?.id, username]);
+
   useEffect(() => {
-    if (!socketRef.current) return;
+    const socket = socketRef.current;
+    if (!socket || !socketConnected || !selectedCampaign?.id || !username) return;
+
+    socket.emit('join_room', {
+      username,
+      campaign_id: selectedCampaign.id,
+    });
+  }, [socketConnected, selectedCampaign?.id, username]);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
 
     const handleTurnUpdate = ({ current, next }) => {
-      setCurrentTurn(current.order)
-      setTurnInfo(prevState => ({
+      setCurrentTurn(current.order);
+      setTurnInfo((prevState) => ({
         ...prevState,
-        current: current,
-        next: next
+        current,
+        next,
       }));
     };
 
-    const handleEndOfCombat = () => {
-      setInCombat(false);
-    };
+    const handleEndOfCombat = () => setInCombat(false);
 
     const updateCombatants = (combatants) => {
-      console.log("Updated Combatants List received");
       setCombatants(combatants);
 
-      let yourSpot = combatants.findIndex(combatant => combatant.characterName === characterName) + 1;
+      const yourSpot =
+        combatants.findIndex(
+          (combatant) => combatant.characterName === characterName
+        ) + 1;
 
-      // Check if there are enough combatants to determine current and next
       if (combatants.length >= 2) {
         const current = { character: combatants[0], order: 1 };
         const next = { character: combatants[1], order: 2 };
         setTurnInfo({ current, next, yourSpot });
       }
-
-      console.log("combatants:", combatants);
     };
 
-    socketRef.current.on('active_users', (active_users) => {
-      // console.log('APP- Active users:', active_users);
-    });
+    const handleRollForInitiative = () => setShow(true);
 
-    socketRef.current.on('Roll for initiative!', () => setShow(true));
-    socketRef.current.on('combatants', updateCombatants);
-    socketRef.current.on('turn update', handleTurnUpdate);
-    socketRef.current.on('end of combat', handleEndOfCombat);
+    socket.on('Roll for initiative!', handleRollForInitiative);
+    socket.on('combatants', updateCombatants);
+    socket.on('turn update', handleTurnUpdate);
+    socket.on('end of combat', handleEndOfCombat);
 
     return () => {
-      socketRef.current.off('token_expired');
-      socketRef.current.off('active_users');
-      socketRef.current.off('Roll for initiative!');
-      socketRef.current.off('combatants', updateCombatants);
-      socketRef.current.off('turn update', handleTurnUpdate);
-      socketRef.current.off('end of combat', handleEndOfCombat);
+      socket.off('Roll for initiative!', handleRollForInitiative);
+      socket.off('combatants', updateCombatants);
+      socket.off('turn update', handleTurnUpdate);
+      socket.off('end of combat', handleEndOfCombat);
     };
-  }, [socketRef.current]);
-
-
-  /***************************/
-
-  /* Iniative Roll Stuff */
-  const [initiativeOrder, setInitiativeOrder] = useState(0);  // Player entered
-  const [currentTurn, setCurrentTurn] = useState(1);  // Whose turn is it rn?
-  const [show, setShow] = useState(false); // Add state for controlling the alert visibility
-  const [turnInfo, setTurnInfo] = useState({ current: null, next: null });
-  const [combatants, setCombatants] = useState([]);
+  }, [socketConnected, characterName]);
 
   const handleInitiativeSubmit = () => {
-    // Emit the initiative roll to the server
     socketRef.current.emit('initiative roll', { characterName, roll: initiativeOrder });
-    setShow(false); // Hide the initiative roll alert after submitting the roll
+    setShow(false);
     setInCombat(true);
-  };
-
-  const getTurnInfo = () => {
-    const current = combatants[currentTurn];
-    const next = combatants[(currentTurn + 1) % combatants.length];
-    const yourPlace = combatants.findIndex((combatant) => combatant.characterName === characterName);
-    return { current, next, yourPlace };
   };
 
   return (
     <UserContext.Provider value={{ characterName, accountType, headers, setIsLoggedIn, socket: socketRef.current }}>
       <Router>
-        {/* Show the spinner while the token is authenticating */}
         {isLoading && (
-          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+          <div className="app-spinner-wrap">
             <Spinner animation="border" role="status" />
           </div>
         )}
 
-        {/* Show initiative alert */}
         {show && accountType === 'Player' && (
-          <Alert variant="danger" onClose={() => setShow(false)} style={{ position: 'fixed', top: 0, right: 0, zIndex: 1000 }}>
+          <Alert variant="danger" onClose={() => setShow(false)} className="initiative-alert">
             <Alert.Heading>Roll for Initiative!</Alert.Heading>
             <input
               type="number"
@@ -264,102 +246,88 @@ function App() {
           </Alert>
         )}
 
-        {/* Main App Layout */}
         {isLoggedIn ? (
           selectedCampaign.id ? (
-            <Container fluid style={{ height: '100vh', width: '100%', overflow: 'auto' }}>
-            <Row className="d-none d-md-flex">
-              <Col md={2} className="menu-column">
-                  <Menu headers={headers} accountType={accountType} selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} />
-              </Col>
-              <Col md={8} className="content-column">
-                <Routes>
-                  <Route path="/" element={<Navigate to="/accountProfile" />} />
-                  <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} setCharacterName={setCharacterName} />} />
-                  <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
-                  <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
-                  {/* <Route path="/Spellbook" element={<Spellbook username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} isLoading={isLoading} setIsLoading={setIsLoading} />} /> */}
-                  <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} />} />
-                  <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
-                  <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} />} />
-
-                  {/* Catch-all route for wiki pages */}
-                  <Route path="/:campaign_name/:page_title" render={({ match }) => {
-                    const { campaign_name, page_title } = match.params;
-                    window.location.href = `/${campaign_name}/${page_title}`;
-                    return null;
-                  }} />
-                  {/* Allow access to the server admin and monitoring dashboards */}
-                  <Route path="/admin" component={() => { window.location.href = '/admin'; return null; }} />
-                  <Route path="/dashboard" component={() => { window.location.href = '/dashboard'; return null; }} />
-                </Routes>
-              </Col>
-              <Col md={3} className="chat-column">
-                {inCombat && accountType !== 'DM' && turnInfo.current.character.characterName && turnInfo.next.character.characterName && (
-                  // <div style={{ position: 'fixed', top: 0, right: 0, zIndex: 1000, width: '300px' }}>
-                    <Table striped bordered>
-                      <thead>
-                        <tr>
-                          <th>Order</th>
-                          <th>Character</th>
-
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td>{turnInfo.current.order}</td>
-                          <td>{turnInfo.current.character.characterName}</td>
-                        </tr>
-                        <tr>
-                          <td>{turnInfo.next.order}</td>
-                          <td>{turnInfo.next.character.characterName}</td>
-                        </tr>
-                        <tr>
-                          <td>{turnInfo.yourSpot}</td>
-                          <td>You</td>
-                        </tr>
-                      </tbody>
-                    </Table>
-                  // </div>
-                )}
-                  {!socketLoading && <Chat
+            <Container fluid className="app-shell">
+              <div className="app-layout">
+                <aside className="menu-column">
+                  <Menu
                     headers={headers}
-                    socket={socketRef.current}
-                    characterName={characterName}
-                    username={username}
-                    campaignID={selectedCampaign.id} />}
-              </Col>
-            </Row>
-          </Container>
+                    accountType={accountType}
+                    selectedCampaign={selectedCampaign}
+                    setSelectedCampaign={setSelectedCampaign}
+                    theme={theme}
+                    setTheme={setTheme}
+                  />
+                </aside>
+
+                <main className="content-column">
+                  {inCombat && accountType !== 'DM' && turnInfo.current?.character?.characterName && turnInfo.next?.character?.characterName && (
+                    <div className="combat-banner">
+                      <strong>Current:</strong> {turnInfo.current.character.characterName} ({turnInfo.current.order}){' '}
+                      <strong>Next:</strong> {turnInfo.next.character.characterName} ({turnInfo.next.order}){' '}
+                      <strong>You:</strong> {turnInfo.yourSpot}
+                    </div>
+                  )}
+
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/accountProfile" />} />
+                    <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} setCharacterName={setCharacterName} />} />
+                    <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
+                    <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
+                    <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} theme={theme} />} />
+                    <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
+                    <Route path="/calendar" element={<Calendar headers={headers} socket={socketRef.current} characterName={characterName} username={username} accountType={accountType} campaignID={selectedCampaign.id} />} />
+                    <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} />} />
+                  </Routes>
+                </main>
+              </div>
+
+              <Button
+                className="chat-fab"
+                onClick={() => setShowChat(true)}
+                aria-label="Open chat"
+              >
+                <ChatIcon />
+              </Button>
+
+              <Modal
+                show={showChat}
+                onHide={() => setShowChat(false)}
+                dialogClassName="chat-modal"
+                contentClassName="chat-modal-content"
+                centered
+              >
+                <Modal.Header closeButton>
+                  <Modal.Title>Campaign Chat</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                  {!socketLoading && (
+                    <Chat
+                      headers={headers}
+                      socket={socketRef.current}
+                      characterName={characterName}
+                      username={username}
+                      campaignID={selectedCampaign.id}
+                    />
+                  )}
+                </Modal.Body>
+              </Modal>
+            </Container>
           ) : (
-              <AccountProfile headers={headers}
+            <AccountProfile
+              headers={headers}
               setSelectedCampaign={setSelectedCampaign}
               setCharacterName={setCharacterName}
-              setAccountType={setAccountType} />
+              setAccountType={setAccountType}
+            />
           )
         ) : (
           <Container fluid>
             <Routes>
-              <Route
-                path="/login"
-                element={
-                  <Login setIsLoggedIn={setIsLoggedIn}
-                    setToken={setToken}
-                    setUserID={setUserID}
-                    setIsLoading={setIsLoading}
-                    setAppUsername={setUsername}
-                />}
-              />
-              <Route
-                path="/register"
-                element={
-                  <Register setIsLoggedIn={setIsLoggedIn}
-                    setToken={setToken}
-                    setAppUsername={setUsername}
-                    setUserID={setUserID}
-                  />}
-                />
-              <Route path="*" element={<Navigate to="/login" />} /> {/* Default route */}
+              <Route path="/login" element={<Login setIsLoggedIn={setIsLoggedIn} setToken={setToken} setUserID={setUserID} setIsLoading={setIsLoading} setAppUsername={setUsername} />} />
+              <Route path="/register" element={<Register setIsLoggedIn={setIsLoggedIn} setToken={setToken} setAppUsername={setUsername} setUserID={setUserID} />} />
+              <Route path="*" element={<Navigate to="/login" />} />
             </Routes>
           </Container>
         )}

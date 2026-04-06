@@ -24,6 +24,7 @@ from flask import redirect, url_for
 from flask_admin import Admin
 from flask_admin.contrib.sqla import ModelView
 import flask_monitoringdashboard as dashboard
+from flask_migrate import upgrade
 
 ## For database stuff
 from flask_sqlalchemy import SQLAlchemy
@@ -49,6 +50,7 @@ from flask_socketio import SocketIO, join_room, leave_room, emit, send, disconne
 
 from threading import Thread, Lock
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 import io
 import os
 import csv  ## For importing items from CSV
@@ -77,6 +79,13 @@ if not db_url:
     db_url = "postgresql://admin:admin@localhost:5432/db"
 
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_timeout": 30,
+}
 
 ## Token stuff
 app.config['JWT_SECRET_KEY'] = 'jwt-secret-key'
@@ -127,6 +136,21 @@ db.init_app(app)
 # Map of username -> sid for active socket connections. Guarded by a lock
 active_connections = {}
 active_connections_lock = Lock()
+
+
+def socket_db_session(handler):
+    """Ensure Socket.IO events always release DB connections back to the pool."""
+    @wraps(handler)
+    def wrapped(*args, **kwargs):
+        try:
+            return handler(*args, **kwargs)
+        except Exception:
+            db.session.rollback()
+            raise
+        finally:
+            db.session.remove()
+
+    return wrapped
 
 
 INTEGER_MIN = -2147483648
@@ -238,6 +262,7 @@ class Campaign(db.Model):
     system = db.Column(db.String(50), nullable=False)    # e.g., 'D&D 5e', 'pathfinder'
     icon = db.Column(db.String(120))  # icon filepath or name
     description = db.Column(db.Text)
+    calendars = db.relationship('Calendar', backref='campaign', lazy=True)
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     dm_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     scribes = db.Column(ARRAY(db.Integer), default=[])  # List of user IDs who are scribes
@@ -476,6 +501,55 @@ class Journal(db.Model):
     date_created = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     date_modified = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
+    calendar_id = db.Column(db.Integer, db.ForeignKey('calendar.id'), nullable=True)
+    journal_year = db.Column(db.Integer, nullable=True)
+    journal_month_index = db.Column(db.Integer, nullable=True)
+    journal_day = db.Column(db.Integer, nullable=True)
+    journal_hour = db.Column(db.Integer, nullable=True)
+    journal_minute = db.Column(db.Integer, nullable=True)
+
+    calendar = db.relationship('Calendar', lazy=True)
+
+    def get_journal_date_display(self):
+        if self.journal_year is None or self.journal_month_index is None or self.journal_day is None:
+            return None
+
+        if not self.calendar:
+            return f"Year {self.journal_year}, Month {self.journal_month_index + 1}, Day {self.journal_day}"
+
+        format_data = self.calendar.get_format_data() if hasattr(self.calendar, 'get_format_data') else {}
+        months = format_data.get('months', [])
+
+        month_name = None
+        month_subtitle = None
+        if 0 <= self.journal_month_index < len(months):
+            month_name = months[self.journal_month_index].get('name')
+            month_subtitle = months[self.journal_month_index].get('subtitle')
+
+        if month_name:
+            if month_subtitle:
+                return f"{month_name} ({month_subtitle}) {self.journal_day}, Year {self.journal_year}"
+            return f"{month_name} {self.journal_day}, Year {self.journal_year}"
+
+        return f"Year {self.journal_year}, Month {self.journal_month_index + 1}, Day {self.journal_day}"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'content': self.entry,
+            'date_created': self.date_created.isoformat(),
+            'date_modified': self.date_modified.isoformat(),
+            'journal_date': {
+                'calendar_id': self.calendar_id,
+                'year': self.journal_year,
+                'month_index': self.journal_month_index,
+                'day': self.journal_day,
+                'hour': self.journal_hour,
+                'minute': self.journal_minute,
+            } if self.journal_year is not None else None,
+            'journal_date_display': self.get_journal_date_display(),
+        }
 
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -643,6 +717,143 @@ class TableEntry(db.Model):
             'result': self.result
         }
 
+class Calendar(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
+
+    # Reusable calendar template
+    format_id = db.Column(db.Integer, db.ForeignKey('game_element.id'), nullable=False)
+
+    # Optional display/cache field if you want it
+    format_slug = db.Column(db.String(50), nullable=True)
+
+    current_year = db.Column(db.Integer, nullable=False, default=1)
+    current_month_index = db.Column(db.Integer, nullable=False, default=0)
+    current_day = db.Column(db.Integer, nullable=False, default=1)
+    current_hour = db.Column(db.Integer, nullable=False, default=0)
+    current_minute = db.Column(db.Integer, nullable=False, default=0)
+
+    epoch_year = db.Column(db.Integer, nullable=True, default=1)
+    epoch_month_index = db.Column(db.Integer, nullable=True, default=0)
+    epoch_day = db.Column(db.Integer, nullable=True, default=1)
+
+    format_element = db.relationship('GameElement', backref='calendars', lazy=True)
+
+    events = db.relationship(
+        'CalendarEvent',
+        backref='calendar',
+        lazy=True,
+        cascade='all, delete-orphan'
+    )
+
+    def get_format_data(self):
+        return (self.format_element.data if self.format_element else {}) or {}
+
+    def get_hours_in_day(self):
+        format_data = self.get_format_data()
+        return format_data.get('hours_per_day', 24)
+
+    def get_minutes_in_hour(self):
+        format_data = self.get_format_data()
+        return format_data.get('minutes_per_hour', 60)
+
+    def get_time_period(self, hour=None):
+        format_data = self.get_format_data()
+        periods = format_data.get('time_periods', [])
+
+        if hour is None:
+            hour = self.current_hour
+
+        for period in periods:
+            start_hour = period.get('start_hour', 0)
+            end_hour = period.get('end_hour', 0)
+
+            if start_hour <= end_hour:
+                if start_hour <= hour < end_hour:
+                    return period['name']
+            else:
+                if hour >= start_hour or hour < end_hour:
+                    return period['name']
+
+        return None
+
+    def to_dict(self):
+        format_data = self.get_format_data()
+        months = format_data.get('months', [])
+        weekdays = format_data.get('weekdays', [])
+        moons = format_data.get('moons', [])
+        holidays = format_data.get('holidays', [])
+
+        current_month = None
+        if 0 <= self.current_month_index < len(months):
+            current_month = months[self.current_month_index]
+
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'campaign_id': self.campaign_id,
+            'format': {
+                'id': self.format_element.id if self.format_element else None,
+                'name': self.format_element.name if self.format_element else None,
+                'slug': self.format_slug,
+                'display_name': format_data.get('display_name'),
+            },
+            'current_date': {
+                'year': self.current_year,
+                'month_index': self.current_month_index,
+                'month_name': current_month.get('name') if current_month else None,
+                'month_subtitle': current_month.get('subtitle') if current_month else None,
+                'day': self.current_day,
+                'hour': self.current_hour,
+                'minute': self.current_minute,
+            },
+            'time_period': self.get_time_period(),
+            'hours_in_day': self.get_hours_in_day(),
+            'minutes_in_hour': self.get_minutes_in_hour(),
+            'months': months,
+            'days': weekdays,
+            'moons': moons,
+            'holidays': holidays,
+            'events': [event.to_dict() for event in self.events],
+        }
+
+
+class CalendarEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    calendar_id = db.Column(db.Integer, db.ForeignKey('calendar.id'), nullable=False)
+
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    color = db.Column(db.String(20), nullable=True)
+
+    start_year = db.Column(db.Integer, nullable=False)
+    start_month_index = db.Column(db.Integer, nullable=False)
+    start_day = db.Column(db.Integer, nullable=False)
+    start_hour = db.Column(db.Integer, nullable=True)
+    start_minute = db.Column(db.Integer, nullable=True)
+
+    is_player_visible = db.Column(db.Boolean, nullable=False, default=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'calendar_id': self.calendar_id,
+            'name': self.name,
+            'description': self.description,
+            'color': self.color,
+            'year': self.start_year,
+            'month_index': self.start_month_index,
+            'day': self.start_day,
+            'hour': self.start_hour,
+            'minute': self.start_minute,
+            'is_player_visible': self.is_player_visible,
+        }
+
+
 ## Add all the models to the admin console
 admin.add_view(ModelView(User, db.session))
 admin.add_view(ModelView(Character, db.session))
@@ -662,7 +873,18 @@ admin.add_view(ModelView(LootBox, db.session))
 admin.add_view(ModelView(NPC, db.session))
 admin.add_view(ModelView(GameElement, db.session))
 admin.add_view(ModelView(Document, db.session))
+admin.add_view(ModelView(RandomTable, db.session))
+admin.add_view(ModelView(Calendar, db.session))
+admin.add_view(ModelView(CalendarEvent, db.session))
 
+from flask.cli import with_appcontext
+import click
+
+@app.cli.command("set-all-users-offline")
+@with_appcontext
+def set_all_users_offline_command():
+    set_all_users_offline()
+    click.echo("All users set offline.")
 
 def normalize_keys(d):
     if isinstance(d, dict):
@@ -782,12 +1004,6 @@ def map_fields(data, model):
 
     # app.logger.debug("Mapped data: %s", mapped_data)
     return mapped_data
-
-
-with app.app_context():
-    db.create_all()
-    set_all_users_offline()
-    # populate_game_elements()
 
 migrate = Migrate(app, db)
 
@@ -1882,7 +2098,7 @@ def save_items():
             else:
                 app.logger.debug("SAVE CSV- Item %s already exists in the database. Skipping...", item['name'])
 
-        socketio.emit('items_updated')
+        emit('items_updated')
         return jsonify(message='Items saved'), 200
 
     except Exception as e:
@@ -2069,7 +2285,7 @@ def inventory():
         db.session.commit()
 
         print("FLASK- Emitting inventory update")
-        socketio.emit('inventory_update', {'character_name': character.character_name, 'itemID': data['itemID'], 'quantity': data['quantity']}, to=character.user.sid)
+        emit('inventory_update', {'character_name': character.character_name, 'itemID': data['itemID'], 'quantity': data['quantity']}, to=character.user.sid)
 
         return jsonify({'message': 'Item added to inventory!'})
 
@@ -2319,31 +2535,49 @@ def get_equipment():
     return jsonify({'equipment': equippedItems})
 
 
-## These functions do Journal stuff
+##************************##
+## **   Journal stuff  ** ##
+##************************##
+def get_user_and_character_for_campaign():
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+
+    if user is None:
+        return None, None, jsonify({'error': 'User not found.'}), 404
+
+    campaignID = request.headers.get('CampaignID')
+    if campaignID is None:
+        return None, None, jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
+
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID,
+        campaign_members.c.userID == user.id
+    )
+    result = db.session.execute(stmt).first()
+
+    if result is None:
+        return user, None, jsonify({'error': 'Character not found.'}), 404
+
+    return user, result.characterID, int(campaignID), None
+
 @app.route('/api/journal', methods=['POST'])
 @jwt_required()
 def create_journal_entry():
-    # app.logger.debug("JOURNAL- headers: %s", request.headers)
-    data = request.get_json()
+    data = request.get_json() or {}
     if 'title' not in data or 'entry' not in data:
         return jsonify({'message': 'Title and Entry are required!'}), 400
 
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
-
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
 
     campaignID = request.headers.get('CampaignID')
-
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
-    else:
-        app.logger.debug("JOURNAL- campaignID: %s", campaignID)
-    
-    # Find the character associated with the user and the campaign
+
     stmt = select(campaign_members.c.characterID).where(
-        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.campaignID == campaignID,
         campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
@@ -2351,8 +2585,10 @@ def create_journal_entry():
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    characterID = result.characterID if result else None
-    app.logger.debug("JOURNAL- characterID: %s", characterID)
+    characterID = result.characterID
+    journal_date = data.get('journal_date')
+
+    calendar = Calendar.query.filter_by(campaign_id=campaignID).first()
 
     new_journal_entry = Journal(
         userID=user.id,
@@ -2361,12 +2597,22 @@ def create_journal_entry():
         title=data['title'],
         entry=data['entry'],
         date_created=datetime.utcnow(),
-        date_modified=datetime.utcnow()
+        date_modified=datetime.utcnow(),
+        calendar_id=calendar.id if (journal_date and calendar) else None,
+        journal_year=journal_date.get('year') if journal_date else None,
+        journal_month_index=journal_date.get('month_index') if journal_date else None,
+        journal_day=journal_date.get('day') if journal_date else None,
+        journal_hour=journal_date.get('hour') if journal_date else None,
+        journal_minute=journal_date.get('minute') if journal_date else None,
     )
+
     db.session.add(new_journal_entry)
     db.session.commit()
 
-    return jsonify({'message': 'New journal entry created!'})
+    return jsonify({
+        'message': 'New journal entry created!',
+        'entry': new_journal_entry.to_dict()
+    }), 201
 
 @app.route('/api/journal', methods=['GET'])
 @jwt_required()
@@ -2378,13 +2624,11 @@ def get_journal_entries():
         return jsonify({'error': 'User not found.'}), 404
 
     campaignID = request.headers.get('CampaignID')
-
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
-    
-    # Find the character associated with the user and the campaign
+
     stmt = select(campaign_members.c.characterID).where(
-        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.campaignID == campaignID,
         campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
@@ -2392,21 +2636,16 @@ def get_journal_entries():
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    characterID = result.characterID if result else None
+    characterID = result.characterID
 
     entries = Journal.query.filter_by(characterID=characterID).order_by(Journal.date_created.desc()).all()
-    return jsonify({'entries': [{
-        'id': entry.id,
-        'title': entry.title,
-        'date_created': entry.date_created.strftime("%m/%d/%Y, %H:%M:%S"),
-        'date_modified': entry.date_modified.strftime("%m/%d/%Y, %H:%M:%S"),
-        'content': entry.entry
-    } for entry in entries]})
+    return jsonify({'entries': [entry.to_dict() for entry in entries]})
+
 
 @app.route('/api/journal/<entry_id>', methods=['PUT'])
 @jwt_required()
 def update_journal_entry(entry_id):
-    data = request.get_json()
+    data = request.get_json() or {}
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
 
@@ -2414,13 +2653,11 @@ def update_journal_entry(entry_id):
         return jsonify({'error': 'User not found.'}), 404
 
     campaignID = request.headers.get('CampaignID')
-
     if campaignID is None:
         return jsonify({'error': 'Campaign ID not provided in the request header.'}), 400
-    
-    # Find the character associated with the user and the campaign
+
     stmt = select(campaign_members.c.characterID).where(
-        campaign_members.c.campaignID == campaignID, 
+        campaign_members.c.campaignID == campaignID,
         campaign_members.c.userID == user.id
     )
     result = db.session.execute(stmt).first()
@@ -2428,7 +2665,7 @@ def update_journal_entry(entry_id):
     if result is None:
         return jsonify({'error': 'Character not found.'}), 404
 
-    characterID = result.characterID if result else None
+    characterID = result.characterID
     entry = Journal.query.filter_by(id=entry_id, characterID=characterID).first()
 
     if entry is None:
@@ -2438,10 +2675,32 @@ def update_journal_entry(entry_id):
         entry.title = data['title']
     if 'entry' in data:
         entry.entry = data['entry']
+
+    journal_date = data.get('journal_date')
+    if journal_date:
+        calendar = Calendar.query.filter_by(campaign_id=campaignID).first()
+        entry.calendar_id = calendar.id if calendar else None
+        entry.journal_year = journal_date.get('year')
+        entry.journal_month_index = journal_date.get('month_index')
+        entry.journal_day = journal_date.get('day')
+        entry.journal_hour = journal_date.get('hour')
+        entry.journal_minute = journal_date.get('minute')
+    else:
+        entry.calendar_id = None
+        entry.journal_year = None
+        entry.journal_month_index = None
+        entry.journal_day = None
+        entry.journal_hour = None
+        entry.journal_minute = None
+
     entry.date_modified = datetime.utcnow()
 
     db.session.commit()
-    return jsonify({'message': 'Journal entry updated'}), 200
+    return jsonify({
+        'message': 'Journal entry updated',
+        'entry': entry.to_dict()
+    }), 200
+
 
 @app.route('/api/journal/<entry_id>', methods=['DELETE'])
 @jwt_required()
@@ -2524,7 +2783,7 @@ def library():
         db.session.commit()
 
         # emit an event to all connected clients
-        socketio.emit('library_update')
+        emit('library_update')
 
         return { 'file': { 'name': file.filename } }, 201
 
@@ -2584,7 +2843,7 @@ def delete_file_by_id(file_id):
         db.session.commit()
 
         # emit an event to all connected clients
-        socketio.emit('library_update')
+        emit('library_update')
 
         return jsonify({'message': 'File deleted successfully'})
     except Exception as e:
@@ -2940,7 +3199,7 @@ def issue_loot_box(box_id):
     db.session.commit()
 
     # Emit an inventory_update event to the recipient
-    socketio.emit('inventory_update', {'character_name': character_name, 'items': [item.to_dict() for item, _ in items_with_quantities]}, to=selectedPlayer.get('sid'))
+    emit('inventory_update', {'character_name': character_name, 'items': [item.to_dict() for item, _ in items_with_quantities]}, to=selectedPlayer.get('sid'))
 
     # Send a message to the recipient that they got a new loot box
     reception_message = {
@@ -2949,7 +3208,7 @@ def issue_loot_box(box_id):
         'sender': 'System',
         'recipients': [character_name],
     }
-    socketio.emit('message', reception_message, to=selectedPlayer.get('sid'))
+    emit('message', reception_message, to=selectedPlayer.get('sid'))
 
     return jsonify({'message': 'Loot box issued successfully.'})
 
@@ -3366,6 +3625,546 @@ def get_chat_history():
 
     return jsonify(messages_json), 200
 
+##************************##
+## **  Calendar Stuff  ** ##
+##************************##
+def emit_calendar_updated(campaign_id, payload=None):
+    base_payload = {"campaign_id": campaign_id}
+    if payload:
+        base_payload.update(payload)
+
+    socketio.emit(
+        'calendar_updated',
+        base_payload,
+        to=str(campaign_id)
+    )
+
+def get_calendar_format(calendar):
+    if not calendar.format_element:
+        return {}
+    return calendar.format_element.data or {}
+
+def get_months(calendar):
+    format_data = get_calendar_format(calendar)
+    return format_data.get('months', [])
+
+def get_weekdays(calendar):
+    format_data = get_calendar_format(calendar)
+    return format_data.get('weekdays', [])
+
+def get_moons(calendar):
+    format_data = get_calendar_format(calendar)
+    return format_data.get('moons', [])
+
+def get_holidays(calendar):
+    format_data = get_calendar_format(calendar)
+    return format_data.get('holidays', [])
+
+
+def is_leap_year(calendar, year):
+    format_data = get_calendar_format(calendar)
+    rule = format_data.get('leap_rule')
+
+    if not rule:
+        return False
+
+    rule_type = rule.get('type')
+
+    if rule_type == 'gregorian':
+        return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+    if rule_type == 'every_n_years':
+        interval = rule.get('interval', 4)
+        return year % interval == 0
+
+    if rule_type == 'harptos_shieldmeet':
+        return year % 4 == 0
+
+    return False
+
+
+def days_in_month(calendar, year, month_index):
+    months = get_months(calendar)
+
+    if month_index < 0 or month_index >= len(months):
+        raise IndexError("month_index out of range")
+
+    month = months[month_index]
+
+    if is_leap_year(calendar, year) and month.get('leap_length') is not None:
+        return month['leap_length']
+
+    return month.get('length', 30)
+
+
+def date_to_ordinal(calendar, year, month_index, day):
+    months = get_months(calendar)
+
+    if not months:
+        raise ValueError("Calendar format has no months defined")
+
+    ordinal = 0
+    start_year = calendar.epoch_year or 1
+
+    for y in range(start_year, year):
+        for i in range(len(months)):
+            ordinal += days_in_month(calendar, y, i)
+
+    for i in range(month_index):
+        ordinal += days_in_month(calendar, year, i)
+
+    ordinal += (day - 1)
+    return ordinal
+
+
+def ordinal_to_date(calendar, ordinal):
+    months = get_months(calendar)
+
+    if not months:
+        raise ValueError("Calendar format has no months defined")
+
+    year = calendar.epoch_year or 1
+
+    while True:
+        year_length = sum(days_in_month(calendar, year, i) for i in range(len(months)))
+        if ordinal < year_length:
+            break
+        ordinal -= year_length
+        year += 1
+
+    month_index = 0
+    while True:
+        dim = days_in_month(calendar, year, month_index)
+        if ordinal < dim:
+            break
+        ordinal -= dim
+        month_index += 1
+
+    day = ordinal + 1
+    return year, month_index, day
+
+
+
+def advance_date(calendar, current_date, delta_days=0, delta_hours=0, delta_minutes=0):
+    hours_in_day = calendar.get_hours_in_day() or 24
+    minutes_in_hour = calendar.get_minutes_in_hour() or 60
+
+    total_minutes = (
+        current_date['hour'] * minutes_in_hour
+        + current_date['minute']
+        + delta_hours * minutes_in_hour
+        + delta_minutes
+    )
+
+    extra_days, remaining_minutes = divmod(total_minutes, hours_in_day * minutes_in_hour)
+
+    if remaining_minutes < 0:
+        extra_days -= 1
+        remaining_minutes += hours_in_day * minutes_in_hour
+
+    new_hour, new_minute = divmod(remaining_minutes, minutes_in_hour)
+
+    start_ordinal = date_to_ordinal(
+        calendar,
+        current_date['year'],
+        current_date['month_index'],
+        current_date['day']
+    )
+
+    new_ordinal = start_ordinal + delta_days + extra_days
+    new_year, new_month_index, new_day = ordinal_to_date(calendar, new_ordinal)
+
+    return {
+        'year': new_year,
+        'month_index': new_month_index,
+        'day': new_day,
+        'hour': new_hour,
+        'minute': new_minute,
+    }
+
+
+def get_moon_phase(moon_data, ordinal_day):
+    cycle_length = moon_data.get('cycle_length_days', 30)
+    phase_offset = moon_data.get('phase_offset', 0)
+
+    phase_index = (ordinal_day + phase_offset) % cycle_length
+    return phase_index_to_name(phase_index, cycle_length)
+
+def phase_index_to_name(phase_index, cycle_length):
+    ratio = phase_index / cycle_length
+
+    if ratio < 0.125:
+        return 'new'
+    if ratio < 0.25:
+        return 'waxing-crescent'
+    if ratio < 0.375:
+        return 'first-quarter'
+    if ratio < 0.5:
+        return 'waxing-gibbous'
+    if ratio < 0.625:
+        return 'full'
+    if ratio < 0.75:
+        return 'waning-gibbous'
+    if ratio < 0.875:
+        return 'last-quarter'
+    return 'waning-crescent'
+
+def get_holidays_for_month(calendar, year, month_index):
+    holidays = get_holidays(calendar)
+
+    results = []
+    for holiday in holidays:
+        if holiday.get('month_index') != month_index:
+            continue
+
+        if holiday.get('leap_only') and not is_leap_year(calendar, year):
+            continue
+
+        results.append(holiday)
+
+    return results
+
+#GET    /api/calendar/<campaign_id>'
+@app.route('/api/calendar/<int:campaign_id>', methods=['GET'])
+def get_calendar(campaign_id):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    return jsonify(calendar.to_dict()), 200
+
+#POST   /api/calendar/<campaign_id>/date/set
+@app.route('/api/calendar/<int:campaign_id>/date/set', methods=['POST'])
+def set_calendar_date(campaign_id):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    data = request.json or {}
+
+    year = data.get('year')
+    month_index = data.get('month_index')
+    day = data.get('day')
+    hour = data.get('hour', 0)
+    minute = data.get('minute', 0)
+
+    if year is None or month_index is None or day is None:
+        return jsonify({"message": "year, month_index, and day are required"}), 400
+
+    total_days = days_in_month(calendar, year, month_index)
+    if day < 1 or day > total_days:
+        return jsonify({"message": f"day must be between 1 and {total_days}"}), 400
+
+    calendar.current_year = year
+    calendar.current_month_index = month_index
+    calendar.current_day = day
+    calendar.current_hour = hour
+    calendar.current_minute = minute
+
+    db.session.commit()
+
+    return jsonify(calendar.to_dict()), 200
+
+#POST   /api/calendar/<campaign_id>/date/advance
+@app.route('/api/calendar/<int:campaign_id>/date/advance', methods=['POST'])
+def advance_calendar_date(campaign_id):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    data = request.json or {}
+
+    delta_days = data.get('days', 0)
+    delta_hours = data.get('hours', 0)
+    delta_minutes = data.get('minutes', 0)
+
+    current_date = {
+        'year': calendar.current_year,
+        'month_index': calendar.current_month_index,
+        'day': calendar.current_day,
+        'hour': calendar.current_hour,
+        'minute': calendar.current_minute,
+    }
+
+    new_date = advance_date(calendar, current_date, delta_days, delta_hours, delta_minutes)
+
+    calendar.current_year = new_date['year']
+    calendar.current_month_index = new_date['month_index']
+    calendar.current_day = new_date['day']
+    calendar.current_hour = new_date['hour']
+    calendar.current_minute = new_date['minute']
+
+    db.session.commit()
+
+    emit_calendar_updated(
+        campaign_id,
+        {
+            "kind": "current_date",
+            "current_date": {
+                "year": calendar.current_year,
+                "month_index": calendar.current_month_index,
+                "day": calendar.current_day,
+                "hour": calendar.current_hour,
+                "minute": calendar.current_minute,
+            }
+        }
+    )
+
+    return jsonify(calendar.to_dict()), 200
+
+#GET    /api/calendar/<campaign_id>/date
+@app.route('/api/calendar/<int:campaign_id>/date', methods=['GET'])
+def get_calendar_date(campaign_id):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    months = get_months(calendar)
+    current_month = months[calendar.current_month_index] if 0 <= calendar.current_month_index < len(months) else None
+
+    return jsonify({
+        'year': calendar.current_year,
+        'month_index': calendar.current_month_index,
+        'month_name': current_month.get('name') if current_month else None,
+        'month_subtitle': current_month.get('subtitle') if current_month else None,
+        'day': calendar.current_day,
+        'hour': calendar.current_hour,
+        'minute': calendar.current_minute,
+    }), 200
+
+#GET    /api/calendar/<campaign_id>/events
+@app.route('/api/calendar/<int:campaign_id>/events', methods=['GET'])
+def get_calendar_events(campaign_id):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    events = CalendarEvent.query.filter_by(calendar_id=calendar.id).order_by(
+        CalendarEvent.start_year,
+        CalendarEvent.start_month_index,
+        CalendarEvent.start_day,
+        CalendarEvent.start_hour,
+        CalendarEvent.start_minute
+    ).all()
+
+    return jsonify([event.to_dict() for event in events]), 200
+
+
+#POST   /api/calendar/<campaign_id>/events
+@app.route('/api/calendar/<int:campaign_id>/events', methods=['POST'])
+def create_calendar_event(campaign_id):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    data = request.json or {}
+
+    event = CalendarEvent(
+        calendar_id=calendar.id,
+        name=data.get('name'),
+        description=data.get('description'),
+        color=data.get('color'),
+        start_year=data.get('year'),
+        start_month_index=data.get('month_index'),
+        start_day=data.get('day'),
+        start_hour=data.get('hour'),
+        start_minute=data.get('minute'),
+    )
+
+    db.session.add(event)
+    db.session.commit()
+
+    emit_calendar_updated(
+        campaign_id,
+        {
+            "kind": "event",
+            "year": event.start_year,
+            "month_index": event.start_month_index,
+            "day": event.start_day,
+        }
+    )
+
+    return jsonify(event.to_dict()), 201
+
+#PATCH  /api/calendar/events/<event_id>
+@app.route('/api/calendar/events/<int:event_id>', methods=['PATCH'])
+def update_calendar_event(event_id):
+    event = CalendarEvent.query.get(event_id)
+    if not event:
+        return jsonify({"message": f"Event {event_id} not found"}), 404
+
+    calendar = event.calendar
+
+    old_year = event.start_year
+    old_month_index = event.start_month_index
+    old_day = event.start_day
+
+    data = request.json or {}
+
+    if 'name' in data:
+        event.name = data['name']
+    if 'description' in data:
+        event.description = data['description']
+    if 'color' in data:
+        event.color = data['color']
+    if 'year' in data:
+        event.start_year = data['year']
+    if 'month_index' in data:
+        event.start_month_index = data['month_index']
+    if 'day' in data:
+        event.start_day = data['day']
+    if 'hour' in data:
+        event.start_hour = data['hour']
+    if 'minute' in data:
+        event.start_minute = data['minute']
+
+    db.session.commit()
+
+    emit_calendar_updated(
+        calendar.campaign_id,
+        {
+            "kind": "event_updated",
+            "old_year": old_year,
+            "old_month_index": old_month_index,
+            "old_day": old_day,
+            "year": event.start_year,
+            "month_index": event.start_month_index,
+            "day": event.start_day,
+        }
+    )
+
+    return jsonify(event.to_dict()), 200
+
+#DELETE /api/calendar/events/<event_id>
+@app.route('/api/calendar/events/<int:event_id>', methods=['DELETE'])
+def delete_calendar_event(event_id):
+    event = CalendarEvent.query.get(event_id)
+    if not event:
+        return jsonify({"message": f"Event {event_id} not found"}), 404
+
+    calendar = event.calendar
+
+    old_year = event.start_year
+    old_month_index = event.start_month_index
+    old_day = event.start_day
+    campaign_id = calendar.campaign_id
+
+    db.session.delete(event)
+    db.session.commit()
+
+    emit_calendar_updated(
+        campaign_id,
+        {
+            "kind": "event_deleted",
+            "year": old_year,
+            "month_index": old_month_index,
+            "day": old_day,
+        }
+    )
+
+    return jsonify({"message": f"Deleted event {event_id}"}), 200
+
+#GET    /api/calendar/<campaign_id>/month-view
+@app.route('/api/calendar/<int:campaign_id>/month-view', methods=['GET'])
+def get_calendar_month_view(campaign_id):
+    '''
+    Returns the current month's calendar data for the specified campaign, including events, holidays, and moon phases for each day.
+    '''
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    year = request.args.get('year', type=int, default=calendar.current_year)
+    month_index = request.args.get('month_index', type=int, default=calendar.current_month_index)
+
+    months = get_months(calendar)
+    weekdays = get_weekdays(calendar)
+    moons = get_moons(calendar)
+
+    if month_index < 0 or month_index >= len(months):
+        return jsonify({"message": "month_index out of range"}), 400
+
+    month = months[month_index]
+    total_days = days_in_month(calendar, year, month_index)
+
+    events = CalendarEvent.query.filter_by(
+        calendar_id=calendar.id,
+        start_year=year,
+        start_month_index=month_index
+    ).all()
+
+    event_map = {}
+    for event in events:
+        event_map.setdefault(event.start_day, []).append(event.to_dict())
+
+    holidays_for_month = get_holidays_for_month(calendar, year, month_index)
+    holiday_map = {}
+    for holiday in holidays_for_month:
+        holiday_day = holiday.get('day')
+        if holiday_day is not None and 1 <= holiday_day <= total_days:
+            holiday_map.setdefault(holiday_day, []).append(holiday)
+
+    days = []
+    for day_num in range(1, total_days + 1):
+        ordinal = date_to_ordinal(calendar, year, month_index, day_num)
+
+        moon_data = []
+        for moon in moons:
+            moon_data.append({
+                'name': moon.get('name', 'Moon'),
+                'phase': get_moon_phase(moon, ordinal)
+            })
+
+        days.append({
+            'year': year,
+            'month_index': month_index,
+            'day': day_num,
+            'events': event_map.get(day_num, []),
+            'holidays': holiday_map.get(day_num, []),
+            'moons': moon_data,
+            'weather_icon': ''
+        })
+
+    return jsonify({
+        'year': year,
+        'month_index': month_index,
+        'month': month,
+        'columns': weekdays,
+        'days': days,
+        'current_date': {
+            'year': calendar.current_year,
+            'month_index': calendar.current_month_index,
+            'month_name': months[calendar.current_month_index].get('name') if 0 <= calendar.current_month_index < len(months) else None,
+            'month_subtitle': months[calendar.current_month_index].get('subtitle') if 0 <= calendar.current_month_index < len(months) else None,
+            'day': calendar.current_day,
+            'hour': calendar.current_hour,
+            'minute': calendar.current_minute,
+        }
+    }), 200
+
+
+#GET    /api/calendar/<campaign_id>/moon-phases
+@app.route('/api/calendar/<int:campaign_id>/moon-phases', methods=['GET'])
+def get_calendar_moon_phases(campaign_id):
+    return jsonify({"message": f"Moon phases for campaign {campaign_id}"})
+
+#GET    /api/calendar/<campaign_id>/holidays
+@app.route('/api/calendar/<int:campaign_id>/holidays', methods=['GET'])
+def get_calendar_holidays(campaign_id):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    year = request.args.get('year', type=int, default=calendar.current_year)
+    month_index = request.args.get('month_index', type=int)
+
+    if month_index is not None:
+        holidays = get_holidays_for_month(calendar, year, month_index)
+    else:
+        holidays = get_holidays(calendar)
+
+    return jsonify(holidays), 200
 
 ##************************##
 ## **  SocketIO Stuff  ** ##
@@ -3413,9 +4212,10 @@ def emit_active_users(campaign_id):
     ]
     app.logger.debug("ONLINE USERS - Emitting %s active users to campaign_id %s", len(active_user_info), campaign_id)
     # Emit the active users to the specific campaign room
-    socketio.emit('active_users', active_user_info, to=campaign_id)
+    emit('active_users', active_user_info, to=campaign_id)
 
 @socketio.on("request_active_users")
+@socket_db_session
 def handle_request_active_users(data):
     campaign_id = data.get('campaignID')
     app.logger.debug("Request Active Users - campaign_id: %s", campaign_id)
@@ -3425,6 +4225,7 @@ def handle_request_active_users(data):
         app.logger.error("Request Active Users - Missing campaign ID")
 
 @socketio.on("connect")
+@socket_db_session
 def connected():
     """event listener when client connects to the server"""
     app.logger.info("Socket Connection Triggered")
@@ -3432,22 +4233,32 @@ def connected():
         token = request.args.get('token')  # Get the token from the request arguments
         if not token:
             app.logger.error("CONNECT- No token provided")
-            socketio.disconnect()
+            disconnect()
             return
 
         app.logger.info("CONNECT- Received a token")
         if token and request.args.get("username"):
             username = request.args.get("username")
+            if not username:
+                app.logger.error("JOIN ROOM- Missing username")
+                disconnect()
+                return
+            
             # Protect access to shared active_connections mapping
             with active_connections_lock:
                 if username in active_connections:
                     app.logger.info(f"Disconnecting duplicate connection for user: {username}")
-                    socketio.disconnect()
+                    disconnect()
                     return
 
             user = User.query.filter_by(username=username).first()
             app.logger.info("CONNECT- username: %s", username)
             app.logger.info("CONNECT- user: %s", user)
+            if not user:
+                app.logger.error("JOIN ROOM- User not found: %s", username)
+                disconnect()
+                return
+            
             if user:
                 app.logger.info("CONNECT- setting %s to online", user)
                 user.is_online = True
@@ -3462,22 +4273,23 @@ def connected():
 
                 if not campaign_id:
                     app.logger.info("CONNECT- No campaign ID provided, requesting from client")
-                    socketio.emit('request_campaignID')
+                    emit('request_campaignID')
                 else:
                     app.logger.debug("CONNECT- campaign_id: %s", campaign_id)
                     emit_active_users(campaign_id)
             else:
                 app.logger.error("CONNECT- User not found")
-                socketio.disconnect()
+                disconnect()
     except jwt.ExpiredSignatureError:
         app.logger.error("CONNECT- Token is expired")
-        socketio.emit('token_expired')
-        socketio.disconnect()
+        emit('token_expired')
+        disconnect()
     except Exception as e:
         app.logger.error(f"CONNECT- An error occurred: {e}")
-        socketio.disconnect()
+        disconnect()
 
 @socketio.on('join_room')
+@socket_db_session
 def handle_join_room(data):
     app.logger.debug('JOIN ROOM- User connected: %s', data['username'])
     user = User.query.filter_by(username=data['username']).first()
@@ -3485,8 +4297,8 @@ def handle_join_room(data):
     user_id = request.sid  # Unique session ID for each connection
 
     if campaign_id:
-        join_room(campaign_id)  # Add the user to the room
-        socketio.emit('status', {'message': f'User {user.username} joined room {campaign_id}'}, to=campaign_id)
+        join_room(str(campaign_id))  # Add the user to the room
+        emit('status', {'message': f'User {user.username} joined room {campaign_id}'}, to=campaign_id)
         app.logger.debug("JOIN ROOM- User %s joined room %s", user.username, campaign_id)
 
     if user:
@@ -3495,7 +4307,7 @@ def handle_join_room(data):
         with active_connections_lock:
             if data['username'] in active_connections:
                 app.logger.info(f"Disconnecting duplicate connection for user: {data['username']}")
-                socketio.disconnect()
+                disconnect()
                 return
 
             if not user.is_online:
@@ -3512,14 +4324,16 @@ def handle_join_room(data):
 
 
 @socketio.on('leave_room')
+@socket_db_session
 def handle_leave_room(data):
     campaign_id = data.get('campaign_id')  # From the client
     user_id = request.sid
     if campaign_id:
         leave_room(campaign_id)  # Remove the user from the room
-        socketio.emit('status', {'message': f'User {user_id} left room {campaign_id}'}, to=campaign_id)
+        emit('status', {'message': f'User {user_id} left room {campaign_id}'}, to=campaign_id)
 
 @socketio.on('send_campaignID')
+@socket_db_session
 def handle_send_campaignID(data):
     campaignID = data.get('campaignID')
     app.logger.info(f"Received campaign ID from client: {campaignID}")
@@ -3531,13 +4345,14 @@ def handle_send_campaignID(data):
             emit_active_users(campaignID)
         else:
             app.logger.error("User not found for the given SID")
-            socketio.disconnect()
+            disconnect()
     else:
         app.logger.error("No campaign ID received from client")
-        socketio.disconnect()
+        disconnect()
 
 
 @socketio.on('sendMessage')
+@socket_db_session
 def handle_send_message(messageObj):
     app.logger.debug("MESSAGE- messageObj: %s", messageObj)
 
@@ -3635,10 +4450,10 @@ def handle_send_message(messageObj):
         db.session.commit()
 
         for recipient_character in recipient_characters:
-            socketio.emit('message', messageObj, to=recipient_character.user.sid)
+            emit('message', messageObj, to=recipient_character.user.sid)
 
         # Emit the message back to the sender
-        socketio.emit('message', messageObj, to=sender_user.sid)
+        emit('message', messageObj, to=sender_user.sid)
 
 def handle_item_transfer(messageObj, recipient_character, sender_character):
     app.logger.debug("MESSAGE- ITEM TRANSFER- messageObj: %s", messageObj)
@@ -3681,7 +4496,7 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
     db.session.commit()
 
     # Emit an inventory_update event to the recipient
-    socketio.emit('inventory_update', {'character_name': recipient_character.character_name, 'item': item}, to=recipient_user.sid)
+    emit('inventory_update', {'character_name': recipient_character.character_name, 'item': item}, to=recipient_user.sid)
 
     # Send a message to the recipient that they got a new item
     reception_message = {
@@ -3691,7 +4506,7 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
         'recipient_character_names': [recipient_character.character_name],
         'recipients': [recipient_user.id],
     }
-    socketio.emit('message', reception_message, to=recipient_user.sid)
+    emit('message', reception_message, to=recipient_user.sid)
 
     # Update sender's inventory only if the sender is not a DM
     if sender_character.character_name != 'DM' and sender_character.character_name != 'Admin':
@@ -3706,7 +4521,7 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
         db.session.commit()
 
         # Emit an inventory_update event to the sender
-        socketio.emit('inventory_update', {'character_name': sender_character.character_name, 'item': item}, to=sender_user.sid)
+        emit('inventory_update', {'character_name': sender_character.character_name, 'item': item}, to=sender_user.sid)
 
         # Notify the DMs and owners, by getting their user IDs from the campaign
         campaign = Campaign.query.filter_by(id=campaignID).first()
@@ -3733,7 +4548,7 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
                 if owner_user and owner_user.id != dm_user.id:
                     notification_message['recipients'].append(owner_user.id)
         
-                socketio.emit('message', notification_message)
+                emit('message', notification_message)
 
     else:
         app.logger.info("MESSAGE- ITEM TRANSFER- Sender is DM or Admin")
@@ -3746,7 +4561,7 @@ def handle_item_transfer(messageObj, recipient_character, sender_character):
         'recipient_character_names': [sender_character.character_name],
         'recipients': [sender_user.id],
     }
-    socketio.emit('message', confirmation_message, to=sender_user.sid)
+    emit('message', confirmation_message, to=sender_user.sid)
 
     # Save the transaction message to the database
     new_reception_message = Message(
@@ -3781,7 +4596,7 @@ def handle_spell_transfer(messageObj, recipient_users, sender):
     db.session.commit()
 
     # Emit a spellbook_update event to the recipient
-    socketio.emit('spellbook_update', {'character_name': recipient['character_name'], 'spell': spell}, to=recipient_user.sid)
+    emit('spellbook_update', {'character_name': recipient['character_name'], 'spell': spell}, to=recipient_user.sid)
 
     # Notify the recipient about the new spell
     reception_message = {
@@ -3790,7 +4605,7 @@ def handle_spell_transfer(messageObj, recipient_users, sender):
         'sender': 'System',
         'recipients': [f"{recipient['character_name']}"],
     }
-    socketio.emit('message', reception_message, to=recipient_user.sid)
+    emit('message', reception_message, to=recipient_user.sid)
 
     # Send a confirmation message to the sender.
     confirmation_message = {
@@ -3799,25 +4614,28 @@ def handle_spell_transfer(messageObj, recipient_users, sender):
         'sender': 'System',
         'recipients': [f'{sender.character_name}'],
     }
-    socketio.emit('message', confirmation_message, to=sender_user.sid)
+    emit('message', confirmation_message, to=sender_user.sid)
 
 
 ## Initiative Tracking
 @socketio.on('Roll for initiative!')
+@socket_db_session
 def roll_initiative():
     # Include authentication or other logic here
 
     # Emit the "Roll for initiative!" event to all connected clients
-    socketio.emit('Roll for initiative!')
+    emit('Roll for initiative!')
 
 @socketio.on('initiative roll')
+@socket_db_session
 def handle_initiative_roll(data):
     # Include validation or other logic here
 
     # Emit the initiative roll to the DM (or all clients, depending on your design)
-    socketio.emit('initiative roll', data)
+    emit('initiative roll', data)
 
 @socketio.on('update turn')
+@socket_db_session
 def handle_update_turn(data):
     # The data object might include information like:
     # {
@@ -3826,19 +4644,22 @@ def handle_update_turn(data):
     # }
 
     # Broadcast the current and next turn information to all clients
-    socketio.emit('turn update', data)
+    emit('turn update', data)
 
 @socketio.on('combatants')
+@socket_db_session
 def handle_combatants(data):
     # Broadcast the current and next turn information to all clients
-    socketio.emit('combatants', data)
+    emit('combatants', data)
 
 @socketio.on('end of combat')
+@socket_db_session
 def end_combat():
-    socketio.emit('end of combat')
+    emit('end of combat')
 
 
 @socketio.on('heartbeat')
+@socket_db_session
 def handle_heartbeat():
     username = request.args.get('username')
     with active_connections_lock:
@@ -3846,6 +4667,7 @@ def handle_heartbeat():
             app.logger.info(f"Heartbeat received from: {username}")
 
 @socketio.on('user_disconnected')
+@socket_db_session
 def handle_user_disconnected(data):
     campaign_id = data.get('campaign_id')
     user_id = data.get('user_id')
@@ -3863,6 +4685,7 @@ def handle_user_disconnected(data):
         emit_active_users(campaign_id)
 
 @socketio.on('disconnect')
+@socket_db_session
 def handle_disconnect():
     """event listener when client disconnects to the server"""
     app.logger.debug("DISCONNECT- request.sid: %s", request.sid)
@@ -3883,7 +4706,7 @@ def handle_disconnect():
 
         if campaign_id != 'null':
             emit_active_users(campaign_id)
-            socketio.emit("disconnect",f"user {user.username} disconnected", room='/')
+            emit("disconnect",f"user {user.username} disconnected", room='/')
             app.logger.info("DISCONNECT- %s disconnected", user.username)
 
 

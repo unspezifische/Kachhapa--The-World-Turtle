@@ -1,0 +1,41 @@
+{
+  "slug": "gregorian",
+  "calendar_type": "gregorian",
+  "display_name": "Gregorian Calendar",
+  "hours_per_day": 24,
+  "minutes_per_hour": 60,
+  "weekdays": [
+    { "name": "Monday", "short_name": "Mon" },
+    { "name": "Tuesday", "short_name": "Tue" },
+    { "name": "Wednesday", "short_name": "Wed" },
+    { "name": "Thursday", "short_name": "Thu" },
+    { "name": "Friday", "short_name": "Fri" },
+    { "name": "Saturday", "short_name": "Sat" },
+    { "name": "Sunday", "short_name": "Sun" }
+  ],
+  "months": [
+    { "name": "January", "subtitle": null, "length": 31 },
+    { "name": "February", "subtitle": null, "length": 28, "leap_length": 29 },
+    { "name": "March", "subtitle": null, "length": 31 },
+    { "name": "April", "subtitle": null, "length": 30 },
+    { "name": "May", "subtitle": null, "length": 31 },
+    { "name": "June", "subtitle": null, "length": 30 },
+    { "name": "July", "subtitle": null, "length": 31 },
+    { "name": "August", "subtitle": null, "length": 31 },
+    { "name": "September", "subtitle": null, "length": 30 },
+    { "name": "October", "subtitle": null, "length": 31 },
+    { "name": "November", "subtitle": null, "length": 30 },
+    { "name": "December", "subtitle": null, "length": 31 }
+  ],
+  "leap_rule": {
+    "type": "gregorian"
+  },
+  "moons": [
+    {
+      "name": "Moon",
+      "cycle_length_days": 29.53,
+      "phase_offset": 0
+    }
+  ],
+  "holidays": []
+}

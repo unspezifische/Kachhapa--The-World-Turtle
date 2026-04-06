@@ -10,7 +10,7 @@ REMOTE_FLASK="$REMOTE_BASE/Flask"
 REMOTE_WEB="$REMOTE_BASE/webapp"
 REMOTE_VENV="$REMOTE_BASE/venv"
 
-# ---- Wi-Fi AP settings (standalone AP; no upstream) ----
+# ---- Wi-Fi AP settings ----
 AP_SSID="PiNetwork"
 AP_PASS="password"          # >= 8 chars
 AP_IP="10.42.0.1"
@@ -18,6 +18,7 @@ AP_CIDR="10.42.0.1/24"
 AP_DHCP_START="10.42.0.50"
 AP_DHCP_END="10.42.0.150"
 LAN_IF="wlan0"
+WAN_IF="eth0"
 COUNTRY_CODE="US"
 CHANNEL="6"
 
@@ -29,13 +30,13 @@ done
 echo "==> 1) Install base packages"
 ssh "$DESTINATION" "sudo apt update && sudo apt install -y \
   nginx python3-venv python3-pip python3-dev build-essential pkg-config \
-  libpq-dev \
-  build-essential libssl-dev libffi-dev python3-setuptools \
+  libpq-dev libssl-dev libffi-dev python3-setuptools \
   cargo rustc \
   postgresql postgresql-contrib \
   rabbitmq-server \
-  avahi-daemon \
-  hostapd dnsmasq"
+  avahi-daemon avahi-utils \
+  hostapd dnsmasq dhcpcd5 \
+  iptables iptables-persistent"
 
 echo "==> 2) Hostname + mDNS"
 ssh "$DESTINATION" "sudo hostnamectl set-hostname raspberrypi && sudo systemctl enable --now avahi-daemon"
@@ -85,94 +86,38 @@ scp myapp.service "$DESTINATION:/home/ijohnson/myapp.service"
 ssh -t "$DESTINATION" "sudo mv /home/ijohnson/myapp.service /etc/systemd/system/myapp.service && \
   sudo systemctl daemon-reload && sudo systemctl enable myapp"
 
-echo "==> 8) Minimal standalone Wi-Fi AP (hostapd + dnsmasq; no NAT)"
-ssh -t "$DESTINATION" "sudo bash -s" <<'EOS'
-set -euo pipefail
-
-LAN_IF="wlan0"
-AP_SSID="PiNetwork"
-AP_PASS="password"
-AP_IP="10.42.0.1"
-AP_CIDR="10.42.0.1/24"
-DHCP_START="10.42.0.50"
-DHCP_END="10.42.0.150"
-
-echo "==> Sanity: check interface exists"
-ip link show "$LAN_IF" >/dev/null 2>&1 || { echo "Interface $LAN_IF not found"; ip -br link; exit 1; }
-
-echo "==> Stop services while configuring"
-systemctl stop hostapd 2>/dev/null || true
-systemctl stop dnsmasq 2>/dev/null || true
-
-echo "==> Configure static IP for AP (dhcpcd)"
-# Append instead of overwrite to avoid nuking existing config
-grep -q "^interface $LAN_IF" /etc/dhcpcd.conf 2>/dev/null || cat >> /etc/dhcpcd.conf <<EOF
-
-interface $LAN_IF
-  static ip_address=$AP_CIDR
-  nohook wpa_supplicant
-EOF
-
-echo "==> Configure dnsmasq DHCP"
-mkdir -p /etc/dnsmasq.d
-cat > /etc/dnsmasq.d/kachhapa-ap.conf <<EOF
-interface=$LAN_IF
-dhcp-range=$DHCP_START,$DHCP_END,255.255.255.0,12h
-domain-needed
-bogus-priv
-EOF
-
-# Ensure dnsmasq reads dnsmasq.d (default does, but just in case)
-grep -q "^conf-dir=/etc/dnsmasq.d" /etc/dnsmasq.conf 2>/dev/null || \
-  echo "conf-dir=/etc/dnsmasq.d,*.conf" >> /etc/dnsmasq.conf
-echo "==> Configure hostapd"
-cat > /etc/hostapd/hostapd.conf <<EOF
-country_code=US
-interface=$LAN_IF
-ssid=$AP_SSID
-hw_mode=g
-channel=6
-ieee80211n=1
-wmm_enabled=1
-auth_algs=1
-wpa=2
-wpa_passphrase=$AP_PASS
-wpa_key_mgmt=WPA-PSK
-rsn_pairwise=CCMP
-EOF
-
-echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > /etc/default/hostapd
-
-echo "==> Enable services"
-systemctl unmask hostapd || true
-systemctl enable hostapd
-systemctl enable dnsmasq
-
-echo "==> Restart networking + services"
-if systemctl list-unit-files | grep -q '^dhcpcd\.service'; then
-  systemctl restart dhcpcd
-elif systemctl list-unit-files | grep -q '^NetworkManager\.service'; then
-  systemctl restart NetworkManager
-elif systemctl list-unit-files | grep -q '^systemd-networkd\.service'; then
-  systemctl restart systemd-networkd
-else
-  echo "No known network service found to restart; continuing."
-fi
-
-systemctl restart dnsmasq
-systemctl restart hostapd
-
-echo "==> Status"
-systemctl --no-pager --full status hostapd | head -n 20 || true
-systemctl --no-pager --full status dnsmasq | head -n 20 || true
-EOS
-
-echo "==> 9) Start services"
+echo "==> 8) Start base services"
 ssh -t "$DESTINATION" "sudo systemctl enable --now nginx postgresql rabbitmq-server && \
-  sudo systemctl restart myapp && \
   sudo systemctl reload nginx"
 
-echo "==> 9.5) Restore database from backup if available"
+echo "==> 8.5) Ensure PostgreSQL cluster is online"
+ssh -t "$DESTINATION" "bash -lc '
+set -e
+
+if command -v pg_lsclusters >/dev/null 2>&1; then
+  echo \"Current PostgreSQL clusters:\"
+  pg_lsclusters || true
+
+  # Start any cluster that is down
+  while read -r ver name port status owner data log; do
+    if [ \"\$ver\" != \"Ver\" ] && [ \"\$status\" = \"down\" ]; then
+      echo \"Starting PostgreSQL cluster \$ver/\$name...\"
+      sudo pg_ctlcluster \$ver \$name start
+    fi
+  done < <(pg_lsclusters)
+
+  echo \"PostgreSQL clusters after start attempt:\"
+  pg_lsclusters || true
+else
+  echo \"pg_lsclusters not found; falling back to systemctl restart postgresql\"
+  sudo systemctl restart postgresql
+fi
+'"
+
+echo "==> 8.6) Verify PostgreSQL is listening"
+ssh -t "$DESTINATION" "ss -lntp | grep 5432 || true"
+
+echo "==> 9) Restore database from backup if available"
 ssh "$DESTINATION" "bash -lc '
 set -e
 DB_BACKUP=\"$REMOTE_BASE/database_backup.dump\"
@@ -184,15 +129,12 @@ if [ -f \"\$DB_BACKUP\" ]; then
   cp \"\$DB_BACKUP\" \"\$TMP_BACKUP\"
   chmod 644 \"\$TMP_BACKUP\"
 
-  # Ensure admin exists
   sudo -u postgres psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='\''admin'\''\" | grep -q 1 || \
     sudo -u postgres psql -c \"CREATE USER admin WITH PASSWORD '\''admin'\'';\"
 
-  # Drop + create DB WITHOUT LOCALE (avoids en_US.UTF-8 mismatch)
   sudo -u postgres psql -c \"DROP DATABASE IF EXISTS db;\"
   sudo -u postgres psql -c \"CREATE DATABASE db OWNER admin TEMPLATE template0 ENCODING '\''UTF8'\'';\"
 
-  # Restore into existing db (NO -C)
   sudo -u postgres pg_restore -d db --clean --if-exists \"\$TMP_BACKUP\"
 
   rm -f \"\$TMP_BACKUP\"
@@ -202,8 +144,132 @@ else
 fi
 '"
 
-echo "==> 10) Quick checks"
+echo "==> 9.5) Stamp restored database to current Alembic head"
+ssh "$DESTINATION" "bash -lc '
+set -e
+cd /home/ijohnson/Kachhapa/Flask
+source /home/ijohnson/Kachhapa/venv/bin/activate
+flask db stamp head
+'"
+
+echo "==> 10) Start app service"
+ssh -t "$DESTINATION" "sudo systemctl restart myapp"
+
+echo "==> 11) Quick checks"
 ssh -t "$DESTINATION" "hostname; \
   ip -brief addr show $LAN_IF || true; \
   systemctl --no-pager --full status myapp | head -n 30; \
   sudo nginx -t"
+
+echo "==> 12) Final step: switch wlan0 from client mode to AP mode"
+echo "==> About to cut over wlan0 into AP mode. SSH may disconnect after this point."
+ssh -t "$DESTINATION" "sudo bash -s" <<EOS
+set -euo pipefail
+
+LAN_IF="$LAN_IF"
+WAN_IF="$WAN_IF"
+AP_SSID="$AP_SSID"
+AP_PASS="$AP_PASS"
+AP_CIDR="$AP_CIDR"
+AP_IP="$AP_IP"
+DHCP_START="$AP_DHCP_START"
+DHCP_END="$AP_DHCP_END"
+COUNTRY_CODE="$COUNTRY_CODE"
+CHANNEL="$CHANNEL"
+
+echo "==> Sanity: check interface exists"
+ip link show "\$LAN_IF" >/dev/null 2>&1 || { echo "Interface \$LAN_IF not found"; ip -br link; exit 1; }
+
+echo "==> Stop AP services while reconfiguring"
+systemctl stop hostapd 2>/dev/null || true
+systemctl stop dnsmasq 2>/dev/null || true
+
+echo "==> Free wlan0 from client mode"
+systemctl stop NetworkManager 2>/dev/null || true
+systemctl disable NetworkManager 2>/dev/null || true
+systemctl stop wpa_supplicant 2>/dev/null || true
+systemctl stop wpa_supplicant@wlan0 2>/dev/null || true
+
+echo "==> Configure static IP for AP (dhcpcd)"
+grep -q "^interface \$LAN_IF" /etc/dhcpcd.conf 2>/dev/null || cat >> /etc/dhcpcd.conf <<EOF
+
+interface \$LAN_IF
+  static ip_address=\$AP_CIDR
+  nohook wpa_supplicant
+EOF
+
+echo "==> Assign AP IP immediately"
+ip addr flush dev "\$LAN_IF" 2>/dev/null || true
+ip addr add "\$AP_CIDR" dev "\$LAN_IF"
+ip link set "\$LAN_IF" up
+
+echo "==> Configure dnsmasq DHCP + DNS"
+mkdir -p /etc/dnsmasq.d
+cat > /etc/dnsmasq.d/kachhapa-ap.conf <<EOF
+interface=\$LAN_IF
+bind-interfaces
+dhcp-range=\$DHCP_START,\$DHCP_END,255.255.255.0,12h
+domain-needed
+bogus-priv
+dhcp-option=option:router,\$AP_IP
+dhcp-option=option:dns-server,\$AP_IP
+address=/raspberrypi.local/\$AP_IP
+address=/app.raspberrypi.local/\$AP_IP
+address=/tools.raspberrypi.local/\$AP_IP
+address=/maps.raspberrypi.local/\$AP_IP
+EOF
+
+grep -q "^conf-dir=/etc/dnsmasq.d" /etc/dnsmasq.conf 2>/dev/null || \
+  echo "conf-dir=/etc/dnsmasq.d,*.conf" >> /etc/dnsmasq.conf
+
+echo "==> Configure hostapd"
+cat > /etc/hostapd/hostapd.conf <<EOF
+country_code=\$COUNTRY_CODE
+interface=\$LAN_IF
+ssid=\$AP_SSID
+hw_mode=g
+channel=\$CHANNEL
+ieee80211n=1
+wmm_enabled=1
+auth_algs=1
+wpa=2
+wpa_passphrase=\$AP_PASS
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+EOF
+
+echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > /etc/default/hostapd
+
+echo "==> Enable IP forwarding"
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-kachhapa-ipforward.conf
+sysctl --system
+
+echo "==> Configure NAT and forwarding with iptables"
+iptables -t nat -C POSTROUTING -o "\$WAN_IF" -j MASQUERADE 2>/dev/null || \
+  iptables -t nat -A POSTROUTING -o "\$WAN_IF" -j MASQUERADE
+
+iptables -C FORWARD -i "\$WAN_IF" -o "\$LAN_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -i "\$WAN_IF" -o "\$LAN_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+iptables -C FORWARD -i "\$LAN_IF" -o "\$WAN_IF" -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -i "\$LAN_IF" -o "\$WAN_IF" -j ACCEPT
+
+netfilter-persistent save || true
+
+echo "==> Enable services"
+systemctl unmask hostapd || true
+systemctl enable hostapd
+systemctl enable dnsmasq
+systemctl enable dhcpcd 2>/dev/null || true
+
+echo "==> Restart networking + AP services"
+systemctl restart dhcpcd 2>/dev/null || true
+systemctl restart dnsmasq
+systemctl restart hostapd
+
+echo "==> Final AP status"
+ip -brief addr show "\$LAN_IF" || true
+systemctl --no-pager --full status hostapd | head -n 20 || true
+systemctl --no-pager --full status dnsmasq | head -n 20 || true
+iptables -t nat -L -n -v || true
+EOS
