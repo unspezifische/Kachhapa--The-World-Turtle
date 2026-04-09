@@ -4,17 +4,16 @@ import axios from 'axios';  // Makes API calls
 import "./Chat.css"
 
 import SendIcon from '@mui/icons-material/Send';
-import ChatIcon from '@mui/icons-material/Chat';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { use } from 'react';
 
-function Chat({ headers, socket, characterName, username, campaignID }) {
-  const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([]);
+import Avatar from '@mui/material/Avatar';
+import Tooltip from '@mui/material/Tooltip';
+
+
+function Chat({ headers, socket, characterName, username, campaignID, users, messages, setMessages, requestActiveUsers }) {
+  const [message, setMessage] = useState(''); 
   const [selectedUsers, setSelectedUsers] = useState([]);
-  const [users, setUsers] = useState([]);
   const userID = headers.userID;
-  const [unreadMessages, setUnreadMessages] = useState(0);
   const [error, setError] = useState('');
 
   // Add a ref to your message container
@@ -24,77 +23,38 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
 
   useEffect(() => {
     const fetchChatHistory = async () => {
-      // Check if characterName has been initialized
-      if (characterName) {
-        console.log("CHAT- Fetching chat history for character:", characterName);
-        axios.get('/api/chat_history', { headers: headers })
-        .then(response => {
-          const data = response.data;
-          const formattedMessages = data.map(message => ({
-            ...message,
-            item: message.item || null
-          }));
-          setMessages(formattedMessages);
-        })
-        .catch(error => {
-          console.error("CHAT- Error fetching chat history:", error);
-        })
-      } else {
-        console.log("CHAT- Character name not initialized yet.");
+      if (!characterName) return;
+
+      try {
+        const response = await axios.get('/api/chat_history', { headers });
+        const formattedMessages = response.data.map((message) => ({
+          ...message,
+          item: message.item || null
+        }));
+        setMessages(formattedMessages);
+      } catch (error) {
+        console.error("CHAT- Error fetching chat history:", error);
       }
     };
-  
-    // Fetch chat history when the component mounts
+
     fetchChatHistory();
-  }, [characterName]);
+  }, [characterName, headers, setMessages]);
 
-  useEffect(() => {
-    console.log("CHAT- messages updated:", messages);
-  }, [messages]);
+  const getDisplayName = (message) => {
+    return message.sender_character_name || String(message.sender || '');
+  };
 
-  useEffect(() => {
-    if (!socket) {
-      console.log("CHAT- Socket not connected yet");
-      return;
+  const getInitials = (name) => {
+    if (!name) return '?';
+
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+
+    if (parts.length >= 2) {
+      return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
     }
 
-    const handleMessage = (message) => {
-      console.log("Received message:", message);
-      if (message.sender === headers.userID || message.recipients.includes(headers.userID)) {
-        setUnreadMessages(prevUnreadMessages => prevUnreadMessages + 1);
-        setMessages(prevMessages => [...prevMessages, message]);
-      } else if (message.type === 'item_transfer' && message.recipients.includes(headers.userID)) {
-        setUnreadMessages(prevUnreadMessages => prevUnreadMessages + 1);
-        setMessages(prevMessages => [...prevMessages, message]);
-      }
-    };
-  
-    const handleActiveUsers = (active_users) => {
-      console.log("CHAT- active_users", active_users);
-      const otherUsers = active_users.filter(user => user.username !== username);
-      setUsers(otherUsers);
-    }
-  
-    socket.on('message', handleMessage);
-    socket.on('active_users', handleActiveUsers);
-  
-    // Emit an event to request the current list of active users
-    socket.emit('request_active_users', { campaignID });
-  
-    return () => {
-      socket.off('message', handleMessage);
-      socket.off('active_users', handleActiveUsers);
-    }
-  }, [socket, characterName, headers.userID, username, campaignID]);
-
-  const getUsers = () => {
-    if (!socket) {
-      console.log("CHAT- Socket not connected");
-      return;
-    }
-    console.log("CHAT- Requesting active users...");
-    socket.emit('request_active_users', { campaignID });
-  }
+    return parts[0].slice(0, 2).toUpperCase();
+  };
 
   const sendMessage = (event, item = null) => {
     event.preventDefault();
@@ -144,12 +104,16 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   };
 
   const renderMessage = (message, i, isSameGroup) => {
-    const sender = message.sender_character_name ? message.sender_character_name : message.sender;
+    const senderName = getDisplayName(message);
+    const initials = getInitials(senderName);
     const isCurrentUser = message.sender === headers.userID;
-  
-    const className = `${isCurrentUser ? "message sent" : "message received"} ${isCurrentUser ? "grouped" : ""} ${isSameGroup ? "" : "new-group"}`;
-  
-    console.log("CHAT- Message Type-", message.type);
+
+    const recipientNames = message.recipient_character_names
+      ? message.recipient_character_names
+      : (message.recipients || []).join(', ');
+
+    const className = `${isCurrentUser ? "message sent" : "message received"} ${isSameGroup ? "message-grouped" : "new-group"}`;
+
     return (
       <div
         key={i}
@@ -157,55 +121,43 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
         onClick={() => replyAll(message)}
         ref={i === messages.length - 1 ? messageContainerRef : null}
       >
-        <div className="message-text">
-          {message.type === 'item_transfer' ? (
-            isCurrentUser ? (
-              <>
-                <p className="sender">
-                  From: System
-                </p>
-                You gave {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')} {message.text}
-                <p className="sender">
-                {message.sender_character_name ? message.sender_character_name : message.sender}
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="sender">
-                  From: System
-                </p>
-                {message.sender_character_name ? message.sender_character_name : message.sender} gave you {message.text}
-                <p className="sender">
-                  {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
-                </p>
-              </>
-            )
-          ) : (
-            <>
-              {message.sender === headers.userID ? (
-                <>
-                  <p className="sender">
-                    To: {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
-                  </p>
-                  {message.text}
-                  <p className="sender">
-                    {message.sender_character_name ? message.sender_character_name : message.sender}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="sender">
-                    From: {message.sender_character_name ? message.sender_character_name : message.sender}
-                  </p>
-                  {message.text}
-                  <p className="sender">
-                    {message.recipient_character_names ? message.recipient_character_names.join(' ') : message.recipients.join(' ')}
-                  </p>
-                </>
-              )}
-            </>
-          )}
+        {!isCurrentUser && (
+          <div className="message-avatar-wrap">
+            <Tooltip title={senderName} arrow placement="top">
+              <Avatar className="message-avatar">
+                {initials}
+              </Avatar>
+            </Tooltip>
+          </div>
+        )}
+
+        <div className="message-bubble">
+          <div className="message-text">
+            {message.text}
+          </div>
+
+          <div className="message-recipient-avatars">
+            {(message.recipient_character_names || [])
+              .filter((name) => name && name !== senderName)
+              .map((name, idx) => (
+                <Tooltip key={`${name}-${idx}`} title={name} arrow placement="top">
+                  <Avatar className="message-recipient-avatar">
+                    {getInitials(name)}
+                  </Avatar>
+                </Tooltip>
+              ))}
+          </div>
         </div>
+
+        {isCurrentUser && (
+          <div className="message-avatar-wrap">
+            <Tooltip title={characterName || username || 'Me'} arrow placement="top">
+              <Avatar className="message-avatar message-avatar-self">
+                {getInitials(characterName || username || 'Me')}
+              </Avatar>
+            </Tooltip>
+          </div>
+        )}
       </div>
     );
   };
@@ -221,9 +173,8 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
   }, [messages]);
 
   return (
-    <>
-      {/* Show the Chat Widget */}
-        <Stack>
+    <div className="chat-widget">
+      <Stack className="h-100">
           <Row>
             <Col>
               <h1>Chat</h1>
@@ -272,7 +223,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
                   ))
                 )}
               </ToggleButtonGroup>
-            <Button variant='outline-primary' onClick={() => getUsers()}>
+            <Button variant='outline-primary' onClick={requestActiveUsers}>
               <RefreshIcon />
             </Button>
             </Col>
@@ -297,7 +248,7 @@ function Chat({ headers, socket, characterName, username, campaignID }) {
             </Col>
           </Row>
         </Stack>
-    </>
+    </div>
   );
 }
 
