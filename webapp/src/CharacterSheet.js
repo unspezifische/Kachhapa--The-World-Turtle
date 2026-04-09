@@ -1892,7 +1892,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
       <div style={{ height: '100vh', overflow: 'auto' }}>
         <ResponsiveGridLayout
           className="layout"
-          cols={{ lg: 7, md: 7, sm: 7, xs: 4, xxs: 2 }}
+          cols={{ lg: 8, md: 8, sm: 6, xs: 4, xxs: 2 }}
           rowHeight={20}
           layouts={getLayouts()}
           onLayoutChange={handleLayoutChange}

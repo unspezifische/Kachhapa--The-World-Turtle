@@ -1,28 +1,28 @@
 :root {
-  --bg-app: #0f172a;
+  --bg-app: #0f1729;
   --bg-surface: #13203a;
   --bg-surface-2: #16233d;
   --bg-surface-3: #1f304f;
 
-  --text-main: #e5e7eb;
+  --text-main: #F0EFF4;
   --text-muted: #cbd5e1;
   --text-subtle: #94a3b8;
 
   --border-main: #22314f;
   --border-strong: #314566;
 
-  --accent: #fbbf24;
+  --accent: #FBC337;
   --accent-2: #60a5fa;
-  --menu-bg: #7f1d1d;
-  --menu-bg-hover: #991b1b;
+  --menu-bg: #962222;
+  --menu-bg-hover: #C82D2D;
   --menu-bg-selected: #450a0a;
 
-  --danger: #ef4444;
+  --danger: #b41c2b;
   --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 
 [data-theme="light"] {
-  --bg-app: #f3f4f6;
+  --bg-app: #F0EFF4;
   --bg-surface: #ffffff;
   --bg-surface-2: #f8fafc;
   --bg-surface-3: #e5edf8;
@@ -34,13 +34,14 @@
   --border-main: #d1d5db;
   --border-strong: #cbd5e1;
 
-  --accent: #d97706;
-  --accent-2: #2563eb;
-  --menu-bg: #b91c1c;
-  --menu-bg-hover: #991b1b;
+  /* --accent: #d97706; */
+  --accent: #FBC337;
+  --accent-2: #2463eb;
+  --menu-bg: #C82D2D;
+  --menu-bg-hover: #962222;
   --menu-bg-selected: #7f1d1d;
 
-  --danger: #dc2626;
+  --danger: #b41c2b;
   --shadow-soft: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
@@ -135,24 +136,35 @@ body {
   color: var(--text-main);
 }
 
-.chat-fab {
+.chat-fab-wrap {
   position: fixed;
   right: 1.25rem;
   bottom: 1.25rem;
   z-index: 2200;
-  border: none;
-  border-radius: 999px;
-  padding: 0.85rem 1.1rem;
-  background: var(--accent);
-  color: #111827;
+}
+
+.chat-fab-badge .MuiBadge-badge {
+  background: var(--danger);
+  color: #fff;
   font-weight: 700;
   box-shadow: var(--shadow-soft);
 }
 
+.chat-fab {
+  border: none !important;
+  border-radius: 999px !important;
+  padding: 0.85rem !important;
+  background: var(--accent) !important;
+  color: #111827 !important;
+  box-shadow: var(--shadow-soft) !important;
+  width: 56px !important;
+  height: 56px !important;
+}
+
 .chat-fab:hover,
 .chat-fab:focus {
-  background: #f59e0b;
-  color: #111827;
+  background: #f59e0b !important;
+  color: #111827 !important;
 }
 
 .chat-modal {
@@ -173,6 +185,76 @@ body {
 .chat-modal .modal-body {
   max-height: 75vh;
   overflow: auto;
+}
+
+/* Global Bootstrap modal theming */
+.modal-content {
+  background: var(--bg-surface);
+  color: var(--text-main);
+  border: 1px solid var(--border-main);
+  box-shadow: var(--shadow-soft);
+}
+
+.modal-header,
+.modal-footer {
+  background: var(--bg-surface-2);
+  border-color: var(--border-main);
+}
+
+.modal-body {
+  background: var(--bg-surface);
+  color: var(--text-main);
+}
+
+.modal-title,
+.modal-body h1,
+.modal-body h2,
+.modal-body h3,
+.modal-body h4,
+.modal-body h5,
+.modal-body h6,
+.modal-body p,
+.modal-body li,
+.modal-body label,
+.modal-body strong,
+.modal-body span {
+  color: var(--text-main);
+}
+
+.modal .btn-close {
+  filter: invert(1) grayscale(100%);
+  opacity: 0.85;
+}
+
+.modal .btn-close:hover {
+  opacity: 1;
+}
+
+[data-theme="light"] .modal .btn-close {
+  filter: none;
+}
+
+.modal .form-control,
+.modal .form-select {
+  background: var(--bg-surface-2);
+  color: var(--text-main);
+  border: 1px solid var(--border-main);
+}
+
+.modal .form-control::placeholder {
+  color: var(--text-subtle);
+}
+
+.modal .form-control:focus,
+.modal .form-select:focus {
+  background: var(--bg-surface-2);
+  color: var(--text-main);
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 0.2rem rgba(96, 165, 250, 0.15);
+}
+
+.modal-backdrop.show {
+  opacity: 0.65;
 }
 
 @font-face {

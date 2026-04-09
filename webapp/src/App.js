@@ -21,13 +21,20 @@ import ChatIcon from '@mui/icons-material/Chat';
 
 import './App.css';
 import 'bootstrap/dist/css/bootstrap.min.css';
+import { IconButton, Badge } from '@mui/material';
 
 function App() {
   const SOCKET_URL = window.location.origin;
 
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
-  const [showChat, setShowChat] = useState(false);
 
+  // High-level Chat states
+  const [showChat, setShowChat] = useState(false);
+  const [chatUsers, setChatUsers] = useState([]);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+
+  // User and session states
   const [token, setToken] = useState(localStorage.getItem('token') || '');
   const [username, setUsername] = useState('');
   const [userID, setUserID] = useState(null);
@@ -219,11 +226,52 @@ function App() {
     };
   }, [socketConnected, characterName]);
 
+
+  // Chat message handling and active users
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !socketConnected || !selectedCampaign?.id) return;
+
+    const handleActiveUsers = (activeUsers) => {
+      setChatUsers(activeUsers.filter(user => user.username !== username));
+    };
+
+    const handleMessage = (incomingMessage) => {
+      const isRelevant =
+        incomingMessage.sender === userID ||
+        incomingMessage.recipients?.includes(userID);
+
+      if (!isRelevant) return;
+
+      setChatMessages(prev => [...prev, incomingMessage]);
+
+      if (!showChat) {
+        setUnreadMessages(prev => prev + 1);
+      }
+    };
+
+    socket.on('active_users', handleActiveUsers);
+    socket.on('message', handleMessage);
+
+    socket.emit('request_active_users', { campaignID: selectedCampaign.id });
+
+    return () => {
+      socket.off('active_users', handleActiveUsers);
+      socket.off('message', handleMessage);
+    };
+  }, [socketConnected, selectedCampaign?.id, username, userID, showChat]);
+
   const handleInitiativeSubmit = () => {
     socketRef.current.emit('initiative roll', { characterName, roll: initiativeOrder });
     setShow(false);
     setInCombat(true);
   };
+
+  useEffect(() => {
+      if (showChat) {
+        setUnreadMessages(0);
+      }
+    }, [showChat]);
 
   return (
     <UserContext.Provider value={{ characterName, accountType, headers, setIsLoggedIn, socket: socketRef.current }}>
@@ -283,13 +331,26 @@ function App() {
                 </main>
               </div>
 
-              <Button
-                className="chat-fab"
-                onClick={() => setShowChat(true)}
-                aria-label="Open chat"
-              >
-                <ChatIcon />
-              </Button>
+              {/* Chat FAB and Modal */}
+              <div className="chat-fab-wrap">
+                <Badge
+                  badgeContent={unreadMessages > 99 ? '99+' : unreadMessages}
+                  color="error"
+                  overlap="circular"
+                  anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                  invisible={unreadMessages === 0}
+                  className="chat-fab-badge"
+                >
+                  <IconButton
+                    className="chat-fab"
+                    onClick={() => setShowChat(true)}
+                    aria-label="Open chat"
+                  >
+                    <ChatIcon />
+                  </IconButton>
+                </Badge>
+              </div>
+              
 
               <Modal
                 show={showChat}
@@ -309,6 +370,10 @@ function App() {
                       characterName={characterName}
                       username={username}
                       campaignID={selectedCampaign.id}
+                      users={chatUsers}
+                      messages={chatMessages}
+                      setMessages={setChatMessages}
+                      requestActiveUsers={() => socketRef.current?.emit('request_active_users', { campaignID: selectedCampaign.id })}
                     />
                   )}
                 </Modal.Body>

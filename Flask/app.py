@@ -4170,27 +4170,22 @@ def get_calendar_holidays(campaign_id):
 ## **  SocketIO Stuff  ** ##
 ##************************##
 
-def emit_active_users(campaign_id):
-    """
-    Emits the list of active users in the specified campaign room.
-    """
+def emit_active_users(campaign_id, to_sid=None):
     if not campaign_id:
         app.logger.error("ONLINE USERS - Campaign ID is missing")
         return
-    
+
     app.logger.debug("ONLINE USERS - Fetching active users for campaign_id: %s", campaign_id)
-    
-    # Query to get all user/character pairs for the given campaign
+
     stmt = (
         db.session.query(
-            campaign_members.c.userID, 
+            campaign_members.c.userID,
             campaign_members.c.characterID
         )
         .filter(campaign_members.c.campaignID == campaign_id)
         .subquery()
     )
-    
-    # Query users who are online and part of the campaign
+
     active_users_query = (
         db.session.query(User.id, User.username, Character.character_name)
         .join(stmt, stmt.c.userID == User.id)
@@ -4199,9 +4194,6 @@ def emit_active_users(campaign_id):
     )
     active_users = active_users_query.all()
 
-    app.logger.debug("ONLINE USERS - Active users for campaign_id %s: %s", campaign_id, active_users)
-
-    # Prepare the data to emit
     active_user_info = [
         {
             'username': user.username,
@@ -4210,9 +4202,21 @@ def emit_active_users(campaign_id):
         }
         for user in active_users
     ]
-    app.logger.debug("ONLINE USERS - Emitting %s active users to campaign_id %s", len(active_user_info), campaign_id)
-    # Emit the active users to the specific campaign room
-    emit('active_users', active_user_info, to=campaign_id)
+
+    if to_sid is False:
+        target = f"campaign:{campaign_id}"
+    elif to_sid:
+        target = to_sid
+    else:
+        target = request.sid
+
+    app.logger.debug(
+        "ONLINE USERS - Emitting %s active users to target %s",
+        len(active_user_info),
+        target
+    )
+
+    socketio.emit('active_users', active_user_info, to=target)
 
 @socketio.on("request_active_users")
 @socket_db_session
@@ -4220,7 +4224,7 @@ def handle_request_active_users(data):
     campaign_id = data.get('campaignID')
     app.logger.debug("Request Active Users - campaign_id: %s", campaign_id)
     if campaign_id:
-        emit_active_users(campaign_id)
+        emit_active_users(campaign_id, to_sid=request.sid)
     else:
         app.logger.error("Request Active Users - Missing campaign ID")
 
@@ -4276,7 +4280,7 @@ def connected():
                     emit('request_campaignID')
                 else:
                     app.logger.debug("CONNECT- campaign_id: %s", campaign_id)
-                    emit_active_users(campaign_id)
+                    emit_active_users(campaign_id, to_sid=False)
             else:
                 app.logger.error("CONNECT- User not found")
                 disconnect()
@@ -4291,36 +4295,49 @@ def connected():
 @socketio.on('join_room')
 @socket_db_session
 def handle_join_room(data):
-    app.logger.debug('JOIN ROOM- User connected: %s', data['username'])
-    user = User.query.filter_by(username=data['username']).first()
-    campaign_id = data.get('campaign_id')  # From the client
-    user_id = request.sid  # Unique session ID for each connection
+    username = data.get('username')
+    campaign_id = data.get('campaign_id')
 
+    app.logger.debug('JOIN ROOM- User connected: %s', username)
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        app.logger.error("JOIN ROOM- User not found: %s", username)
+        disconnect()
+        return
+
+    app.logger.debug("JOIN ROOM- user's initial status: %s", user.is_online)
+
+    with active_connections_lock:
+        existing_sid = active_connections.get(username)
+
+        if existing_sid and existing_sid != request.sid:
+            app.logger.info(
+                "JOIN ROOM- Replacing old SID %s with new SID %s for user %s",
+                existing_sid, request.sid, username
+            )
+
+        user.is_online = True
+        user.sid = request.sid
+        active_connections[username] = request.sid
+        db.session.commit()
+
+    # Join personal room for direct messages
+    join_room(f"user:{user.id}")
+    app.logger.debug("JOIN ROOM- User %s joined personal room user:%s", user.username, user.id)
+
+    # Join campaign room for broadcasts like active_users
     if campaign_id:
-        join_room(str(campaign_id))  # Add the user to the room
-        emit('status', {'message': f'User {user.username} joined room {campaign_id}'}, to=campaign_id)
-        app.logger.debug("JOIN ROOM- User %s joined room %s", user.username, campaign_id)
+        join_room(f"campaign:{campaign_id}")
+        app.logger.debug("JOIN ROOM- User %s joined campaign room campaign:%s", user.username, campaign_id)
 
-    if user:
-        app.logger.debug("JOIN ROOM- user's initial status: %s", user.is_online)
-        # Protect access to shared active_connections mapping
-        with active_connections_lock:
-            if data['username'] in active_connections:
-                app.logger.info(f"Disconnecting duplicate connection for user: {data['username']}")
-                disconnect()
-                return
+        socketio.emit(
+            'status',
+            {'message': f'User {user.username} joined room {campaign_id}'},
+            to=f"campaign:{campaign_id}"
+        )
 
-            if not user.is_online:
-                user.is_online = True
-                user.sid = request.sid  # Set the sid field
-                active_connections[data['username']] = request.sid
-                db.session.commit()
-                app.logger.info("JOIN ROOM- %s is now online", user.username)
-            else:
-                user.sid = request.sid  # Set the sid field
-                active_connections[data['username']] = request.sid
-                db.session.commit()
-                app.logger.info("JOIN ROOM- %s is already online", user.username)
+        emit_active_users(campaign_id, to_sid=False)
 
 
 @socketio.on('leave_room')
@@ -4335,14 +4352,14 @@ def handle_leave_room(data):
 @socketio.on('send_campaignID')
 @socket_db_session
 def handle_send_campaignID(data):
-    campaignID = data.get('campaignID')
-    app.logger.info(f"Received campaign ID from client: {campaignID}")
+    campaign_id = data.get('campaignID')
+    app.logger.info(f"Received campaign ID from client: {campaign_id}")
 
-    if campaignID:
+    if campaign_id:
         user = User.query.filter_by(sid=request.sid).first()
         if user:
             app.logger.info(f"Updating campaign ID for user: {user.username}")
-            emit_active_users(campaignID)
+            emit_active_users(campaign_id, to_sid=False)
         else:
             app.logger.error("User not found for the given SID")
             disconnect()
@@ -4449,11 +4466,12 @@ def handle_send_message(messageObj):
         db.session.add(new_message)
         db.session.commit()
 
-        for recipient_character in recipient_characters:
-            emit('message', messageObj, to=recipient_character.user.sid)
+        recipient_user_ids = [character.userID for character in recipient_characters]
 
-        # Emit the message back to the sender
-        emit('message', messageObj, to=sender_user.sid)
+        for recipient_user_id in recipient_user_ids:
+            socketio.emit('message', messageObj, to=f"user:{recipient_user_id}")
+
+        socketio.emit('message', messageObj, to=f"user:{sender}")
 
 def handle_item_transfer(messageObj, recipient_character, sender_character):
     app.logger.debug("MESSAGE- ITEM TRANSFER- messageObj: %s", messageObj)
@@ -4682,7 +4700,7 @@ def handle_user_disconnected(data):
         # Remove the mapping thread-safely
         with active_connections_lock:
             sid = active_connections.pop(user.username, None)  # Remove the mapping
-        emit_active_users(campaign_id)
+        emit_active_users(campaign_id, to_sid=False)
 
 @socketio.on('disconnect')
 @socket_db_session
@@ -4705,7 +4723,7 @@ def handle_disconnect():
         campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
 
         if campaign_id != 'null':
-            emit_active_users(campaign_id)
+            emit_active_users(campaign_id, to_sid=False)
             emit("disconnect",f"user {user.username} disconnected", room='/')
             app.logger.info("DISCONNECT- %s disconnected", user.username)
 
