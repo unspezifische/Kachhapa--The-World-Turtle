@@ -360,9 +360,9 @@ function App() {
                 centered
               >
                 <Modal.Header closeButton>
-                  <Modal.Title>Campaign Chat</Modal.Title>
+                  <Modal.Title>Whisper</Modal.Title>
                 </Modal.Header>
-                <Modal.Body>
+                <Modal.Body className="chat-modal-body">
                   {!socketLoading && (
                     <Chat
                       headers={headers}
