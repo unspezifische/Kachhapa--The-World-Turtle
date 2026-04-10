@@ -184,42 +184,105 @@ class User(db.Model):
 
 class Character(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    icon = db.Column(db.String(120))  # icon filepath or name
-    system = db.Column(db.String(50))  # e.g., 'D&D 5e', 'pathfinder'
-    userID = db.Column(db.Integer, db.ForeignKey('user.id'))  # link to the User table
-    user = db.relationship('User', backref='characters')  # relationship to the User model
-    campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'))  # link to the Campaign table
-    campaign = db.relationship('Campaign', backref='party_members')  # relationship to the Campaign model
-    character_name = db.Column(db.String(50), nullable=True) # character's name
-    Class = db.Column(db.String(50))  # name of the class (e.g., "Wizard")
-    Subclass = db.Column(db.String(80), nullable=True)  # subclass/archetype, optional
-    Background = db.Column(db.String(50))  # character's background (e.g., "Noble")
-    Race = db.Column(db.String(50))  # character's race (e.g., "Elf")
-    Alignment = db.Column(db.String(50))  # character's alignment (e.g., "Neutral Good")
-    ExperiencePoints = db.Column(db.Integer)  # character's experience points
-    strength = db.Column(db.Integer)  # ability scores
+    icon = db.Column(db.String(120))  # legacy icon filepath or name
+
+    system = db.Column(db.String(50))
+    userID = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user = db.relationship('User', backref='characters')
+    campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'))
+    campaign = db.relationship('Campaign', backref='party_members')
+
+    character_name = db.Column(db.String(50), nullable=True)
+
+    Class = db.Column(db.String(50))
+    Subclass = db.Column(db.String(80), nullable=True)
+    Background = db.Column(db.String(50))
+    Race = db.Column(db.String(50))
+    Alignment = db.Column(db.String(50))
+    ExperiencePoints = db.Column(db.Integer)
+
+    strength = db.Column(db.Integer)
     dexterity = db.Column(db.Integer)
     constitution = db.Column(db.Integer)
     intelligence = db.Column(db.Integer)
     wisdom = db.Column(db.Integer)
     charisma = db.Column(db.Integer)
-    PersonalityTraits = db.Column(db.Text)  # personality traits
-    Ideals = db.Column(db.Text) # ideals
-    Bonds = db.Column(db.Text)  # bonds
-    Flaws = db.Column(db.Text)  # flaws
+
+    PersonalityTraits = db.Column(db.Text)
+    Ideals = db.Column(db.Text)
+    Bonds = db.Column(db.Text)
+    Flaws = db.Column(db.Text)
     Feats = db.Column(db.Text)
-    Proficiencies = db.Column(db.Text)  # list of proficiencies
+    Proficiencies = db.Column(db.Text)
+
     CurrentHitPoints = db.Column(db.Integer)
     TemporaryHitPoints = db.Column(db.Integer)
+
     cp = db.Column(db.Integer)
     sp = db.Column(db.Integer)
     ep = db.Column(db.Integer)
     gp = db.Column(db.Integer)
     pp = db.Column(db.Integer)
 
-     # Relationships
+    # Avatar system
+    avatar_mode = db.Column(
+        db.String(20),
+        nullable=False,
+        default='initials',
+        server_default='initials'
+    )
+    avatar_color = db.Column(db.String(20), nullable=True, default='#64748b')
+    avatar_text_color = db.Column(db.String(20), nullable=True, default='#f8fafc')
+    avatar_image_url = db.Column(db.String(255), nullable=True)
+    avatar_thumb_url = db.Column(db.String(255), nullable=True)
+    avatar_preset_key = db.Column(db.String(100), nullable=True)
+    avatar_shape = db.Column(
+        db.String(20),
+        nullable=False,
+        default='circle',
+        server_default='circle'
+    )
+    avatar_frame_color = db.Column(db.String(20), nullable=True)
+
     inventory = db.relationship('InventoryItem', backref='character', lazy=True)
     journal_entries = db.relationship('Journal', backref='character', lazy=True)
+
+    def get_avatar_initials(self):
+        name = (self.character_name or '').strip()
+        if not name:
+            return '?'
+
+        parts = [part for part in name.split() if part]
+        if len(parts) >= 2:
+            return f"{parts[0][0]}{parts[1][0]}".upper()
+
+        return parts[0][:2].upper()
+
+    def get_avatar_props(self):
+        mode = self.avatar_mode or 'initials'
+
+        default_bg = self.avatar_color or '#64748b'
+        default_text = self.avatar_text_color or '#f8fafc'
+
+        image_url = self.avatar_thumb_url or self.avatar_image_url or None
+
+        if mode == 'upload' and image_url:
+            resolved_mode = 'image'
+        elif mode == 'preset' and self.avatar_preset_key:
+            resolved_mode = 'preset'
+        else:
+            resolved_mode = 'initials'
+
+        return {
+            'mode': resolved_mode,
+            'initials': self.get_avatar_initials(),
+            'color': default_bg,
+            'text_color': default_text,
+            'image_url': image_url,
+            'preset_key': self.avatar_preset_key,
+            'shape': self.avatar_shape or 'circle',
+            'frame_color': self.avatar_frame_color,
+        }
 
     def to_dict(self):
         return {
@@ -254,6 +317,7 @@ class Character(db.Model):
             'gp': self.gp,
             'pp': self.pp,
             'Feats': json.loads(self.Feats) if self.Feats else [],
+            'avatar': self.get_avatar_props(),
         }
 
 class Campaign(db.Model):
@@ -1004,6 +1068,7 @@ def map_fields(data, model):
 
     # app.logger.debug("Mapped data: %s", mapped_data)
     return mapped_data
+
 
 migrate = Migrate(app, db)
 
@@ -3554,77 +3619,6 @@ def edit_page(campaign_name, page_title):
         return render_template('edit_page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
 
 
-## Chat Function (more in SocketIO stuff)
-@app.route('/api/chat_history', methods=['GET'])
-@jwt_required()
-def get_chat_history():
-    username = get_jwt_identity()
-    user = User.query.filter_by(username=username).first()
-    campaignID = request.headers.get('CampaignID')
-
-    # Get the character ID for the user in the specified campaign
-    stmt = select(campaign_members.c.characterID).where(
-        campaign_members.c.campaignID == campaignID, 
-        campaign_members.c.userID == user.id
-    )
-
-    result = db.session.execute(stmt).first()
-    characterID = result.characterID if result else None
-
-    if characterID is None:
-        app.logger.error("Character not found for user_id: %s in campaign_id: %s", user.id, campaignID)
-        return jsonify({'message': 'Character not found'}), 404
-
-    # Create a dictionary mapping user IDs to character IDs for the specified campaign
-    user_to_character_map = {}
-    campaign_memberships = db.session.execute(
-        select(campaign_members.c.userID, campaign_members.c.characterID).where(
-            campaign_members.c.campaignID == campaignID
-        )
-    ).fetchall()
-
-    for membership in campaign_memberships:
-        user_to_character_map[membership.userID] = membership.characterID
-
-    def message_to_client_format(message):
-        # Get sender's character name
-        sender_character = Character.query.filter_by(id=user_to_character_map.get(message.sender_id)).first()
-        sender_name = sender_character.character_name if sender_character else 'Unknown'
-    
-        # Get recipients' character names
-        recipient_ids = message.recipient_ids.split(',')
-        recipient_names = []
-        for id in recipient_ids:
-            if id:
-                recipient_character = Character.query.filter_by(id=user_to_character_map.get(int(id))).first()
-                recipient_names.append(recipient_character.character_name if recipient_character else 'Unknown')
-    
-        # Get item details
-        item = Item.query.filter_by(id=message.item_id).first() if message.item_id else None
-        item_details = {'id': item.id, 'name': item.name} if item else None
-    
-        return {
-            'campaignID': campaignID,
-            'group_id': message.group_id,
-            'item': item_details,
-            'recipient_character_names': recipient_names,
-            'recipients': [int(id) for id in recipient_ids if id],
-            'sender': message.sender_id,
-            'sender_character_name': sender_name,
-            'text': message.message_text,
-            'type': message.message_type,
-        }
-    
-    # Fetch all messages for the user from the specified campaign
-    sent_messages = Message.query.filter_by(sender_id=user.id, campaign_id=campaignID).all()
-    received_messages = Message.query.filter(Message.recipient_ids.contains(str(user.id)), Message.campaign_id == campaignID).all()
-
-    # Combine, sort by timestamp, and convert to JSON-friendly format
-    messages = sorted(sent_messages + received_messages, key=lambda msg: msg.timestamp)
-    messages_json = [message_to_client_format(message) for message in messages]
-
-    return jsonify(messages_json), 200
-
 ##************************##
 ## **  Calendar Stuff  ** ##
 ##************************##
@@ -4166,10 +4160,139 @@ def get_calendar_holidays(campaign_id):
 
     return jsonify(holidays), 200
 
+## Chat Functions (more in SocketIO stuff)
+def serialize_message_participant(character):
+    if not character:
+        return None
+
+    avatar = character.get_avatar_props()
+
+    return {
+        'userID': character.userID,
+        'characterID': character.id,
+        'character_name': character.character_name,
+        'name': character.character_name,
+        'mode': avatar.get('mode'),
+        'initials': avatar.get('initials'),
+        'color': avatar.get('color'),
+        'text_color': avatar.get('text_color'),
+        'image_url': avatar.get('image_url'),
+        'preset_key': avatar.get('preset_key'),
+        'shape': avatar.get('shape'),
+        'frame_color': avatar.get('frame_color'),
+    }
+
+@app.route('/api/chat_history', methods=['GET'])
+@jwt_required()
+def get_chat_history():
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+    campaignID = request.headers.get('CampaignID')
+
+    if user is None:
+        return jsonify({'message': 'User not found'}), 404
+
+    if not campaignID:
+        return jsonify({'message': 'CampaignID header is required'}), 400
+
+    # Get the current user's character in this campaign
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaignID,
+        campaign_members.c.userID == user.id
+    )
+    result = db.session.execute(stmt).first()
+    characterID = result.characterID if result else None
+
+    if characterID is None:
+        app.logger.error(
+            "Character not found for user_id: %s in campaign_id: %s",
+            user.id,
+            campaignID
+        )
+        return jsonify({'message': 'Character not found'}), 404
+
+    # Build user -> character map for this campaign
+    user_to_character_map = {}
+    campaign_memberships = db.session.execute(
+        select(campaign_members.c.userID, campaign_members.c.characterID).where(
+            campaign_members.c.campaignID == campaignID
+        )
+    ).fetchall()
+
+    for membership in campaign_memberships:
+        user_to_character_map[membership.userID] = membership.characterID
+
+    def get_character_for_user(user_id):
+        character_id = user_to_character_map.get(user_id)
+        if not character_id:
+            return None
+        return Character.query.filter_by(id=character_id).first()
+
+    def message_to_client_format(message):
+        sender_character = get_character_for_user(message.sender_id)
+        sender_name = sender_character.character_name if sender_character else 'Unknown'
+
+        recipient_ids = [
+            int(id_str) for id_str in (message.recipient_ids or '').split(',')
+            if id_str.strip()
+        ]
+
+        recipient_characters = [
+            get_character_for_user(recipient_user_id)
+            for recipient_user_id in recipient_ids
+        ]
+        recipient_characters = [character for character in recipient_characters if character is not None]
+
+        recipient_names = [
+            character.character_name for character in recipient_characters
+        ]
+
+        item = Item.query.filter_by(id=message.item_id).first() if message.item_id else None
+        item_details = {'id': item.id, 'name': item.name} if item else None
+
+        self_character = get_character_for_user(user.id)
+
+        return {
+            'campaignID': int(campaignID),
+            'group_id': message.group_id,
+            'item': item_details,
+            'recipient_character_names': recipient_names,
+            'recipient_avatars': [
+                serialize_message_participant(character)
+                for character in recipient_characters
+            ],
+            'recipients': recipient_ids,
+            'sender': message.sender_id,
+            'sender_character_name': sender_name,
+            'sender_avatar': sender_character.get_avatar_props() if sender_character else None,
+            'self_avatar': self_character.get_avatar_props() if self_character else None,
+            'text': message.message_text,
+            'type': message.message_type,
+            'timestamp': message.timestamp.isoformat() if message.timestamp else None,
+        }
+
+    # Fetch all messages for this user in this campaign
+    sent_messages = Message.query.filter_by(
+        sender_id=user.id,
+        campaign_id=campaignID
+    ).all()
+
+    received_messages = Message.query.filter(
+        Message.recipient_ids.contains(str(user.id)),
+        Message.campaign_id == campaignID
+    ).all()
+
+    # De-duplicate in case a message appears in both queries
+    all_messages = {message.id: message for message in (sent_messages + received_messages)}
+    messages = sorted(all_messages.values(), key=lambda msg: msg.timestamp)
+
+    messages_json = [message_to_client_format(message) for message in messages]
+
+    return jsonify(messages_json), 200
+
 ##************************##
 ## **  SocketIO Stuff  ** ##
 ##************************##
-
 def emit_active_users(campaign_id, to_sid=None):
     if not campaign_id:
         app.logger.error("ONLINE USERS - Campaign ID is missing")
@@ -4194,14 +4317,19 @@ def emit_active_users(campaign_id, to_sid=None):
     )
     active_users = active_users_query.all()
 
-    active_user_info = [
-        {
+    active_user_info = []
+    for user in active_users:
+        character = Character.query.filter_by(
+            userID=user.id,
+            campaignID=campaign_id
+        ).first()
+
+        active_user_info.append({
             'username': user.username,
             'character_name': user.character_name,
-            'userID': user.id
-        }
-        for user in active_users
-    ]
+            'userID': user.id,
+            'avatar': character.get_avatar_props() if character else None,
+        })
 
     if to_sid is False:
         target = f"campaign:{campaign_id}"
@@ -4441,6 +4569,12 @@ def handle_send_message(messageObj):
     recipient_character_names = [character.character_name for character in recipient_characters]
     messageObj['recipient_character_names'] = recipient_character_names
     messageObj['sender_character_name'] = sender_character.character_name
+    messageObj['sender_avatar'] = sender_character.get_avatar_props()
+    messageObj['recipient_avatars'] = [
+        serialize_message_participant(character)
+        for character in recipient_characters
+    ]
+    messageObj['self_avatar'] = sender_character.get_avatar_props()
 
     if messageObj['type'] == 'item_transfer':
         handle_item_transfer(messageObj, recipient_character, sender_character)

@@ -177,14 +177,25 @@ body {
   border: 1px solid var(--border-main);
 }
 
+.chat-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  height: min(88vh, 900px);
+  overflow: hidden;
+}
+
+.chat-modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1rem;
+}
+
 .chat-modal .modal-header {
   background: var(--bg-surface-2);
   border-bottom: 1px solid var(--border-main);
-}
-
-.chat-modal .modal-body {
-  max-height: 75vh;
-  overflow: auto;
 }
 
 /* Global Bootstrap modal theming */
