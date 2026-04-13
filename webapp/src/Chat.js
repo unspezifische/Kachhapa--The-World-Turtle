@@ -203,19 +203,117 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
     });
   };
 
+  const selectedUserLookup = useMemo(() => {
+    const lookup = new Map();
+
+    users.forEach((user) => {
+      lookup.set(Number(user.userID), user);
+    });
+
+    messages.forEach((msg) => {
+      const senderId = Number(msg.sender);
+      if (senderId && !lookup.has(senderId) && msg.sender_character_name) {
+        lookup.set(senderId, {
+          userID: senderId,
+          username: msg.sender_character_name,
+          character_name: msg.sender_character_name,
+          avatar: msg.sender_avatar || null,
+          isOfflineSelection: true,
+        });
+      }
+
+      const recipientIds = Array.isArray(msg.recipients) ? msg.recipients.map((id) => Number(id)) : [];
+      const recipientNames = Array.isArray(msg.recipient_character_names) ? msg.recipient_character_names : [];
+      const recipientAvatars = Array.isArray(msg.recipient_avatars) ? msg.recipient_avatars : [];
+
+      recipientIds.forEach((recipientId, index) => {
+        if (!recipientId || lookup.has(recipientId)) return;
+
+        const recipientAvatar = recipientAvatars[index] || null;
+        const recipientName =
+          recipientAvatar?.character_name ||
+          recipientAvatar?.name ||
+          recipientNames[index] ||
+          `User ${recipientId}`;
+
+        lookup.set(recipientId, {
+          userID: recipientId,
+          username: recipientName,
+          character_name: recipientName,
+          avatar: recipientAvatar?.avatar || recipientAvatar || null,
+          isOfflineSelection: true,
+        });
+      });
+    });
+
+    return lookup;
+  }, [users, messages]);
+
+  const visibleRecipientUsers = useMemo(() => {
+    const ordered = [];
+    const seen = new Set();
+
+    users.forEach((user) => {
+      const numericId = Number(user.userID);
+      if (seen.has(numericId)) return;
+      seen.add(numericId);
+      ordered.push(user);
+    });
+
+    selectedUsers.forEach((selectedId) => {
+      const numericId = Number(selectedId);
+      if (seen.has(numericId)) return;
+
+      const user = selectedUserLookup.get(numericId);
+      if (user) {
+        seen.add(numericId);
+        ordered.push(user);
+      }
+    });
+
+    return ordered;
+  }, [users, selectedUsers, selectedUserLookup]);
+
   const clearSelectedUsers = () => {
     setSelectedUsers([]);
   };
 
-  const replyAll = (message) => {
-    console.log("CHAT- Replying to message:", message);
-    
-    const allUserIDs = message.recipients;
-    const filteredUserIDs = allUserIDs.filter(userID => userID !== headers.userID);
-    if (message.sender !== headers.userID) {
-        filteredUserIDs.push(message.sender);
+  const normalizeUserIdList = (ids) => {
+    return [...new Set((ids || []).map((id) => Number(id)).filter(Boolean))].sort((a, b) => a - b);
+  };
+
+  const areSameUserSets = (a, b) => {
+    const normalizedA = normalizeUserIdList(a);
+    const normalizedB = normalizeUserIdList(b);
+
+    if (normalizedA.length !== normalizedB.length) return false;
+
+    return normalizedA.every((id, index) => id === normalizedB[index]);
+  };
+
+  const getReplyTargetUserIds = (message) => {
+    const allUserIDs = Array.isArray(message.recipients) ? message.recipients : [];
+    const filteredUserIDs = allUserIDs
+      .map((id) => Number(id))
+      .filter((id) => id && id !== Number(headers.userID));
+
+    if (Number(message.sender) !== Number(headers.userID)) {
+      filteredUserIDs.push(Number(message.sender));
     }
-    setSelectedUsers(filteredUserIDs);
+
+    return normalizeUserIdList(filteredUserIDs);
+  };
+
+  const replyAll = (message) => {
+    const nextSelectedUsers = getReplyTargetUserIds(message);
+
+    setSelectedUsers((prevSelectedUsers) => {
+      if (areSameUserSets(prevSelectedUsers, nextSelectedUsers)) {
+        return [];
+      }
+
+      return nextSelectedUsers;
+    });
   };
 
   const getMessageClusterMeta = (messages, index) => {
@@ -354,10 +452,10 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
           <Col className="recipient-picker-col">
             <div className="recipient-picker-bar">
               <div className="recipient-chip-list">
-                {users.length === 0 ? (
+                {visibleRecipientUsers.length === 0 ? (
                   <div className="recipient-empty-state">Nobody else here!</div>
                 ) : (
-                  users.map((user) => {
+                  visibleRecipientUsers.map((user) => {
                     const isSelected = selectedUsers.includes(user.userID);
                     const avatar = normalizeAvatar(user.avatar, user.character_name || user.username);
 
@@ -382,7 +480,7 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
                           </Avatar>
                         }
                         label={user.character_name === "DM" ? `${user.character_name} - ${user.username}` : user.character_name}
-                        className={`recipient-chip ${isSelected ? 'is-selected' : 'is-unselected'}`}
+                        className={`recipient-chip ${isSelected ? 'is-selected' : 'is-unselected'} ${user.isOfflineSelection ? 'is-offline-user' : ''}`}
                       />
                     );
                   })

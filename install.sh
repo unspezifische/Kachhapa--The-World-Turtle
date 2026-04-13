@@ -41,6 +41,27 @@ ssh "$DESTINATION" "sudo apt update && sudo apt install -y \
 echo "==> 2) Hostname + mDNS"
 ssh "$DESTINATION" "sudo hostnamectl set-hostname raspberrypi && sudo systemctl enable --now avahi-daemon"
 
+echo "==> Configure Avahi hostname aliases for LAN access"
+ssh "$DESTINATION" "sudo bash -lc '
+set -e
+
+ETH_IP=\$(ip -4 -o addr show eth0 | awk '\''{print \$4}'\'' | cut -d/ -f1 | head -n1)
+
+if [ -n \"\$ETH_IP\" ]; then
+  cat > /etc/avahi/hosts <<EOF
+# Extra mDNS hostname aliases for this Pi on the LAN
+\$ETH_IP app.raspberrypi.local
+\$ETH_IP tools.raspberrypi.local
+\$ETH_IP maps.raspberrypi.local
+EOF
+
+  systemctl restart avahi-daemon
+  echo \"Configured Avahi aliases on \$ETH_IP\"
+else
+  echo \"No eth0 IPv4 address found; skipping /etc/avahi/hosts aliases\"
+fi
+'"
+
 echo "==> 3) Create directory structure"
 ssh "$DESTINATION" "mkdir -p \
   '$REMOTE_FLASK/templates' \
@@ -219,6 +240,20 @@ address=/tools.raspberrypi.local/\$AP_IP
 address=/maps.raspberrypi.local/\$AP_IP
 EOF
 
+echo "==> Configure upstream DNS for dnsmasq"
+if grep -q "^no-resolv" /etc/dnsmasq.conf 2>/dev/null; then
+  sed -i '/^server=8\.8\.8\.8$/d;/^server=1\.1\.1\.1$/d;/^server=192\.168\./d' /etc/dnsmasq.conf
+else
+  echo "no-resolv" >> /etc/dnsmasq.conf
+fi
+
+WAN_GW=$(ip route | awk '/default/ {print $3; exit}')
+if [ -n "$WAN_GW" ]; then
+  grep -q "^server=$WAN_GW$" /etc/dnsmasq.conf 2>/dev/null || echo "server=$WAN_GW" >> /etc/dnsmasq.conf
+fi
+grep -q "^server=8.8.8.8$" /etc/dnsmasq.conf 2>/dev/null || echo "server=8.8.8.8" >> /etc/dnsmasq.conf
+grep -q "^server=1.1.1.1$" /etc/dnsmasq.conf 2>/dev/null || echo "server=1.1.1.1" >> /etc/dnsmasq.conf
+
 grep -q "^conf-dir=/etc/dnsmasq.d" /etc/dnsmasq.conf 2>/dev/null || \
   echo "conf-dir=/etc/dnsmasq.d,*.conf" >> /etc/dnsmasq.conf
 
@@ -240,19 +275,32 @@ EOF
 
 echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > /etc/default/hostapd
 
+echo "==> Configure dnsmasq startup ordering"
+mkdir -p /etc/systemd/system/dnsmasq.service.d
+cat > /etc/systemd/system/dnsmasq.service.d/override.conf <<'EOF'
+[Unit]
+After=hostapd.service network-online.target
+Wants=hostapd.service network-online.target
+
+[Service]
+Restart=on-failure
+RestartSec=2
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 15); do ip link show wlan0 >/dev/null 2>&1 && exit 0; sleep 1; done; echo "wlan0 not ready"; exit 1'
+EOF
+
+systemctl daemon-reload
+
 echo "==> Enable IP forwarding"
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-kachhapa-ipforward.conf
 sysctl --system
 
 echo "==> Configure NAT and forwarding with iptables"
-iptables -t nat -C POSTROUTING -o "\$WAN_IF" -j MASQUERADE 2>/dev/null || \
-  iptables -t nat -A POSTROUTING -o "\$WAN_IF" -j MASQUERADE
+iptables -t nat -F POSTROUTING
+iptables -F FORWARD
 
-iptables -C FORWARD -i "\$WAN_IF" -o "\$LAN_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
-  iptables -A FORWARD -i "\$WAN_IF" -o "\$LAN_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
-
-iptables -C FORWARD -i "\$LAN_IF" -o "\$WAN_IF" -j ACCEPT 2>/dev/null || \
-  iptables -A FORWARD -i "\$LAN_IF" -o "\$WAN_IF" -j ACCEPT
+iptables -t nat -A POSTROUTING -s 10.42.0.0/24 -o "$WAN_IF" -j MASQUERADE
+iptables -A FORWARD -i "$WAN_IF" -o "$LAN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -i "$LAN_IF" -o "$WAN_IF" -j ACCEPT
 
 netfilter-persistent save || true
 
@@ -268,8 +316,9 @@ systemctl restart dnsmasq
 systemctl restart hostapd
 
 echo "==> Final AP status"
-ip -brief addr show "\$LAN_IF" || true
+ip -brief addr show "$LAN_IF" || true
 systemctl --no-pager --full status hostapd | head -n 20 || true
 systemctl --no-pager --full status dnsmasq | head -n 20 || true
 iptables -t nat -L -n -v || true
+iptables -L FORWARD -n -v || true
 EOS

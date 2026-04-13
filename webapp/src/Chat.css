@@ -245,6 +245,10 @@
   padding-right: 0.25rem;
 }
 
+.recipient-chip.is-offline-user {
+  opacity: 0.82;
+}
+
 .recipient-picker-actions {
   flex: 0 0 auto;
   display: flex;

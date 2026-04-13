@@ -35,9 +35,9 @@ echo "Finished copying the static directory"
 rsync -avz Flask/migrations/ "$DESTINATION:/home/ijohnson/Kachhapa/Flask/migrations/"
 
 
-## STEP 3. Install Python deps
-ssh $DESTINATION "/home/ijohnson/Kachhapa/venv/bin/pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
-echo "Finished installing Python dependencies"
+# ## STEP 3. Install Python deps
+# ssh $DESTINATION "/home/ijohnson/Kachhapa/venv/bin/pip install -r /home/ijohnson/Kachhapa/Flask/requirements.txt"
+# echo "Finished installing Python dependencies"
 
 ## STEP 4. Create DB backup
 # Define variables

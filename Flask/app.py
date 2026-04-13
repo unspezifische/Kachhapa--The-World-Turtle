@@ -944,6 +944,47 @@ admin.add_view(ModelView(CalendarEvent, db.session))
 from flask.cli import with_appcontext
 import click
 
+## Avatar handling utilities
+from pathlib import Path
+from uuid import uuid4
+from werkzeug.utils import secure_filename
+from PIL import Image
+
+BASE_DIR = Path(app.root_path).resolve()
+MEDIA_ROOT = BASE_DIR / "media"
+AVATAR_ROOT = MEDIA_ROOT / "avatars"
+AVATAR_UPLOAD_ROOT = AVATAR_ROOT / "uploads"
+AVATAR_DEFAULT_ROOT = AVATAR_ROOT / "defaults"
+
+app.config["MEDIA_ROOT"] = str(MEDIA_ROOT)
+app.config["AVATAR_ROOT"] = str(AVATAR_ROOT)
+app.config["AVATAR_UPLOAD_ROOT"] = str(AVATAR_UPLOAD_ROOT)
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB
+
+ALLOWED_AVATAR_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+
+def allowed_avatar_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_AVATAR_EXTENSIONS
+
+def ensure_avatar_dirs(user_id: int) -> tuple[Path, Path]:
+    user_root = Path(app.config["AVATAR_UPLOAD_ROOT"]) / str(user_id)
+    thumb_root = user_root / "thumbs"
+    user_root.mkdir(parents=True, exist_ok=True)
+    thumb_root.mkdir(parents=True, exist_ok=True)
+    return user_root, thumb_root
+
+def build_avatar_urls(user_id: int, filename: str, thumb_filename: str | None = None) -> tuple[str, str | None]:
+    image_url = f"/media/avatars/uploads/{user_id}/{filename}"
+    thumb_url = f"/media/avatars/uploads/{user_id}/thumbs/{thumb_filename}" if thumb_filename else None
+    return image_url, thumb_url
+
+def make_avatar_thumbnail(src_path: Path, dst_path: Path, size=(128, 128)) -> None:
+    with Image.open(src_path) as img:
+        img = img.convert("RGBA")
+        img.thumbnail(size)
+        img.save(dst_path, format="WEBP", quality=88)
+
+######################################################################################
 @app.cli.command("set-all-users-offline")
 @with_appcontext
 def set_all_users_offline_command():
@@ -1808,6 +1849,77 @@ def update_character():
         return jsonify({'error': 'InvalidTokenError- PUT /api/character'}), 401
     except ExpiredSignatureError:
         return jsonify({'error': 'Expired token'}), 401
+
+
+@app.route("/api/character/avatar", methods=["POST"])
+@jwt_required()
+def upload_character_avatar():
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        return jsonify({"error": "User not found."}), 404
+
+    campaign_id = request.headers.get("CampaignID")
+    if campaign_id is None:
+        return jsonify({"error": "Campaign ID not provided in request header."}), 400
+
+    stmt = select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaign_id,
+        campaign_members.c.userID == user.id
+    )
+    result = db.session.execute(stmt).first()
+    if result is None:
+        return jsonify({"error": "Character not found."}), 404
+
+    character = Character.query.filter_by(id=result.characterID).first()
+    if character is None:
+        return jsonify({"error": "Character not found."}), 404
+
+    file = request.files.get("avatar")
+    if not file or not file.filename:
+        return jsonify({"error": "No avatar file uploaded."}), 400
+
+    if not allowed_avatar_file(file.filename):
+        return jsonify({"error": "Unsupported file type."}), 400
+
+    safe_name = secure_filename(file.filename)
+    ext = safe_name.rsplit(".", 1)[1].lower()
+    unique_stem = f"{character.id}_{uuid4().hex}"
+    filename = f"{unique_stem}.{ext}"
+    thumb_filename = f"{unique_stem}_thumb.webp"
+
+    user_root, thumb_root = ensure_avatar_dirs(user.id)
+    image_path = user_root / filename
+    thumb_path = thumb_root / thumb_filename
+
+    file.save(image_path)
+    make_avatar_thumbnail(image_path, thumb_path)
+
+    image_url, thumb_url = build_avatar_urls(user.id, filename, thumb_filename)
+
+    character.avatar_mode = "image"
+    character.avatar_image_url = image_url
+    character.avatar_thumb_url = thumb_url
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Avatar uploaded successfully.",
+        "avatar": {
+            "mode": character.avatar_mode,
+            "initials": None,
+            "color": character.avatar_color,
+            "text_color": character.avatar_text_color,
+            "image_url": character.avatar_image_url,
+            "thumb_url": character.avatar_thumb_url,
+            "preset_key": character.avatar_preset_key,
+            "shape": character.avatar_shape,
+            "frame_color": character.avatar_frame_color,
+        },
+        "avatar_image_url": character.avatar_image_url,
+        "avatar_thumb_url": character.avatar_thumb_url,
+        "avatar_mode": character.avatar_mode,
+    }), 200
 
 
 @app.route('/api/users', methods=['GET'])

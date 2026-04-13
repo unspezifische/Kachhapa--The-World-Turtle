@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Responsive, WidthProvider } from 'react-grid-layout';
 import { Row, Col, Button, ButtonGroup, Modal, ModalDialog, Form, Table, Placeholder } from 'react-bootstrap';
-import { Paper, LinearProgress, Box, Typography, Tooltip } from '@mui/material';
+
+import { Paper, LinearProgress, Box, Typography, Tooltip, Avatar, Skeleton } from '@mui/material';
 
 import axios from 'axios';  // Makes API calls
 
@@ -34,35 +35,39 @@ const skillAbilities = {
   'Survival': 'wisdom'
 };
 
+const LAYOUT_STORAGE_KEY = 'tileLayout';
+const LAYOUT_VERSION_KEY = 'tileLayoutVersion';
+const CURRENT_LAYOUT_VERSION = 'character-sheet-layout-v2';
+
 const tiles = [
   { w: 2, h: 4, x: 0, y: 0, i: "Name" },
-  { w: 1, h: 3, x: 2, y: 0, i: "Class" },
-  { w: 1, h: 3, x: 2, y: 3, i: "Race" },
+  { w: 1, h: 4, x: 2, y: 0, i: "Class" },
+  { w: 1, h: 4, x: 7, y: 0, i: "Race" },
   { w: 1, h: 4, x: 3, y: 0, i: "Alignment" },
   { w: 1, h: 20, x: 0, y: 4, i: "Ability Scores" },
   { w: 1, h: 3, x: 1, y: 4, i: "Proficiency Bonus" },
   { w: 1, h: 12, x: 1, y: 7, i: "Saving Throws" },
-  { w: 2, h: 19, x: 3, y: 14, i: "Skills" },
-  { w: 2, h: 4, x: 3, y: 38, i: "Personality Traits" },
-  { w: 2, h: 4, x: 1, y: 31, i: "Ideals" },
-  { w: 2, h: 4, x: 1, y: 35, i: "Bonds" },
-  { w: 2, h: 5, x: 3, y: 33, i: "Flaws" },
-  { w: 2, h: 9, x: 5, y: 0, i: "Feats" },
-  { w: 2, h: 11, x: 5, y: 16, i: "Attacks" },
-  { w: 2, h: 13, x: 5, y: 27, i: "Actions" },
-  { w: 2, h: 7, x: 5, y: 40, i: "Spells" },
-  { w: 2, h: 7, x: 5, y: 9, i: "Equipment" },
+  { w: 2, h: 19, x: 3, y: 11, i: "Skills" },
+  { w: 2, h: 6, x: 4, y: 30, i: "Personality Traits" },
+  { w: 2, h: 4, x: 4, y: 36, i: "Ideals" },
+  { w: 2, h: 4, x: 4, y: 45, i: "Bonds" },
+  { w: 2, h: 5, x: 4, y: 40, i: "Flaws" },
+  { w: 2, h: 9, x: 6, y: 4, i: "Feats" },
+  { w: 2, h: 11, x: 6, y: 20, i: "Attacks" },
+  { w: 2, h: 13, x: 6, y: 31, i: "Actions" },
+  { w: 2, h: 7, x: 6, y: 44, i: "Spells" },
+  { w: 2, h: 7, x: 6, y: 13, i: "Equipment" },
   { w: 2, h: 12, x: 1, y: 19, i: "Proficiencies" },
-  { w: 1, h: 7, x: 2, y: 12, i: "Wealth" },
-  { w: 1, h: 3, x: 3, y: 8, i: "Initiative" },
+  { w: 1, h: 7, x: 2, y: 8, i: "Wealth" },
+  { w: 1, h: 3, x: 3, y: 4, i: "Initiative" },
   { w: 1, h: 3, x: 4, y: 4, i: "Speed" },
-  { w: 1, h: 3, x: 2, y: 6, i: "Armor Class" },
-  { w: 1, h: 4, x: 3, y: 4, i: "Background" },
-  { w: 1, h: 4, x: 4, y: 0, i: "XP" },
-  { w: 1, h: 4, x: 4, y: 10, i: "Passive Perception" },
-  { w: 1, h: 3, x: 2, y: 9, i: "Max HP" },
-  { w: 1, h: 3, x: 3, y: 11, i: "Current Hit Points" },
-  { w: 1, h: 3, x: 4, y: 7, i: "Temporary Hit Points" }
+  { w: 1, h: 3, x: 2, y: 5, i: "Armor Class" },
+  { w: 1, h: 4, x: 4, y: 0, i: "Background" },
+  { w: 1, h: 4, x: 5, y: 0, i: "XP" },
+  { w: 1, h: 4, x: 4, y: 7, i: "Passive Perception" },
+  { w: 1, h: 4, x: 3, y: 7, i: "Max HP" },
+  { w: 1, h: 3, x: 5, y: 4, i: "Current Hit Points" },
+  { w: 1, h: 4, x: 5, y: 7, i: "Temporary Hit Points" }
 ];
 
 const defaultLayout = {
@@ -73,15 +78,82 @@ const defaultLayout = {
   xxs: tiles,
 };
 
+const tileIdToCharacterKey = (tileId) => {
+  const map = {
+    'Name': 'Name',
+    'Class': 'Class',
+    'Background': 'Background',
+    'Race': 'Race',
+    'Alignment': 'Alignment',
+    'XP': 'ExperiencePoints',
+    'ExperiencePoints': 'ExperiencePoints',
+    'Max HP': 'HitPointMax',
+    'HitPointMax': 'HitPointMax',
+    'Current HP': 'CurrentHitPoints',
+    'Current Hit Points': 'CurrentHitPoints',
+    'CurrentHitPoints': 'CurrentHitPoints',
+    'Temporary HP': 'TemporaryHitPoints',
+    'Temporary Hit Points': 'TemporaryHitPoints',
+    'TemporaryHitPoints': 'TemporaryHitPoints',
+    'Passive Perception': 'PassivePerception',
+    'PassivePerception': 'PassivePerception',
+    'Personality Traits': 'PersonalityTraits',
+    'PersonalityTraits': 'PersonalityTraits',
+    'Ideals': 'Ideals',
+    'Bonds': 'Bonds',
+    'Flaws': 'Flaws',
+  };
+
+  return map[tileId] || tileId;
+};
+
 function CharacterSheet({ headers, characterName, setCharacterName }) {
   const [loading, setLoading] = useState(true);
   const [editingTileId, setEditingTileId] = useState(null);
   const [isModalShown, setIsModalShown] = useState(false);
-  // const [layout, setLayout] = useState(null);
-  const [layout, setLayout] = useState({ tiles });
+
   const [characters, setCharacters] = useState([]);
 
-  console.log('[CharacterSheet] Component rendered with props:', { characterName, headersPresent: !!headers, setCharacterNamePresent: !!setCharacterName });
+  const [avatarUploadError, setAvatarUploadError] = useState('');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+
+  const handleAvatarUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAvatarUploadError('');
+    setAvatarUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('avatar', file);
+
+      const response = await axios.post('/api/character/avatar', formData, {
+        headers: {
+          Authorization: headers.Authorization,
+          CampaignID: headers.campaignID,
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      setCharacter((prev) => ({
+        ...prev,
+        avatar_mode: response.data.avatar_mode ?? 'image',
+        avatar_image_url: response.data.avatar_image_url ?? null,
+        avatar_thumb_url: response.data.avatar_thumb_url ?? null,
+      }));
+    } catch (error) {
+      console.error('Avatar upload failed:', error);
+      setAvatarUploadError(
+        error?.response?.data?.error || 'Failed to upload avatar.'
+      );
+    } finally {
+      setAvatarUploading(false);
+      event.target.value = '';
+    }
+  };
+
+  // console.log('[CharacterSheet] Component rendered with props:', { characterName, headersPresent: !!headers, setCharacterNamePresent: !!setCharacterName });
 
   const [playerClasses, setPlayerClasses] = useState([]);
   const [playerRaces, setPlayerRaces] = useState([]);
@@ -121,7 +193,17 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     const Proficiencies = data.Proficiencies ?? data.proficiencies ?? [];
     const Subclass = data.Subclass ?? data.subclass ?? null;
 
-    const cleaned = { ...data };
+    const cleaned = {
+      ...data,
+      avatar_mode: data.avatar_mode ?? 'initials',
+      avatar_color: data.avatar_color ?? '#64748b',
+      avatar_text_color: data.avatar_text_color ?? '#f8fafc',
+      avatar_image_url: data.avatar_image_url ?? null,
+      avatar_thumb_url: data.avatar_thumb_url ?? null,
+      avatar_preset_key: data.avatar_preset_key ?? null,
+      avatar_shape: data.avatar_shape ?? 'circle',
+      avatar_frame_color: data.avatar_frame_color ?? null,
+    };
     delete cleaned.strength;
     delete cleaned.Strength;
     delete cleaned.dexterity;
@@ -157,6 +239,42 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
       Proficiencies,
       Subclass,
       id: data.id ?? data.ID ?? data.character_id ?? null,
+    };
+  };
+
+  const DEFAULT_AVATAR = {
+    mode: 'initials',
+    initials: '?',
+    color: '#64748b',
+    text_color: '#f8fafc',
+    image_url: null,
+    preset_key: null,
+    shape: 'circle',
+    frame_color: null,
+  };
+
+  const getInitials = (name) => {
+    if (!name) return '?';
+
+    const parts = String(name).trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+    }
+
+    return parts[0].slice(0, 2).toUpperCase();
+  };
+
+  const getCharacterAvatar = () => {
+    return {
+      ...DEFAULT_AVATAR,
+      mode: character.avatar_mode || 'initials',
+      initials: getInitials(character.Name),
+      color: character.avatar_color || '#64748b',
+      text_color: character.avatar_text_color || '#f8fafc',
+      image_url: character.avatar_image_url || null,
+      preset_key: character.avatar_preset_key || null,
+      shape: character.avatar_shape || 'circle',
+      frame_color: character.avatar_frame_color || null,
     };
   };
 
@@ -307,9 +425,16 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   }, [headers?.campaignID, headers?.CampaignID]);
 
   const getLayouts = () => {
-    const savedLayout = localStorage.getItem('tileLayout');
+    const savedVersion = localStorage.getItem(LAYOUT_VERSION_KEY);
+    const savedLayout = localStorage.getItem(LAYOUT_STORAGE_KEY);
 
-    return savedLayout ? JSON.parse(savedLayout) : defaultLayout;
+    if (savedVersion === CURRENT_LAYOUT_VERSION && savedLayout) {
+      return JSON.parse(savedLayout);
+    }
+
+    localStorage.setItem(LAYOUT_VERSION_KEY, CURRENT_LAYOUT_VERSION);
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(defaultLayout));
+    return defaultLayout;
   };
 
   // Save layout presets to local storage
@@ -327,6 +452,14 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   const [character, setCharacter] = useState({
     id: null,  // Track character ID for saves
     Name: characterName || '',
+    avatar_mode: 'initials',
+    avatar_color: '#64748b',
+    avatar_text_color: '#f8fafc',
+    avatar_image_url: null,
+    avatar_thumb_url: null,
+    avatar_preset_key: null,
+    avatar_shape: 'circle',
+    avatar_frame_color: null,
     Class: null,
     Subclass: null,
     Level: 1,
@@ -687,8 +820,8 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   // This function will be called whenever the layout changes
   const handleLayoutChange = (layout, layouts) => {
-    console.log(layout);
-    localStorage.setItem('tileLayout', JSON.stringify(layouts));
+    console.log(layouts);
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layouts));
   };
 
   const saveCharacter = (overridePayload = null) => {
@@ -750,10 +883,10 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
         return {
           ...cleaned,
           ...rest,
-          id: response.data.id,  // Preserve character ID
+          id: response.data.id,
           abilityScores: { strength, dexterity, constitution, intelligence, wisdom, charisma },
           Wealth: { cp, sp, ep, gp, pp },
-          Proficiencies
+          Proficiencies: dedupeProficiencies(Proficiencies),
         };
       });
     })
@@ -812,14 +945,134 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     return Math.ceil(level / 4) + 1;
   }
 
+  function normalizeProficiencySource(value) {
+    if (!value) return [];
+
+    if (Array.isArray(value)) {
+      return value.flatMap(normalizeProficiencySource).filter(Boolean);
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return [];
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.flatMap(normalizeProficiencySource).filter(Boolean);
+        }
+      } catch {
+        // not JSON
+      }
+
+      return [trimmed];
+    }
+
+    if (typeof value === 'object') {
+      if (value.name) return [String(value.name).trim()];
+      if (value.text) return [String(value.text).trim()];
+    }
+
+    return [String(value).trim()];
+  }
+
+  function dedupeStrings(values) {
+    const seen = new Set();
+    return values.filter((value) => {
+      const normalized = String(value || '').trim();
+      const key = normalized.toLowerCase();
+      if (!normalized || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function extractLanguagesFromSentence(text) {
+    const normalized = text.trim();
+
+    const match = normalized.match(
+      /you can speak,\s*read,\s*and\s*write\s+(.+?)(?:\.|$)/i
+    );
+
+    if (!match) return [];
+
+    const languagePart = match[1]
+      .replace(/\band\b/gi, ',')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return languagePart;
+  }
+
+  function categorizeProficiencies(rawProficiencies) {
+    const entries = dedupeStrings(normalizeProficiencySource(rawProficiencies));
+
+    const buckets = {
+      languages: [],
+      tools: [],
+      armor: [],
+      weapons: [],
+      other: [],
+    };
+
+    entries.forEach((entry) => {
+      const lower = entry.toLowerCase();
+
+      const extractedLanguages = extractLanguagesFromSentence(entry);
+      if (extractedLanguages.length > 0) {
+        buckets.languages.push(...extractedLanguages);
+        return;
+      }
+
+      if (
+        [
+          'common', 'primordial', 'elvish', 'dwarvish', 'giant', 'gnomish',
+          'goblin', 'halfling', 'orc', 'abyssal', 'celestial', 'draconic',
+          'deep speech', 'infernal', 'sylvan', 'undercommon'
+        ].includes(lower)
+      ) {
+        buckets.languages.push(entry);
+        return;
+      }
+
+      if (lower.includes('tool') || lower.includes("tools") || lower.includes("kit")) {
+        buckets.tools.push(entry);
+        return;
+      }
+
+      if (lower.includes('armor') || lower.includes('shield')) {
+        buckets.armor.push(entry);
+        return;
+      }
+
+      if (lower.includes('weapon') || lower.includes('weapons')) {
+        buckets.weapons.push(entry);
+        return;
+      }
+
+      buckets.other.push(entry);
+    });
+
+    return {
+      languages: dedupeStrings(buckets.languages),
+      tools: dedupeStrings(buckets.tools),
+      armor: dedupeStrings(buckets.armor),
+      weapons: dedupeStrings(buckets.weapons),
+      other: dedupeStrings(buckets.other),
+    };
+  }
+
   // Remove duplicate proficiencies (case-insensitive comparison)
   function dedupeProficiencies(proficiencies) {
-    if (!Array.isArray(proficiencies)) return [];
+    const normalizedList = normalizeProficiencySource(proficiencies);
+
     const seen = new Set();
-    return proficiencies.filter(p => {
-      const normalized = String(p || '').toLowerCase().trim();
-      if (!normalized || seen.has(normalized)) return false;
-      seen.add(normalized);
+    return normalizedList.filter((p) => {
+      const normalized = String(p || '').trim();
+      const dedupeKey = normalized.toLowerCase();
+      if (!normalized || seen.has(dedupeKey)) return false;
+      seen.add(dedupeKey);
       return true;
     });
   }
@@ -1125,15 +1378,24 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             // Safely handle missing hitPoints in class data
             const classHitPoints = classData.hit_points || { base: 0, level_increment: 0 };
             console.log("Class Hit Points:", classHitPoints);
-            newCharacterState.HitPointMax = classHitPoints.base + (prevState.Level * (classHitPoints.level_increment + getModifier(prevState.abilityScores.constitution)));
+            const conMod = getModifier(prevState.abilityScores.constitution);
+            
+            const safeLevel = Math.max(1, parseInt(prevState.Level, 10) || 1);
+            const baseHp = parseInt(classHitPoints.base, 10) || 0;
+            const levelIncrement = parseInt(classHitPoints.level_increment, 10) || 0;
+
+            newCharacterState.HitPointMax =
+              baseHp +
+              conMod +
+              Math.max(0, safeLevel - 1) * (levelIncrement + conMod);
             // Keep local hitPoints state in sync so the edit modal displays the class defaults
             setHitPoints(classHitPoints);
 
             classFeats = buildClassFeats(classData, prevState.Level, prevState.Class, prevState.Subclass || newCharacterState.Subclass);
             newCharacterState.Proficiencies = dedupeProficiencies([
-              ...(prevState.Proficiencies || []),
-              ...(classData.armor_proficiencies || []),
-              ...(classData.weapon_proficiencies || [])
+              ...normalizeProficiencySource(prevState.Proficiencies),
+              ...normalizeProficiencySource(classData.armor_proficiencies),
+              ...normalizeProficiencySource(classData.weapon_proficiencies),
             ]);
           }
           if (classResult.status === 'rejected') {
@@ -1150,8 +1412,8 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   
             // Safely append languages (may be undefined) and traits
             newCharacterState.Proficiencies = dedupeProficiencies([
-              ...(newCharacterState.Proficiencies || []),
-              ...(raceData.languages || [])
+              ...normalizeProficiencySource(newCharacterState.Proficiencies),
+              ...normalizeProficiencySource(raceData.languages),
             ]);
             newCharacterState.Speed = raceData.speed || newCharacterState.Speed;
             const raceTraits = raceData?.traits
@@ -1372,44 +1634,69 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   function generateTileContent(tileId) {
     switch (tileId) {
-      case 'Name':
+      case 'Name': {
+        const avatar = getCharacterAvatar();
+
+        if (loading) {
+          return (
+            <div className="identity-tile">
+              <Skeleton variant="circular" width={72} height={72} />
+              <div className="identity-tile-text">
+                <Skeleton variant="text" width="75%" height={52} />
+                <Skeleton variant="text" width="45%" height={28} />
+              </div>
+            </div>
+          );
+        }
+
         return (
-          <div>
-            {character?.Name ? (
-              <h1>{character.Name}</h1>
-            ) : (
-              <Placeholder as="h1" animation="glow" />
-            )}
+          <div className="identity-tile">
+            <Avatar
+              src={avatar.mode === 'image' ? avatar.image_url || undefined : undefined}
+              className={`identity-avatar ${avatar.shape === 'square' ? 'is-square' : ''}`}
+              sx={{
+                bgcolor: avatar.color,
+                color: avatar.text_color,
+                borderColor: avatar.frame_color || 'transparent',
+              }}
+            >
+              {avatar.initials}
+            </Avatar>
+
+            <div className="identity-tile-text">
+              <h1 className="identity-name">{character?.Name || 'Unnamed Character'}</h1>
+              <div className="identity-subtitle">
+                {character?.Class ? `${character.Class}${character?.Level ? ` ${character.Level}` : ''}` : 'No class selected'}
+              </div>
+            </div>
           </div>
         );
+      }
       case 'Class':
         return (
-          <>
+          <div className="class-tile">
             <div className="label">Class:</div>
-            <h3 className="center">
-              {character?.Class && character?.Level ? (
-                <>
-                  <div style={{ textAlign: 'center' }}>{`${character.Class} ${character.Level}`}</div>
-                  {character?.Subclass ? (
-                    <div style={{ fontSize: '0.9em', textAlign: 'center' }}>{character.Subclass}</div>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <div style={{ textAlign: 'center' }}>
-                    <Placeholder as="span" animation="glow">
-                      <Placeholder xs={6} />
-                    </Placeholder>
+
+            {character?.Class ? (
+              <div className="class-tile-content">
+                <div className="class-primary">
+                  <span className="class-name">{character.Class}</span>
+                  {character?.Level ? <span className="class-level"> {character.Level}</span> : null}
+                </div>
+
+                {character?.Subclass ? (
+                  <div className="class-secondary">
+                    {character.Subclass}
                   </div>
-                  <div style={{ fontSize: '0.9em', textAlign: 'center' }}>
-                    <Placeholder as="span" animation="glow">
-                      <Placeholder xs={4} />
-                    </Placeholder>
-                  </div>
-                </>
-              )}
-            </h3>
-          </>
+                ) : null}
+              </div>
+            ) : (
+              <div className="class-tile-content">
+                <Skeleton variant="text" width="70%" height={44} />
+                <Skeleton variant="text" width="55%" height={28} />
+              </div>
+            )}
+          </div>
         );
       case 'Background':
         return (
@@ -1620,39 +1907,30 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </>
         );
       case 'Current HP':
-      case 'CurrentHitPoints':
+      case 'Current Hit Points':
+      case 'CurrentHitPoints': {
+        const currentHp = character?.CurrentHitPoints ?? 0;
+
         return (
           <>
-            <span className="label">Current HP</span>
-            <div className="center">
-              <h3>
-                {character?.CurrentHitPoints ? (
-                  character.CurrentHitPoints
-                ) : (
-                  <Placeholder as="span" animation="glow">
-                    <Placeholder xs={4} />
-                  </Placeholder>
-                )}
-              </h3>
-            </div>
+            <div className="label">Current HP</div>
+            <h3 className="center-title">{currentHp}</h3>
           </>
         );
+      }
+
       case 'Temporary HP':
-      case 'TemporaryHitPoints':
+      case 'Temporary Hit Points':
+      case 'TemporaryHitPoints': {
+        const tempHp = character?.TemporaryHitPoints ?? 0;
+
         return (
           <>
             <div className="label">Temporary HP</div>
-            <h3 className="center">
-              {character?.TemporaryHitPoints ? (
-                character.TemporaryHitPoints
-              ) : (
-                <Placeholder as="span" animation="glow">
-                  <Placeholder xs={4} />
-                </Placeholder>
-              )}
-            </h3>
+            <h3 className="center-title">{tempHp}</h3>
           </>
         );
+      }
       case 'Skills':
         return (
           <>
@@ -1767,14 +2045,33 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             </div>
           </>
         );
-      case 'Proficiencies':
+      case 'Proficiencies': {
+        const categorized = categorizeProficiencies(character?.Proficiencies);
+
+        const sections = [
+          { label: 'Languages', items: categorized.languages },
+          { label: 'Tools', items: categorized.tools },
+          { label: 'Armor', items: categorized.armor },
+          { label: 'Weapons', items: categorized.weapons },
+          { label: 'Other', items: categorized.other },
+        ].filter(section => section.items.length > 0);
+
         return (
           <>
             <h3>Proficiencies:</h3>
-            <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character?.Proficiencies ? (
-                character.Proficiencies.map((proficiency, index) => (
-                  <div key={index}>{proficiency}</div>
+            <div className="proficiencies-sections">
+              {sections.length > 0 ? (
+                sections.map((section) => (
+                  <div key={section.label} className="proficiency-section">
+                    <div className="proficiency-section-title">{section.label}</div>
+                    <div className="proficiencies-list">
+                      {section.items.map((item, index) => (
+                        <div key={`${section.label}-${item}-${index}`} className="proficiency-chip">
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 ))
               ) : (
                 <Placeholder as="div" animation="glow">
@@ -1784,6 +2081,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             </div>
           </>
         );
+      }
       case 'Passive Perception':
       case 'PassivePerception':
         return (
@@ -1821,66 +2119,53 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </>
         );
       case 'Personality Traits':
-      case 'PersonalityTraits':
+      case 'PersonalityTraits': {
+        const text = character?.PersonalityTraits ?? '';
         return (
           <>
             <h4 className='center-title'>Personality Traits:</h4>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character?.PersonalityTraits ? (
-                <p>{character.PersonalityTraits}</p>
-              ) : (
-                <Placeholder as="p" animation="glow">
-                  <Placeholder xs={12} />
-                </Placeholder>
-              )}
+              {text ? <p>{text}</p> : <Placeholder as="p" animation="glow"><Placeholder xs={12} /></Placeholder>}
             </div>
           </>
         );
-      case 'Ideals':
+      }
+
+      case 'Ideals': {
+        const text = character?.Ideals ?? '';
         return (
           <>
             <h4 className="center-title">Ideals</h4>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character?.Ideals ? (
-                <p>{character.Ideals}</p>
-              ) : (
-                <Placeholder as="p" animation="glow">
-                  <Placeholder xs={12} />
-                </Placeholder>
-              )}
+              {text ? <p>{text}</p> : <Placeholder as="p" animation="glow"><Placeholder xs={12} /></Placeholder>}
             </div>
           </>
         );
-      case 'Bonds':
+      }
+
+      case 'Bonds': {
+        const text = character?.Bonds ?? '';
         return (
           <>
             <h4 className="center-title">Bonds</h4>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character?.Bonds ? (
-                <p>{character.Bonds}</p>
-              ) : (
-                <Placeholder as="p" animation="glow">
-                  <Placeholder xs={12} />
-                </Placeholder>
-              )}
+              {text ? <p>{text}</p> : <Placeholder as="p" animation="glow"><Placeholder xs={12} /></Placeholder>}
             </div>
           </>
         );
-      case 'Flaws':
+      }
+
+      case 'Flaws': {
+        const text = character?.Flaws ?? '';
         return (
           <>
             <h4 className="center-title">Flaws</h4>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
-              {character?.Flaws ? (
-                <p>{character.Flaws}</p>
-              ) : (
-                <Placeholder as="p" animation="glow">
-                  <Placeholder xs={12} />
-                </Placeholder>
-              )}
+              {text ? <p>{text}</p> : <Placeholder as="p" animation="glow"><Placeholder xs={12} /></Placeholder>}
             </div>
           </>
         );
+      }
       default:
         return null;
     }
@@ -1906,7 +2191,11 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
               >
                 <EditIcon />
               </div>
-              <Paper elevation={3} style={{ height: '100%', padding: '10px', position: 'relative', position: 'relative'}}>
+              <Paper
+                elevation={3}
+                className="character-sheet-paper"
+                style={{ height: '100%', padding: '10px', position: 'relative' }}
+              >
                 {loading ? (
                   <Placeholder as="div" animation="glow">
                     <Placeholder xs={12} />
@@ -1933,75 +2222,173 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             {(() => {
               // Determine what type of input to display based on the tileId
               switch (editingTileId) {
-                // case 'Name': {
-                //   return (
-                //     <Form.Group>
-                //       <Form.Label>Select character</Form.Label>
-                //       <Form.Control
-                //         as="select"
-                //         value={character.Name || ''}
-                //         onChange={e => switchCharacter(e.target.value)}
-                //       >
-                //         <option value="" disabled>Select character</option>
-                //         {(() => {
-                //           const options = [...characters];
-                //           if (character.Name && !options.includes(character.Name)) options.unshift(character.Name);
-                //           if (options.length === 0) return <option disabled>No characters found</option>;
-                //           return options.map(name => (
-                //             <option key={name} value={name}>{name}</option>
-                //           ));
-                //         })()}
-                //       </Form.Control>
-                //     </Form.Group>
-                //   );
-                // }
+                case 'Name': {
+                  const avatar = getCharacterAvatar();
+
+                  return (
+                    <>
+                      <Form.Group className="mb-3">
+                        <Form.Label>Character Name</Form.Label>
+                        <Form.Control
+                          type="text"
+                          value={character.Name || ''}
+                          onChange={e => {
+                            const newName = e.target.value;
+                            setCharacter({
+                              ...character,
+                              Name: newName,
+                            });
+                            if (setCharacterName) {
+                              setCharacterName(newName);
+                            }
+                          }}
+                        />
+                      </Form.Group>
+
+                      <div className="identity-modal-preview mb-3">
+                        <Avatar
+                          src={avatar.mode === 'image' ? avatar.image_url || undefined : undefined}
+                          className={`identity-avatar identity-avatar-preview ${avatar.shape === 'square' ? 'is-square' : ''}`}
+                          sx={{
+                            bgcolor: avatar.color,
+                            color: avatar.text_color,
+                            borderColor: avatar.frame_color || 'transparent',
+                          }}
+                        >
+                          {getInitials(character.Name)}
+                        </Avatar>
+
+                        <div className="identity-modal-preview-text">
+                          <div className="identity-preview-name">{character.Name || 'Unnamed Character'}</div>
+                          <div className="identity-preview-subtitle">Initials avatar</div>
+                        </div>
+                      </div>
+
+                      <Row className="g-3">
+                        <Col md={6}>
+                          <Form.Group>
+                            <Form.Label>Avatar Background</Form.Label>
+                            <Form.Control
+                              type="color"
+                              value={character.avatar_color || '#64748b'}
+                              onChange={e => setCharacter({
+                                ...character,
+                                avatar_color: e.target.value,
+                              })}
+                            />
+                          </Form.Group>
+                        </Col>
+
+                        <Col md={6}>
+                          <Form.Group>
+                            <Form.Label>Avatar Text Color</Form.Label>
+                            <Form.Control
+                              type="color"
+                              value={character.avatar_text_color || '#f8fafc'}
+                              onChange={e => setCharacter({
+                                ...character,
+                                avatar_text_color: e.target.value,
+                              })}
+                            />
+                          </Form.Group>
+                        </Col>
+
+                        <Col md={6}>
+                          <Form.Group>
+                            <Form.Label>Shape</Form.Label>
+                            <Form.Select
+                              value={character.avatar_shape || 'circle'}
+                              onChange={e => setCharacter({
+                                ...character,
+                                avatar_shape: e.target.value,
+                              })}
+                            >
+                              <option value="circle">Circle</option>
+                              <option value="square">Square</option>
+                            </Form.Select>
+                          </Form.Group>
+                        </Col>
+
+                        <Col md={6}>
+                          <Form.Group>
+                            <Form.Label>Mode</Form.Label>
+                            <Form.Select
+                              value={character.avatar_mode || 'initials'}
+                              onChange={e => setCharacter({
+                                ...character,
+                                avatar_mode: e.target.value,
+                              })}
+                            >
+                              <option value="initials">Initials</option>
+                              <option value="image" disabled={!character.avatar_image_url}>Uploaded Image</option>
+                            </Form.Select>
+                          </Form.Group>
+                        </Col>
+                      </Row>
+
+                      <Form.Group className="mb-3">
+                        <Form.Label>Avatar Image</Form.Label>
+                        <Form.Control
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          onChange={handleAvatarUpload}
+                        />
+                        {avatarUploading ? <div className="mt-2">Uploading avatar...</div> : null}
+                        {avatarUploadError ? <div className="text-danger mt-2">{avatarUploadError}</div> : null}
+                      </Form.Group>
+                    </>
+                  );
+                }
                 case 'Background':
                 case 'Personality Traits':
                 case 'PersonalityTraits':
                 case 'Bonds':
                 case 'Ideals':
-                case 'Flaws':
+                case 'Flaws': {
+                  const fieldKey = tileIdToCharacterKey(editingTileId);
+
                   return (
                     <Form.Group>
                       <Form.Label>{editingTileId}</Form.Label>
-                      <Form.Control as="textarea"
+                      <Form.Control
+                        as="textarea"
+                        rows={6}
                         placeholder={editingTileId}
-                        value={character[editingTileId]}
+                        value={character[fieldKey] ?? ''}
                         onChange={e => {
                           setCharacter({
                             ...character,
-                            [editingTileId]: e.target.value,
+                            [fieldKey]: e.target.value,
                           });
                         }}
                       />
                     </Form.Group>
                   );
+                }
                 case 'XP':
+                case 'ExperiencePoints':
                 case 'Current HP':
-                case 'Temporary HP': {
-                  // Map UI-facing tile ids to canonical character keys
-                  const map = {
-                    'XP': 'ExperiencePoints',
-                    'ExperiencePoints': 'ExperiencePoints',
-                    'Current HP': 'CurrentHitPoints',
-                    'Temporary HP': 'TemporaryHitPoints'
-                  };
-                  const fieldKey = map[editingTileId];
+                case 'Current Hit Points':
+                case 'CurrentHitPoints':
+                case 'Temporary HP':
+                case 'Temporary Hit Points':
+                case 'TemporaryHitPoints': {
+                  const fieldKey = tileIdToCharacterKey(editingTileId);
 
                   return (
                     <Row>
                       <label>{editingTileId}</label>
                       <input
                         type="number"
-                        value={character[fieldKey] ?? ''}
+                        value={character[fieldKey] ?? 0}
                         onChange={e => {
-                          // Store as number when possible
-                          const val = e.target.value === '' ? '' : parseInt(e.target.value, 10) || 0;
+                          const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0;
                           setCharacter({
                             ...character,
                             [fieldKey]: val,
                           });
-                        }} />
+                        }}
+                      />
                     </Row>
                   );
                 }
@@ -2079,28 +2466,28 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                       ))}
                     </Form.Control>
                   );
-                case 'Ability Scores':
-                  return Object.entries(character.abilityScores).map(([score, value]) => (
-                    <Row key={score}>
-                      <Col>
-                        <label>{score}</label>
-                      </Col>
-                      <Col>
-                        <input
-                        type="number"
-                        value={value}
-                        onChange={e => {
-                          setCharacter({
-                            ...character,
-                            abilityScores: {
-                              ...character.abilityScores,
-                              [score]: e.target.value,
-                            },
-                          });
-                        }}/>
-                      </Col>
-                    </Row>
-                  ));
+                case 'Ability Scores': {
+                  const entries = Object.entries(character?.abilityScores || {});
+
+                  return (
+                    <div className="ability-scores-grid">
+                      {entries.map(([ability, value]) => {
+                        const label = ability.charAt(0).toUpperCase() + ability.slice(1).toLowerCase();
+                        const modifier = getModifier(value);
+
+                        return (
+                          <div key={ability} className="ability-score-card">
+                            <div className="ability-score-label">{label}</div>
+                            <div className="ability-score-value">{value ?? 0}</div>
+                            <div className="ability-score-mod">
+                              {modifier >= 0 ? `+${modifier}` : modifier}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                }
                 case 'Skills':
                   return Object.entries(character.Skills).map(([skill, value]) => {
                     const isChecked = (character.Proficiencies || []).map(p => String(p).toLowerCase()).includes(String(skill).toLowerCase());
@@ -2360,15 +2747,22 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                   );
                 }
                 case "HitPointMax":
-                case 'Max HP':
+                case 'Max HP': {
+                  const conMod = getModifier(character.abilityScores.constitution);
+                  const safeLevel = Math.max(1, parseInt(character.Level, 10) || 1);
+                  const baseHp = parseInt(hitPoints.base, 10) || 0;
+                  const levelIncrement = parseInt(hitPoints.level_increment, 10) || 0;
+                  const extraLevels = Math.max(0, safeLevel - 1);
+
                   return (
                     <>
-                      <p>Total HP = base + (Character Level) * (Level Increment + Constitution Modifier)</p>
-                      <p>HP Per Level: {hitPoints.level_increment} + {getModifier(character.abilityScores.constitution)} (derived from {character.abilityScores.constitution} Constitution Score.)</p>
-                      <p>Total HP = {hitPoints.base} + {character.Level} * (HP increase per level)</p>
+                      <p>Total HP = base HP + Constitution modifier + additional level gains</p>
+                      <p>Level 1 HP: {baseHp} + {conMod}</p>
+                      <p>Additional Levels: {extraLevels} × ({levelIncrement} + {conMod})</p>
                       <p>Total HP = {character.HitPointMax}</p>
                     </>
                   );
+                }
                 case 'Proficiency Bonus':
                   return (
                     <p>Your proficiency bonus is determined by your character level. At level {character.Level}, your proficiency bonus is {character.proficiencyBonus}.</p>
