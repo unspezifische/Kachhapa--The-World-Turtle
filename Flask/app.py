@@ -259,14 +259,18 @@ class Character(db.Model):
         return parts[0][:2].upper()
 
     def get_avatar_props(self):
-        mode = self.avatar_mode or 'initials'
+        mode = (self.avatar_mode or 'initials').strip().lower()
 
         default_bg = self.avatar_color or '#64748b'
         default_text = self.avatar_text_color or '#f8fafc'
 
         image_url = self.avatar_thumb_url or self.avatar_image_url or None
+        full_image_url = self.avatar_image_url or None
 
-        if mode == 'upload' and image_url:
+        if mode == 'image' and image_url:
+            resolved_mode = 'image'
+        elif mode == 'upload' and image_url:
+            # Backward compatibility with any older saved values
             resolved_mode = 'image'
         elif mode == 'preset' and self.avatar_preset_key:
             resolved_mode = 'preset'
@@ -279,12 +283,15 @@ class Character(db.Model):
             'color': default_bg,
             'text_color': default_text,
             'image_url': image_url,
+            'full_image_url': full_image_url,
             'preset_key': self.avatar_preset_key,
             'shape': self.avatar_shape or 'circle',
             'frame_color': self.avatar_frame_color,
         }
 
     def to_dict(self):
+        avatar = self.get_avatar_props()
+
         return {
             'id': self.id,
             'icon': self.icon,
@@ -317,7 +324,17 @@ class Character(db.Model):
             'gp': self.gp,
             'pp': self.pp,
             'Feats': json.loads(self.Feats) if self.Feats else [],
-            'avatar': self.get_avatar_props(),
+
+            'avatar_mode': self.avatar_mode,
+            'avatar_color': self.avatar_color,
+            'avatar_text_color': self.avatar_text_color,
+            'avatar_image_url': self.avatar_image_url,
+            'avatar_thumb_url': self.avatar_thumb_url,
+            'avatar_preset_key': self.avatar_preset_key,
+            'avatar_shape': self.avatar_shape,
+            'avatar_frame_color': self.avatar_frame_color,
+
+            'avatar': avatar,
         }
 
 class Campaign(db.Model):
@@ -1841,6 +1858,26 @@ def update_character():
 
         character.Proficiencies = json.dumps(cleaned_profs)
 
+
+        if data.get('avatar_mode') is not None:
+            character.avatar_mode = data.get('avatar_mode')
+
+        if data.get('avatar_color') is not None:
+            character.avatar_color = data.get('avatar_color')
+
+        if data.get('avatar_text_color') is not None:
+            character.avatar_text_color = data.get('avatar_text_color')
+
+        if data.get('avatar_preset_key') is not None:
+            character.avatar_preset_key = data.get('avatar_preset_key')
+
+        if data.get('avatar_shape') is not None:
+            character.avatar_shape = data.get('avatar_shape')
+
+        # allow explicit null
+        if 'avatar_frame_color' in data:
+            character.avatar_frame_color = data.get('avatar_frame_color')
+
         db.session.commit()
         app.logger.debug("Updated character: %s", character.to_dict())
         return jsonify(character.to_dict()), 200
@@ -1902,6 +1939,7 @@ def upload_character_avatar():
     character.avatar_thumb_url = thumb_url
 
     db.session.commit()
+
 
     return jsonify({
         "message": "Avatar uploaded successfully.",
@@ -4422,26 +4460,22 @@ def emit_active_users(campaign_id, to_sid=None):
     )
 
     active_users_query = (
-        db.session.query(User.id, User.username, Character.character_name)
+        db.session.query(User, Character)
         .join(stmt, stmt.c.userID == User.id)
         .join(Character, Character.id == stmt.c.characterID)
         .filter(User.is_online == True)
     )
     active_users = active_users_query.all()
 
-    active_user_info = []
-    for user in active_users:
-        character = Character.query.filter_by(
-            userID=user.id,
-            campaignID=campaign_id
-        ).first()
-
-        active_user_info.append({
+    active_user_info = [
+        {
             'username': user.username,
-            'character_name': user.character_name,
+            'character_name': character.character_name,
             'userID': user.id,
-            'avatar': character.get_avatar_props() if character else None,
-        })
+            'avatar': character.get_avatar_props(),
+        }
+        for user, character in active_users
+    ]
 
     if to_sid is False:
         target = f"campaign:{campaign_id}"

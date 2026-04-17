@@ -116,12 +116,24 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   const [avatarUploadError, setAvatarUploadError] = useState('');
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarUploadStatus, setAvatarUploadStatus] = useState('');
+  const [avatarPreviewVersion, setAvatarPreviewVersion] = useState(0);
 
   const handleAvatarUpload = async (event) => {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      console.log('[AvatarUpload] No file selected.');
+      return;
+    }
+
+    console.log('[AvatarUpload] Selected file:', {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    });
 
     setAvatarUploadError('');
+    setAvatarUploadStatus('Uploading avatar...');
     setAvatarUploading(true);
 
     try {
@@ -132,21 +144,32 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
         headers: {
           Authorization: headers.Authorization,
           CampaignID: headers.campaignID,
-          'Content-Type': 'multipart/form-data',
         },
       });
+
+      const cacheBust = Date.now();
 
       setCharacter((prev) => ({
         ...prev,
         avatar_mode: response.data.avatar_mode ?? 'image',
-        avatar_image_url: response.data.avatar_image_url ?? null,
-        avatar_thumb_url: response.data.avatar_thumb_url ?? null,
+        avatar_image_url: response.data.avatar_image_url
+          ? `${response.data.avatar_image_url}?t=${cacheBust}`
+          : null,
+        avatar_thumb_url: response.data.avatar_thumb_url
+          ? `${response.data.avatar_thumb_url}?t=${cacheBust}`
+          : null,
       }));
+
+      setAvatarPreviewVersion(cacheBust);
+      setAvatarUploadStatus('Avatar uploaded successfully.');
     } catch (error) {
-      console.error('Avatar upload failed:', error);
+      console.error('[AvatarUpload] Upload failed:', error);
+      console.error('[AvatarUpload] Response data:', error?.response?.data);
+
       setAvatarUploadError(
         error?.response?.data?.error || 'Failed to upload avatar.'
       );
+      setAvatarUploadStatus('Upload failed.');
     } finally {
       setAvatarUploading(false);
       event.target.value = '';
@@ -195,15 +218,16 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
     const cleaned = {
       ...data,
-      avatar_mode: data.avatar_mode ?? 'initials',
-      avatar_color: data.avatar_color ?? '#64748b',
-      avatar_text_color: data.avatar_text_color ?? '#f8fafc',
-      avatar_image_url: data.avatar_image_url ?? null,
-      avatar_thumb_url: data.avatar_thumb_url ?? null,
-      avatar_preset_key: data.avatar_preset_key ?? null,
-      avatar_shape: data.avatar_shape ?? 'circle',
-      avatar_frame_color: data.avatar_frame_color ?? null,
+      avatar_mode: data.avatar_mode ?? data.avatar?.mode ?? 'initials',
+      avatar_color: data.avatar_color ?? data.avatar?.color ?? '#64748b',
+      avatar_text_color: data.avatar_text_color ?? data.avatar?.text_color ?? '#f8fafc',
+      avatar_image_url: data.avatar_image_url ?? data.avatar?.full_image_url ?? data.avatar?.image_url ?? null,
+      avatar_thumb_url: data.avatar_thumb_url ?? data.avatar?.image_url ?? null,
+      avatar_preset_key: data.avatar_preset_key ?? data.avatar?.preset_key ?? null,
+      avatar_shape: data.avatar_shape ?? data.avatar?.shape ?? 'circle',
+      avatar_frame_color: data.avatar_frame_color ?? data.avatar?.frame_color ?? null,
     };
+
     delete cleaned.strength;
     delete cleaned.Strength;
     delete cleaned.dexterity;
@@ -271,7 +295,8 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
       initials: getInitials(character.Name),
       color: character.avatar_color || '#64748b',
       text_color: character.avatar_text_color || '#f8fafc',
-      image_url: character.avatar_image_url || null,
+      image_url: character.avatar_thumb_url || character.avatar_image_url || null,
+      full_image_url: character.avatar_image_url || null,
       preset_key: character.avatar_preset_key || null,
       shape: character.avatar_shape || 'circle',
       frame_color: character.avatar_frame_color || null,
@@ -749,16 +774,16 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   useEffect(() => {
     // If the page was opened with a specific characterName, load it explicitly.
     // Otherwise fall back to the backend's "current character" resolution.
-    console.log(`[CharacterSheet] Effect triggered - characterName="${characterName}", headers.campaignID="${headers?.campaignID}"`);
+    console.debug(`[CharacterSheet] Effect triggered - characterName="${characterName}", headers.campaignID="${headers?.campaignID}"`);
     
     if (characterName) {
-      console.log(`[CharacterSheet] Loading character by name: ${characterName}`);
+      console.debug(`[CharacterSheet] Loading character by name: ${characterName}`);
       loadCharacter(characterName);
       return;
     }
 
-    console.log("character.Name:", character.Name);
-    console.log('[CharacterSheet] Fetching current character from /api/character');
+    console.debug("character.Name:", character.Name);
+    console.debug('[CharacterSheet] Fetching current character from /api/character');
     
     // Filter out undefined/null headers to prevent axios errors
     const cleanHeaders = Object.fromEntries(
@@ -767,14 +792,14 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
     
     axios.get(`/api/character`, { headers: cleanHeaders })
       .then(response => {
-        console.log('[CharacterSheet] /api/character response:', response.data);
+        console.debug('[CharacterSheet] /api/character response:', response.data);
         const normalized = normalizeCharacterPayload(response?.data, characterName || '');
         if (!normalized) {
           console.warn('[CharacterSheet] normalizeCharacterPayload returned null');
           return;
         }
         const { cleaned, resolvedName, abilityScores, Wealth, Proficiencies, Subclass, id } = normalized;
-        console.log('[CharacterSheet] Normalized payload:', { resolvedName, id, Class: cleaned?.Class, Race: cleaned?.Race });
+        console.debug('[CharacterSheet] Normalized payload:', { resolvedName, id, Class: cleaned?.Class, Race: cleaned?.Race });
 
         setCharacter(prevState => ({
           ...prevState,
@@ -1654,6 +1679,10 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
             <Avatar
               src={avatar.mode === 'image' ? avatar.image_url || undefined : undefined}
               className={`identity-avatar ${avatar.shape === 'square' ? 'is-square' : ''}`}
+              imgProps={{
+                onLoad: () => console.log('[AvatarTile] Image loaded:', avatar.image_url),
+                onError: (e) => console.error('[AvatarTile] Image failed to load:', avatar.image_url, e),
+              }}
               sx={{
                 bgcolor: avatar.color,
                 color: avatar.text_color,
@@ -2247,8 +2276,12 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
                       <div className="identity-modal-preview mb-3">
                         <Avatar
-                          src={avatar.mode === 'image' ? avatar.image_url || undefined : undefined}
+                          src={avatar.mode === 'image' ? avatar.full_image_url || avatar.image_url : avatar.image_url}
                           className={`identity-avatar identity-avatar-preview ${avatar.shape === 'square' ? 'is-square' : ''}`}
+                          imgProps={{
+                            onLoad: () => console.log('[AvatarModal] Image loaded:', avatar.image_url),
+                            onError: (e) => console.error('[AvatarModal] Image failed to load:', avatar.image_url, e),
+                          }}
                           sx={{
                             bgcolor: avatar.color,
                             color: avatar.text_color,
@@ -2257,6 +2290,8 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                         >
                           {getInitials(character.Name)}
                         </Avatar>
+
+                        {avatarUploadStatus ? <div className="mt-2">{avatarUploadStatus}</div> : null}
 
                         <div className="identity-modal-preview-text">
                           <div className="identity-preview-name">{character.Name || 'Unnamed Character'}</div>

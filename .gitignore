@@ -1,3 +1,5 @@
+.DS_Store
+
 Flask/static/
 Flask/buildDB.py
 Flask/campaign.py

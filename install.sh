@@ -228,12 +228,17 @@ echo "==> Configure dnsmasq DHCP + DNS"
 mkdir -p /etc/dnsmasq.d
 cat > /etc/dnsmasq.d/kachhapa-ap.conf <<EOF
 interface=\$LAN_IF
-bind-interfaces
+listen-address=127.0.0.1,\$AP_IP
+bind-dynamic
+
 dhcp-range=\$DHCP_START,\$DHCP_END,255.255.255.0,12h
+
 domain-needed
 bogus-priv
+
 dhcp-option=option:router,\$AP_IP
 dhcp-option=option:dns-server,\$AP_IP
+
 address=/raspberrypi.local/\$AP_IP
 address=/app.raspberrypi.local/\$AP_IP
 address=/tools.raspberrypi.local/\$AP_IP
@@ -247,9 +252,9 @@ else
   echo "no-resolv" >> /etc/dnsmasq.conf
 fi
 
-WAN_GW=$(ip route | awk '/default/ {print $3; exit}')
-if [ -n "$WAN_GW" ]; then
-  grep -q "^server=$WAN_GW$" /etc/dnsmasq.conf 2>/dev/null || echo "server=$WAN_GW" >> /etc/dnsmasq.conf
+WAN_GW=\$(ip route | awk '/default/ {print \$3; exit}')
+if [ -n "\$WAN_GW" ]; then
+  grep -q "^server=\$WAN_GW\$" /etc/dnsmasq.conf 2>/dev/null || echo "server=\$WAN_GW" >> /etc/dnsmasq.conf
 fi
 grep -q "^server=8.8.8.8$" /etc/dnsmasq.conf 2>/dev/null || echo "server=8.8.8.8" >> /etc/dnsmasq.conf
 grep -q "^server=1.1.1.1$" /etc/dnsmasq.conf 2>/dev/null || echo "server=1.1.1.1" >> /etc/dnsmasq.conf
@@ -298,9 +303,9 @@ echo "==> Configure NAT and forwarding with iptables"
 iptables -t nat -F POSTROUTING
 iptables -F FORWARD
 
-iptables -t nat -A POSTROUTING -s 10.42.0.0/24 -o "$WAN_IF" -j MASQUERADE
-iptables -A FORWARD -i "$WAN_IF" -o "$LAN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-iptables -A FORWARD -i "$LAN_IF" -o "$WAN_IF" -j ACCEPT
+iptables -t nat -A POSTROUTING -s 10.42.0.0/24 -o "\$WAN_IF" -j MASQUERADE
+iptables -A FORWARD -i "\$WAN_IF" -o "\$LAN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -i "\$LAN_IF" -o "\$WAN_IF" -j ACCEPT
 
 netfilter-persistent save || true
 
@@ -316,7 +321,7 @@ systemctl restart dnsmasq
 systemctl restart hostapd
 
 echo "==> Final AP status"
-ip -brief addr show "$LAN_IF" || true
+ip -brief addr show "\$LAN_IF" || true
 systemctl --no-pager --full status hostapd | head -n 20 || true
 systemctl --no-pager --full status dnsmasq | head -n 20 || true
 iptables -t nat -L -n -v || true
