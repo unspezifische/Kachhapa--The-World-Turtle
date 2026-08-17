@@ -16,7 +16,7 @@ def resolve_system_from_request():
         if campaign:
             return campaign.system, campaign
     return None, None
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask import render_template ## For rendering wiki pages
 from flask import redirect, url_for
 
@@ -28,7 +28,7 @@ from flask_migrate import upgrade
 
 ## For database stuff
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select, Numeric, text, func
+from sqlalchemy import select, Numeric, text, func, UniqueConstraint
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
@@ -59,6 +59,13 @@ import json ## For sending JSON data
 
 import logging ## For debug logging
 import traceback
+
+from settlement_simulation import calculate_lamplighter_state
+from travel_planning import estimate_travel_options
+from economy_simulation import commodity_price, simulate_business_day, simulate_commodity_day
+from workforce_simulation import rebalance_workforce, choose_noble_investment
+from module_templates import campaign_module_template, module_catalog, module_definition
+from settlement_generation import BIOMES, GOVERNMENTS, RESOURCES, SETTLEMENT_PRESETS, generate_settlement
 
 import markdown
 from urllib.parse import unquote
@@ -121,7 +128,7 @@ RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@127.0.0.1:5672//")
 
 socketio = SocketIO(
     app,
-    async_mode="gevent",
+    async_mode=os.getenv("SOCKETIO_ASYNC_MODE", "gevent"),
     message_queue=RABBIT_URL,
     cors_allowed_origins="*",
     logger=True,
@@ -343,6 +350,7 @@ class Campaign(db.Model):
     system = db.Column(db.String(50), nullable=False)    # e.g., 'D&D 5e', 'pathfinder'
     icon = db.Column(db.String(120))  # icon filepath or name
     description = db.Column(db.Text)
+    module = db.Column(db.String(160))
     calendars = db.relationship('Calendar', backref='campaign', lazy=True)
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     dm_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -356,6 +364,7 @@ class Campaign(db.Model):
             'name': self.name,
             'system': self.system,
             'description': self.description,
+            'module': self.module,
             'icon': self.icon,
             'owner': self.owner.username if self.owner else None,
             'owner_id': self.owner.id if self.owner else None,
@@ -363,14 +372,421 @@ class Campaign(db.Model):
             'dm_id': self.dm.id if self.dm else None,
             'scribes': self.scribes,
         }
+
+
+class CampaignModuleInstallation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    module_key = db.Column(db.String(120), nullable=False)
+    module_name = db.Column(db.String(160), nullable=False)
+    setting_key = db.Column(db.String(80))
+    starting_year = db.Column(db.Integer)
+    installed_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    settlement_strategy = db.Column(db.String(30), nullable=False, default='merge')
+    calendar_strategy = db.Column(db.String(30), nullable=False, default='keep_current')
+    installed_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint('campaign_id', 'module_key', name='uq_campaign_module_installation'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'campaign_id': self.campaign_id,
+            'module_key': self.module_key,
+            'module_name': self.module_name,
+            'setting_key': self.setting_key,
+            'starting_year': self.starting_year,
+            'settlement_strategy': self.settlement_strategy,
+            'calendar_strategy': self.calendar_strategy,
+            'installed_by_id': self.installed_by_id,
+            'installed_at': self.installed_at.isoformat() if self.installed_at else None,
+        }
+
+
+class LamplighterRoute(db.Model):
+    """An ordered street-lighting route in campaign world coordinates (feet)."""
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    evening_start_minute = db.Column(db.Integer, nullable=False, default=1080)
+    morning_start_minute = db.Column(db.Integer, nullable=False, default=300)
+    minutes_per_stop = db.Column(db.Integer, nullable=False, default=8)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+
+
+class StreetLamp(db.Model):
+    """A persistent lamp state plus its position in Kachhapa's Cartesian CRS."""
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    route_id = db.Column(db.Integer, db.ForeignKey('lamplighter_route.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    x = db.Column(db.Float, nullable=False)
+    y = db.Column(db.Float, nullable=False)
+    elevation = db.Column(db.Float, nullable=False, default=0)
+    route_order = db.Column(db.Integer, nullable=False)
+    lit = db.Column(db.Boolean, nullable=False, default=False)
+    fuel_remaining = db.Column(db.Float, nullable=True)
+
+    __table_args__ = (UniqueConstraint('route_id', 'route_order', name='uq_street_lamp_route_order'),)
+
+
+class PartyMapPosition(db.Model):
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), primary_key=True)
+    map_key = db.Column(db.String(120), nullable=False, default='pinewater')
+    x = db.Column(db.Float, nullable=False, default=0)
+    y = db.Column(db.Float, nullable=False, default=0)
+    elevation = db.Column(db.Float, nullable=False, default=0)
+    water_access = db.Column(db.Boolean, nullable=False, default=False)
+    road_access = db.Column(db.Boolean, nullable=False, default=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {'campaign_id': self.campaign_id, 'map_key': self.map_key, 'x': self.x, 'y': self.y, 'elevation': self.elevation,
+                'water_access': self.water_access, 'road_access': self.road_access}
+
+
+class MapPointOfInterest(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    map_key = db.Column(db.String(120), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    point_type = db.Column(db.String(50), nullable=False, default='landmark')
+    x = db.Column(db.Float, nullable=False)
+    y = db.Column(db.Float, nullable=False)
+    elevation = db.Column(db.Float, nullable=False, default=0)
+    water_access = db.Column(db.Boolean, nullable=False, default=False)
+    road_access = db.Column(db.Boolean, nullable=False, default=True)
+
+    def to_dict(self):
+        return {'id': self.id, 'campaign_id': self.campaign_id, 'map_key': self.map_key, 'name': self.name,
+                'point_type': self.point_type, 'x': self.x, 'y': self.y, 'elevation': self.elevation,
+                'water_access': self.water_access, 'road_access': self.road_access}
+
+
+def seed_campaign_world(campaign):
+    """Instantiate a fresh settlement from the campaign's selected module."""
+    template = campaign_module_template(campaign.module, MEDIA_ROOT)
+    if not template:
+        return None
+
+    location = WorldAtlasLocation(
+        campaign_id=campaign.id,
+        name=template['name'],
+        map_key=template['map_key'],
+        settlement_type=template['settlement_type'],
+        notes=template.get('notes'),
+        is_primary=True,
+        terrain_strokes=template.get('terrain_strokes', []),
+        roads=template.get('roads', []),
+        water_bodies=template.get('water_bodies', []),
+        buildings=template.get('buildings', []),
+        reference_layers=template.get('reference_layers', []),
+        environment=template.get('environment', {}),
+    )
+    db.session.add(location)
+    db.session.flush()
+
+    for point in template.get('points_of_interest', []):
+        db.session.add(MapPointOfInterest(
+            campaign_id=campaign.id,
+            map_key=location.map_key,
+            name=point['name'],
+            point_type=point.get('point_type', 'landmark'),
+            x=point['x'],
+            y=point['y'],
+            elevation=point.get('elevation', 0),
+            water_access=point.get('water_access', False),
+            road_access=point.get('road_access', True),
+        ))
+
+    party = template.get('party_position')
+    if party:
+        db.session.add(PartyMapPosition(
+            campaign_id=campaign.id,
+            map_key=location.map_key,
+            x=party['x'],
+            y=party['y'],
+            elevation=party.get('elevation', 0),
+            water_access=party.get('water_access', False),
+            road_access=party.get('road_access', True),
+        ))
+    return location
+
+
+class SettlementMapDesign(db.Model):
+    """Campaign-scoped authoring state, stored in world feet rather than render units."""
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), primary_key=True)
+    terrain_strokes = db.Column(db.JSON, nullable=False, default=list)
+    roads = db.Column(db.JSON, nullable=False, default=list)
+    buildings = db.Column(db.JSON, nullable=False, default=list)
+    reference_layers = db.Column(db.JSON, nullable=False, default=list)
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            'campaign_id': self.campaign_id,
+            'coordinate_unit': 'feet',
+            'terrain_strokes': self.terrain_strokes or [],
+            'roads': self.roads or [],
+            'buildings': self.buildings or [],
+            'reference_layers': self.reference_layers or [],
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class WorldAtlasLocation(db.Model):
+    """A place on a campaign atlas with its own independently editable map."""
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False, default='New Settlement')
+    location_type = db.Column(db.String(30), nullable=False, default='settlement')
+    settlement_type = db.Column(db.String(30), nullable=False, default='town')
+    status = db.Column(db.String(20), nullable=False, default='active')
+    population = db.Column(db.Integer)
+    notes = db.Column(db.Text)
+    destroyed_at = db.Column(db.DateTime)
+    map_key = db.Column(db.String(120), nullable=False)
+    atlas_x = db.Column(db.Float)
+    atlas_y = db.Column(db.Float)
+    is_primary = db.Column(db.Boolean, nullable=False, default=False)
+    terrain_strokes = db.Column(db.JSON, nullable=False, default=list)
+    roads = db.Column(db.JSON, nullable=False, default=list)
+    water_bodies = db.Column(db.JSON, nullable=False, default=list)
+    buildings = db.Column(db.JSON, nullable=False, default=list)
+    reference_layers = db.Column(db.JSON, nullable=False, default=list)
+    environment = db.Column(db.JSON, nullable=False, default=dict)
+    generation_config = db.Column(db.JSON, nullable=False, default=dict)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint('campaign_id', 'map_key', name='uq_world_atlas_location_map_key'),)
+
+    def atlas_dict(self):
+        return {
+            'id': self.id, 'campaign_id': self.campaign_id, 'name': self.name,
+            'location_type': self.location_type, 'map_key': self.map_key,
+            'atlas_x': self.atlas_x, 'atlas_y': self.atlas_y, 'is_primary': self.is_primary,
+            'settlement_type': self.settlement_type, 'status': self.status,
+            'population': self.population, 'notes': self.notes or '',
+            'environment': self.environment or {},
+            'generation_config': self.generation_config or {},
+            'placed': self.atlas_x is not None and self.atlas_y is not None,
+            'destroyed_at': self.destroyed_at.isoformat() if self.destroyed_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def to_map_dict(self):
+        return {
+            **self.atlas_dict(), 'settlement_id': self.id, 'coordinate_unit': 'feet',
+            'terrain_strokes': self.terrain_strokes or [], 'roads': self.roads or [],
+            'water_bodies': self.water_bodies or [], 'buildings': self.buildings or [],
+            'reference_layers': self.reference_layers or [],
+        }
+class SettlementEconomyState(db.Model):
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), primary_key=True)
+    day_index = db.Column(db.Integer, nullable=False, default=0)
+
+
+class CommodityMarket(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    commodity_key = db.Column(db.String(80), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    base_price_cp = db.Column(db.Integer, nullable=False)
+    current_price_cp = db.Column(db.Integer, nullable=False)
+    stock = db.Column(db.Float, nullable=False)
+    target_stock = db.Column(db.Float, nullable=False)
+    daily_demand = db.Column(db.Float, nullable=False)
+    daily_supply = db.Column(db.Float, nullable=False)
+    import_threshold = db.Column(db.Float, nullable=False, default=.3)
+    import_quantity = db.Column(db.Float, nullable=False)
+    elasticity = db.Column(db.Float, nullable=False, default=.65)
+    last_imported = db.Column(db.Float, nullable=False, default=0)
+
+    __table_args__ = (UniqueConstraint('campaign_id', 'commodity_key', name='uq_commodity_market_campaign_key'),)
+
+    def to_dict(self):
+        return {'id':self.id,'commodity_key':self.commodity_key,'name':self.name,'base_price_cp':self.base_price_cp,
+                'current_price_cp':self.current_price_cp,'stock':round(self.stock,2),'target_stock':self.target_stock,
+                'price_index':round(self.current_price_cp / self.base_price_cp, 2),'last_imported':self.last_imported}
+
+
+class SettlementBusiness(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    business_type = db.Column(db.String(50), nullable=False)
+    x = db.Column(db.Float, nullable=False)
+    y = db.Column(db.Float, nullable=False)
+    foot_traffic = db.Column(db.Float, nullable=False, default=1)
+    quality = db.Column(db.Float, nullable=False, default=1)
+    accessibility = db.Column(db.Float, nullable=False, default=1)
+    cash_reserves_cp = db.Column(db.Integer, nullable=False, default=0)
+    daily_capacity = db.Column(db.Integer, nullable=False, default=100)
+    average_sale_cp = db.Column(db.Integer, nullable=False, default=40)
+    cost_of_goods_rate = db.Column(db.Float, nullable=False, default=.4)
+    daily_overhead_cp = db.Column(db.Integer, nullable=False, default=500)
+    closure_grace_days = db.Column(db.Integer, nullable=False, default=3)
+    slump_days = db.Column(db.Integer, nullable=False, default=0)
+    player_owned = db.Column(db.Boolean, nullable=False, default=False)
+    closed = db.Column(db.Boolean, nullable=False, default=False)
+
+    def simulation_dict(self):
+        return {column:getattr(self,column) for column in ('id','x','y','foot_traffic','quality','accessibility','cash_reserves_cp',
+                'daily_capacity','average_sale_cp','cost_of_goods_rate','daily_overhead_cp','closure_grace_days','slump_days','closed')}
+
+    def to_dict(self):
+        return {'id':self.id,'name':self.name,'business_type':self.business_type,'x':self.x,'y':self.y,
+                'foot_traffic':self.foot_traffic,'quality':self.quality,'accessibility':self.accessibility,
+                'cash_reserves_cp':self.cash_reserves_cp,'player_owned':self.player_owned,'closed':self.closed,'slump_days':self.slump_days}
+
+
+class BusinessDailyLedger(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    business_id = db.Column(db.Integer, db.ForeignKey('settlement_business.id', ondelete='CASCADE'), nullable=False, index=True)
+    day_index = db.Column(db.Integer, nullable=False)
+    customers = db.Column(db.Integer, nullable=False)
+    revenue_cp = db.Column(db.Integer, nullable=False)
+    costs_cp = db.Column(db.Integer, nullable=False)
+    profit_cp = db.Column(db.Integer, nullable=False)
+    cash_reserves_cp = db.Column(db.Integer, nullable=False)
+    market_share = db.Column(db.Float, nullable=True)
+
+    __table_args__ = (UniqueConstraint('business_id', 'day_index', name='uq_business_ledger_day'),)
+
+    def to_dict(self):
+        return {'day_index':self.day_index,'customers':self.customers,'revenue_cp':self.revenue_cp,
+                'costs_cp':self.costs_cp,'profit_cp':self.profit_cp,'cash_reserves_cp':self.cash_reserves_cp,
+                'market_share':self.market_share}
+
+
+class OccupationDefinition(db.Model):
+    id=db.Column(db.Integer,primary_key=True)
+    campaign_id=db.Column(db.Integer,db.ForeignKey('campaign.id'),nullable=False,index=True)
+    occupation_key=db.Column(db.String(80),nullable=False)
+    name=db.Column(db.String(120),nullable=False)
+    ability_weights=db.Column(db.JSON,nullable=False,default=dict)
+    target_workers=db.Column(db.Integer,nullable=False,default=0)
+    minimum_suitability=db.Column(db.Float,nullable=False,default=.42)
+    base_wage_cp=db.Column(db.Integer,nullable=False,default=20)
+    produces_commodity_key=db.Column(db.String(80),nullable=True)
+    __table_args__=(UniqueConstraint('campaign_id','occupation_key',name='uq_occupation_campaign_key'),)
+    def simulation_dict(self): return {'key':self.occupation_key,'ability_weights':self.ability_weights,'target_workers':self.target_workers,'minimum_suitability':self.minimum_suitability}
+    def to_dict(self): return {'id':self.id,'key':self.occupation_key,'name':self.name,'ability_weights':self.ability_weights,'target_workers':self.target_workers,'base_wage_cp':self.base_wage_cp,'produces_commodity_key':self.produces_commodity_key}
+
+
+class NobleFamily(db.Model):
+    id=db.Column(db.Integer,primary_key=True)
+    campaign_id=db.Column(db.Integer,db.ForeignKey('campaign.id'),nullable=False,index=True)
+    name=db.Column(db.String(120),nullable=False)
+    wealth_cp=db.Column(db.Integer,nullable=False,default=0)
+    investment_risk=db.Column(db.Float,nullable=False,default=.5)
+    active=db.Column(db.Boolean,nullable=False,default=True)
+    def to_dict(self): return {'id':self.id,'name':self.name,'wealth_cp':self.wealth_cp,'investment_risk':self.investment_risk,'active':self.active}
+
+
+class SettlementEconomicAgent(db.Model):
+    id=db.Column(db.Integer,primary_key=True)
+    campaign_id=db.Column(db.Integer,db.ForeignKey('campaign.id'),nullable=False,index=True)
+    npc_id=db.Column(db.Integer,db.ForeignKey('npc.id'),nullable=True,unique=True)
+    name=db.Column(db.String(120),nullable=False)
+    strength=db.Column(db.Integer,nullable=False,default=10);dexterity=db.Column(db.Integer,nullable=False,default=10)
+    constitution=db.Column(db.Integer,nullable=False,default=10);intelligence=db.Column(db.Integer,nullable=False,default=10)
+    wisdom=db.Column(db.Integer,nullable=False,default=10);charisma=db.Column(db.Integer,nullable=False,default=10)
+    economic_autonomy=db.Column(db.Boolean,nullable=False,default=True)
+    story_locked=db.Column(db.Boolean,nullable=False,default=False)
+    simulation_generated=db.Column(db.Boolean,nullable=False,default=True)
+    social_class=db.Column(db.String(30),nullable=False,default='commoner')
+    occupation_key=db.Column(db.String(80),nullable=True)
+    employer_business_id=db.Column(db.Integer,db.ForeignKey('settlement_business.id'),nullable=True)
+    noble_family_id=db.Column(db.Integer,db.ForeignKey('noble_family.id'),nullable=True)
+    wealth_cp=db.Column(db.Integer,nullable=False,default=0)
+    career_cooldown_until_day=db.Column(db.Integer,nullable=False,default=0)
+    def simulation_dict(self):
+        return {key:getattr(self,key) for key in ('id','strength','dexterity','constitution','intelligence','wisdom','charisma','economic_autonomy','story_locked','social_class','occupation_key','career_cooldown_until_day')}
+    def to_dict(self): return {'id':self.id,'npc_id':self.npc_id,'name':self.name,'abilities':{key:getattr(self,key) for key in ('strength','dexterity','constitution','intelligence','wisdom','charisma')},'economic_autonomy':self.economic_autonomy,'story_locked':self.story_locked,'simulation_generated':self.simulation_generated,'social_class':self.social_class,'occupation_key':self.occupation_key,'employer_business_id':self.employer_business_id,'noble_family_id':self.noble_family_id,'wealth_cp':self.wealth_cp,'career_cooldown_until_day':self.career_cooldown_until_day}
+
+
+class EmploymentHistory(db.Model):
+    id=db.Column(db.Integer,primary_key=True);agent_id=db.Column(db.Integer,db.ForeignKey('settlement_economic_agent.id',ondelete='CASCADE'),nullable=False,index=True)
+    day_index=db.Column(db.Integer,nullable=False);from_occupation=db.Column(db.String(80));to_occupation=db.Column(db.String(80));reason=db.Column(db.String(120),nullable=False)
+
+
+class NobleInvestment(db.Model):
+    id=db.Column(db.Integer,primary_key=True);family_id=db.Column(db.Integer,db.ForeignKey('noble_family.id',ondelete='CASCADE'),nullable=False,index=True)
+    business_id=db.Column(db.Integer,db.ForeignKey('settlement_business.id',ondelete='CASCADE'),nullable=False,index=True)
+    principal_cp=db.Column(db.Integer,nullable=False,default=0);total_dividends_cp=db.Column(db.Integer,nullable=False,default=0)
+    __table_args__=(UniqueConstraint('family_id','business_id',name='uq_noble_family_business_investment'),)
+    def to_dict(self): return {'id':self.id,'family_id':self.family_id,'business_id':self.business_id,'principal_cp':self.principal_cp,'total_dividends_cp':self.total_dividends_cp}
+
+
+class NobleDecisionLedger(db.Model):
+    id=db.Column(db.Integer,primary_key=True);family_id=db.Column(db.Integer,db.ForeignKey('noble_family.id',ondelete='CASCADE'),nullable=False,index=True)
+    day_index=db.Column(db.Integer,nullable=False);decision_type=db.Column(db.String(50),nullable=False);business_id=db.Column(db.Integer,db.ForeignKey('settlement_business.id'),nullable=True)
+    amount_cp=db.Column(db.Integer,nullable=False,default=0);summary=db.Column(db.Text,nullable=False)
   
 class Page(db.Model):
+    __table_args__ = (
+        UniqueConstraint('wiki_id', 'title', name='uq_page_wiki_id_title'),
+    )
+
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     title = db.Column(db.String(80), nullable=False)
     content = db.Column(db.Text, nullable=True)
     wiki_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
-    wiki = db.relationship('Campaign', backref=db.backref('pages', lazy=True))
+    wiki = db.relationship(
+        'Campaign',
+        backref=db.backref('pages', lazy=True, cascade='all, delete-orphan')
+    )
     tsv = db.Column(TSVECTOR)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'content': self.content,
+            'wiki_id': self.wiki_id,
+        }
+
+
+def seed_module_wiki_pages(campaign, module_name, existing_titles=None):
+    """Add a module's non-main wiki pages without duplicating campaign titles."""
+    if existing_titles is None:
+        existing_titles = {
+            page.title for page in Page.query.filter_by(wiki_id=campaign.id).all()
+        } if campaign.id else set()
+    seeded_titles = set(existing_titles)
+    added = 0
+    module_pages = GameElement.query.filter_by(module=module_name, element_type='wiki').all()
+    for module_page in module_pages:
+        page_data = module_page.data or {}
+        title = page_data.get('title') or module_page.name
+        content = page_data.get('content', '')
+        normalized_title = title.strip() if isinstance(title, str) else ''
+        if not normalized_title or normalized_title == 'Main Page' or normalized_title in seeded_titles:
+            continue
+        seeded_titles.add(normalized_title)
+        db.session.add(Page(title=normalized_title, content=content, wiki=campaign))
+        added += 1
+    return added
+
+
+def seed_campaign_wiki(campaign, module_name=None):
+    """Attach initial module wiki pages and exactly one Main Page."""
+    if module_name:
+        seed_module_wiki_pages(campaign, module_name, existing_titles=set())
+        main_page_content = f"This campaign is using the {module_name} module."
+    else:
+        main_page_content = campaign.description or "Welcome to the campaign!"
+
+    db.session.add(Page(
+        title='Main Page',
+        content=main_page_content,
+        wiki=campaign
+    ))
+
 
 class Revisions(db.Model):
     revision_id = db.Column(db.Integer, primary_key=True)
@@ -756,14 +1172,110 @@ class Document(db.Model):
     mimetype = db.Column(db.String(50), nullable=False)  # Store the MIME type
     campaignID = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)  # Add campaignID column
 
-class LootBox(db.Model):
+
+class SoundAsset(db.Model):
+    __tablename__ = 'sound_asset'
+
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80), nullable=False) ## Which lootbox the item is in
+    name = db.Column(db.String(120), nullable=False)
+    filename = db.Column(db.String(255), nullable=False, unique=True)
+    original_filename = db.Column(db.String(255), nullable=False)
+    mimetype = db.Column(db.String(100), nullable=False)
+    category = db.Column(db.String(20), nullable=False, default='music', server_default='music')
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    uploaded_by = db.relationship('User', backref='sound_assets')
 
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
+            'category': self.category,
+            'mimetype': self.mimetype,
+            'originalFilename': self.original_filename,
+            'url': f'/media/sounds/{self.filename}',
+            'uploadedBy': self.uploaded_by.username if self.uploaded_by else None,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SoundPlaylist(db.Model):
+    __tablename__ = 'sound_playlist'
+
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    shuffle = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    tracks = db.relationship(
+        'SoundPlaylistTrack',
+        cascade='all, delete-orphan',
+        order_by='SoundPlaylistTrack.position',
+        back_populates='playlist',
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'shuffle': self.shuffle,
+            'tracks': [entry.sound_asset.to_dict() for entry in self.tracks if entry.sound_asset],
+        }
+
+
+class SoundPlaylistTrack(db.Model):
+    __tablename__ = 'sound_playlist_track'
+
+    id = db.Column(db.Integer, primary_key=True)
+    playlist_id = db.Column(db.Integer, db.ForeignKey('sound_playlist.id', ondelete='CASCADE'), nullable=False, index=True)
+    sound_asset_id = db.Column(db.Integer, db.ForeignKey('sound_asset.id', ondelete='CASCADE'), nullable=False)
+    position = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    playlist = db.relationship('SoundPlaylist', back_populates='tracks')
+    sound_asset = db.relationship('SoundAsset')
+
+    __table_args__ = (
+        db.UniqueConstraint('playlist_id', 'sound_asset_id', name='uq_sound_playlist_track_asset'),
+    )
+
+
+class SoundQuickEffectSlot(db.Model):
+    __tablename__ = 'sound_quick_effect_slot'
+
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    slot = db.Column(db.Integer, nullable=False)
+    sound_asset_id = db.Column(db.Integer, db.ForeignKey('sound_asset.id', ondelete='SET NULL'), nullable=True)
+    sound_asset = db.relationship('SoundAsset')
+
+    __table_args__ = (
+        db.UniqueConstraint('campaign_id', 'slot', name='uq_sound_quick_effect_campaign_slot'),
+        db.CheckConstraint('slot >= 1 AND slot <= 5', name='ck_sound_quick_effect_slot_range'),
+    )
+
+    def to_dict(self):
+        return {'slot': self.slot, 'sound': self.sound_asset.to_dict() if self.sound_asset else None}
+
+
+class LootBox(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False) ## Which lootbox the item is in
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=True, index=True)
+    system = db.Column(db.String(50), nullable=True, index=True)
+    module_key = db.Column(db.String(120), nullable=True, index=True)
+    is_preset = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'campaign_id': self.campaign_id,
+            'system': self.system,
+            'module_key': self.module_key,
+            'is_preset': self.is_preset,
+            'editable': not self.is_preset,
+            'scope': 'module_preset' if self.is_preset and self.module_key else ('system_preset' if self.is_preset else 'campaign'),
         }
 
 class RandomTable(db.Model):
@@ -771,6 +1283,11 @@ class RandomTable(db.Model):
     name = db.Column(db.String(100), nullable=False)  # Table Name
     description = db.Column(db.Text, nullable=True)  # Optional description of table
     dice_type = db.Column(db.String(20), nullable=False)  # Example: "1d100"
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=True, index=True)
+    system = db.Column(db.String(50), nullable=True, index=True)
+    module_key = db.Column(db.String(120), nullable=True, index=True)
+    is_preset = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     table_entries = db.relationship('TableEntry', backref='random_table', lazy=True)
 
     def to_dict(self):
@@ -779,6 +1296,12 @@ class RandomTable(db.Model):
             'name': self.name,
             'description': self.description,
             'dice_type': self.dice_type,
+            'campaign_id': self.campaign_id,
+            'system': self.system,
+            'module_key': self.module_key,
+            'is_preset': self.is_preset,
+            'editable': not self.is_preset,
+            'scope': 'module_preset' if self.is_preset and self.module_key else ('system_preset' if self.is_preset else 'campaign'),
             'table_entries': [entry.to_dict() for entry in self.table_entries]
         }
 
@@ -935,10 +1458,162 @@ class CalendarEvent(db.Model):
         }
 
 
+def ensure_module_calendar(campaign, definition, strategy='keep_current'):
+    """Create or reconcile the campaign calendar for an installed module."""
+    calendar_config = definition.get('calendar') or {}
+    if not calendar_config:
+        return Calendar.query.filter_by(campaign_id=campaign.id).first()
+
+    format_element = GameElement.query.filter_by(
+        element_type='calendar_format',
+        name=calendar_config['name'],
+    ).first()
+    if not format_element:
+        calendar_path = Path(app.root_path) / calendar_config['filename']
+        with calendar_path.open('r', encoding='utf-8') as calendar_file:
+            format_data = json.load(calendar_file)
+        format_element = GameElement(
+            system=definition.get('system'),
+            element_type='calendar_format',
+            module=None,
+            setting=definition.get('setting_name'),
+            name=calendar_config['name'],
+            data=format_data,
+        )
+        db.session.add(format_element)
+        db.session.flush()
+
+    calendar = Calendar.query.filter_by(campaign_id=campaign.id).first()
+    if not calendar:
+        calendar = Calendar(
+            name=f"{campaign.name} In-World Calendar",
+            description=f"{definition['setting_name']} calendar for {campaign.name}",
+            campaign_id=campaign.id,
+            format_id=format_element.id,
+            format_slug=calendar_config['slug'],
+            current_year=definition.get('starting_year') or 1,
+            current_month_index=calendar_config.get('starting_month_index', 0),
+            current_day=calendar_config.get('starting_day', 1),
+            current_hour=0,
+            current_minute=0,
+            epoch_year=1,
+            epoch_month_index=0,
+            epoch_day=1,
+        )
+        db.session.add(calendar)
+        return calendar
+
+    if strategy == 'use_module':
+        calendar.format_id = format_element.id
+        calendar.format_slug = calendar_config['slug']
+        if definition.get('starting_year') is not None:
+            calendar.current_year = definition['starting_year']
+    return calendar
+
+
+def _merge_template_records(existing, incoming):
+    existing = list(existing or [])
+    known = {str(record.get('id')) for record in existing if record.get('id') is not None}
+    return [*existing, *(record for record in (incoming or []) if str(record.get('id')) not in known)]
+
+
+def import_module_settlement(campaign, template, strategy):
+    """Import, merge, retain, or replace a module settlement map."""
+    locations = WorldAtlasLocation.query.filter_by(campaign_id=campaign.id).all()
+    incoming_name = template['name'].strip().casefold()
+    location = next(
+        (value for value in locations if value.map_key == template['map_key'] or value.name.strip().casefold() == incoming_name),
+        None,
+    )
+    if not location:
+        location = WorldAtlasLocation(
+            campaign_id=campaign.id,
+            name=template['name'],
+            map_key=template['map_key'],
+            settlement_type=template['settlement_type'],
+            notes=template.get('notes'),
+            is_primary=not locations,
+            terrain_strokes=template.get('terrain_strokes', []),
+            roads=template.get('roads', []),
+            water_bodies=template.get('water_bodies', []),
+            buildings=template.get('buildings', []),
+            reference_layers=template.get('reference_layers', []),
+            environment=template.get('environment', {}),
+        )
+        db.session.add(location)
+        db.session.flush()
+        result = 'created'
+    elif strategy == 'keep':
+        return location, 'kept'
+    elif strategy == 'override':
+        previous_map_key = location.map_key
+        location.settlement_type = template['settlement_type']
+        location.notes = template.get('notes')
+        location.terrain_strokes = template.get('terrain_strokes', [])
+        location.roads = template.get('roads', [])
+        location.water_bodies = template.get('water_bodies', [])
+        location.buildings = template.get('buildings', [])
+        location.reference_layers = template.get('reference_layers', [])
+        location.environment = template.get('environment', {})
+        for point in MapPointOfInterest.query.filter_by(campaign_id=campaign.id, map_key=previous_map_key).all():
+            db.session.delete(point)
+        location.map_key = template['map_key']
+        party_position = PartyMapPosition.query.filter_by(campaign_id=campaign.id, map_key=previous_map_key).first()
+        if party_position:
+            party_position.map_key = location.map_key
+        result = 'overridden'
+    else:
+        location.terrain_strokes = _merge_template_records(location.terrain_strokes, template.get('terrain_strokes'))
+        location.roads = _merge_template_records(location.roads, template.get('roads'))
+        location.water_bodies = _merge_template_records(location.water_bodies, template.get('water_bodies'))
+        location.buildings = _merge_template_records(location.buildings, template.get('buildings'))
+        location.reference_layers = _merge_template_records(location.reference_layers, template.get('reference_layers'))
+        if template.get('environment'):
+            current_environment = dict(location.environment or {})
+            template_environment = template['environment']
+            current_environment.update({key: value for key, value in template_environment.items() if key not in {'regions', 'fortifications'}})
+            current_environment['regions'] = _merge_template_records(current_environment.get('regions'), template_environment.get('regions'))
+            current_environment['fortifications'] = _merge_template_records(current_environment.get('fortifications'), template_environment.get('fortifications'))
+            location.environment = current_environment
+        result = 'merged'
+
+    existing_points = {
+        point.name.strip().casefold()
+        for point in MapPointOfInterest.query.filter_by(campaign_id=campaign.id, map_key=location.map_key).all()
+    }
+    for point in template.get('points_of_interest', []):
+        if point['name'].strip().casefold() in existing_points:
+            continue
+        db.session.add(MapPointOfInterest(
+            campaign_id=campaign.id, map_key=location.map_key, name=point['name'],
+            point_type=point.get('point_type', 'landmark'), x=point['x'], y=point['y'],
+            elevation=point.get('elevation', 0), water_access=point.get('water_access', False),
+            road_access=point.get('road_access', True),
+        ))
+    location.updated_at = datetime.now(timezone.utc)
+    return location, result
+
+
+def record_module_installation(campaign, definition, user_id, settlement_strategy, calendar_strategy):
+    installation = CampaignModuleInstallation(
+        campaign_id=campaign.id,
+        module_key=definition['key'],
+        module_name=definition['name'],
+        setting_key=definition.get('setting_key'),
+        starting_year=definition.get('starting_year'),
+        installed_by_id=user_id,
+        settlement_strategy=settlement_strategy,
+        calendar_strategy=calendar_strategy,
+    )
+    db.session.add(installation)
+    return installation
+
+
 ## Add all the models to the admin console
 admin.add_view(ModelView(User, db.session))
 admin.add_view(ModelView(Character, db.session))
 admin.add_view(ModelView(Campaign, db.session))
+admin.add_view(ModelView(CampaignModuleInstallation, db.session))
 admin.add_view(ModelView(Page, db.session))
 admin.add_view(ModelView(Revisions, db.session))
 admin.add_view(ModelView(Item, db.session))
@@ -954,6 +1629,9 @@ admin.add_view(ModelView(LootBox, db.session))
 admin.add_view(ModelView(NPC, db.session))
 admin.add_view(ModelView(GameElement, db.session))
 admin.add_view(ModelView(Document, db.session))
+admin.add_view(ModelView(SoundAsset, db.session))
+admin.add_view(ModelView(SoundPlaylist, db.session))
+admin.add_view(ModelView(SoundQuickEffectSlot, db.session))
 admin.add_view(ModelView(RandomTable, db.session))
 admin.add_view(ModelView(Calendar, db.session))
 admin.add_view(ModelView(CalendarEvent, db.session))
@@ -967,21 +1645,290 @@ from uuid import uuid4
 from werkzeug.utils import secure_filename
 from PIL import Image
 
+# Large cartographic references are retained at source resolution. Viewer-safe
+# derivatives are generated after validation instead of rejecting useful maps.
+Image.MAX_IMAGE_PIXELS = 300_000_000
+
 BASE_DIR = Path(app.root_path).resolve()
 MEDIA_ROOT = BASE_DIR / "media"
 AVATAR_ROOT = MEDIA_ROOT / "avatars"
 AVATAR_UPLOAD_ROOT = AVATAR_ROOT / "uploads"
 AVATAR_DEFAULT_ROOT = AVATAR_ROOT / "defaults"
+MAP_REFERENCE_ROOT = MEDIA_ROOT / "maps"
+SOUND_ROOT = MEDIA_ROOT / "sounds"
 
 app.config["MEDIA_ROOT"] = str(MEDIA_ROOT)
 app.config["AVATAR_ROOT"] = str(AVATAR_ROOT)
 app.config["AVATAR_UPLOAD_ROOT"] = str(AVATAR_UPLOAD_ROOT)
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB
+app.config["MAX_CONTENT_LENGTH"] = 61 * 1024 * 1024
 
 ALLOWED_AVATAR_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+ALLOWED_MAP_REFERENCE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+ALLOWED_SOUND_EXTENSIONS = {"mp3", "wav", "ogg", "m4a", "aac", "webm", "flac"}
 
 def allowed_avatar_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_AVATAR_EXTENSIONS
+
+def allowed_map_reference_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_MAP_REFERENCE_EXTENSIONS
+
+
+def allowed_sound_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_SOUND_EXTENSIONS
+
+
+def sound_library_user():
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    campaign_id = request.headers.get('CampaignID')
+    campaign = Campaign.query.get(campaign_id) if campaign_id else None
+    if not user or not campaign or user.id not in {campaign.dm_id, campaign.owner_id}:
+        return None
+    return user
+
+
+def sound_library_context():
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    campaign_id = request.headers.get('CampaignID')
+    campaign = Campaign.query.get(campaign_id) if campaign_id else None
+    if not user or not campaign or user.id not in {campaign.dm_id, campaign.owner_id}:
+        return None, None
+    return user, campaign
+
+
+def ensure_default_sound_playlists(user, campaign):
+    if SoundPlaylist.query.filter_by(campaign_id=campaign.id).first():
+        return
+    db.session.add_all([
+        SoundPlaylist(campaign_id=campaign.id, name='Traveling Music', shuffle=True, created_by_id=user.id),
+        SoundPlaylist(campaign_id=campaign.id, name='Combat', shuffle=True, created_by_id=user.id),
+    ])
+    db.session.commit()
+
+
+def serialized_quick_effect_slots(campaign_id):
+    configured = {
+        entry.slot: entry.to_dict()
+        for entry in SoundQuickEffectSlot.query.filter_by(campaign_id=campaign_id).all()
+    }
+    return [configured.get(slot, {'slot': slot, 'sound': None}) for slot in range(1, 6)]
+
+
+@app.route('/api/sounds', methods=['GET', 'POST'])
+@jwt_required()
+def sounds():
+    user = sound_library_user()
+    if not user:
+        return jsonify({'message': 'Only a campaign DM or owner may use the shared sound library'}), 403
+
+    if request.method == 'GET':
+        assets = SoundAsset.query.order_by(SoundAsset.category, SoundAsset.name).all()
+        return jsonify({'sounds': [asset.to_dict() for asset in assets]}), 200
+
+    uploaded = request.files.get('file')
+    if not uploaded or not uploaded.filename:
+        return jsonify({'message': 'Choose an audio file to upload'}), 400
+    if not allowed_sound_file(uploaded.filename) or not (uploaded.mimetype or '').startswith('audio/'):
+        return jsonify({'message': 'Sounds must be MP3, WAV, OGG, M4A, AAC, WebM, or FLAC audio'}), 400
+
+    uploaded.stream.seek(0, 2)
+    uploaded_size = uploaded.stream.tell()
+    uploaded.stream.seek(0)
+    if uploaded_size > 50 * 1024 * 1024:
+        return jsonify({'message': 'Sounds must be 50 MB or smaller'}), 413
+
+    category = (request.form.get('category') or 'music').strip().lower()
+    if category not in {'music', 'environment', 'sfx'}:
+        return jsonify({'message': 'Sound category must be music, environment, or sfx'}), 400
+
+    original_name = secure_filename(uploaded.filename)
+    extension = original_name.rsplit('.', 1)[1].lower()
+    display_name = (request.form.get('name') or Path(original_name).stem).strip()[:120]
+    if not display_name:
+        return jsonify({'message': 'A sound name is required'}), 400
+
+    SOUND_ROOT.mkdir(parents=True, exist_ok=True)
+    stored_filename = f'{uuid4().hex}.{extension}'
+    stored_path = SOUND_ROOT / stored_filename
+    try:
+        uploaded.save(stored_path)
+        asset = SoundAsset(
+            name=display_name,
+            filename=stored_filename,
+            original_filename=original_name,
+            mimetype=uploaded.mimetype,
+            category=category,
+            uploaded_by_id=user.id,
+        )
+        db.session.add(asset)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        stored_path.unlink(missing_ok=True)
+        app.logger.exception('Unable to save uploaded sound')
+        return jsonify({'message': 'The sound could not be saved'}), 500
+
+    socketio.emit('sound_library_updated', {'action': 'created', 'sound': asset.to_dict()})
+    return jsonify({'sound': asset.to_dict()}), 201
+
+
+@app.route('/api/sound-playlists', methods=['GET', 'POST'])
+@jwt_required()
+def sound_playlists():
+    user, campaign = sound_library_context()
+    if not user:
+        return jsonify({'message': 'Only a campaign DM or owner may manage playlists'}), 403
+
+    if request.method == 'GET':
+        ensure_default_sound_playlists(user, campaign)
+        playlists = SoundPlaylist.query.filter_by(campaign_id=campaign.id).order_by(SoundPlaylist.name).all()
+        return jsonify({'playlists': [playlist.to_dict() for playlist in playlists]}), 200
+
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name') or '').strip()[:120]
+    if not name:
+        return jsonify({'message': 'A playlist name is required'}), 400
+    duplicate = SoundPlaylist.query.filter(
+        SoundPlaylist.campaign_id == campaign.id,
+        db.func.lower(SoundPlaylist.name) == name.lower(),
+    ).first()
+    if duplicate:
+        return jsonify({'message': 'That playlist already exists'}), 409
+    playlist = SoundPlaylist(
+        campaign_id=campaign.id,
+        name=name,
+        shuffle=bool(data.get('shuffle', False)),
+        created_by_id=user.id,
+    )
+    db.session.add(playlist)
+    db.session.commit()
+    socketio.emit('sound_playlists_updated', {'campaignID': campaign.id})
+    return jsonify({'playlist': playlist.to_dict()}), 201
+
+
+@app.route('/api/sound-quick-effects', methods=['GET'])
+@jwt_required()
+def sound_quick_effects():
+    _user, campaign = sound_library_context()
+    if not campaign:
+        return jsonify({'message': 'Only a campaign DM or owner may use Quick FX'}), 403
+    return jsonify({'slots': serialized_quick_effect_slots(campaign.id)}), 200
+
+
+@app.route('/api/sound-quick-effects/<int:slot>', methods=['PUT'])
+@jwt_required()
+def configure_sound_quick_effect(slot):
+    _user, campaign = sound_library_context()
+    if not campaign:
+        return jsonify({'message': 'Only a campaign DM or owner may configure Quick FX'}), 403
+    if slot < 1 or slot > 5:
+        return jsonify({'message': 'Quick FX slots are numbered 1 through 5'}), 400
+
+    data = request.get_json(silent=True) or {}
+    sound_id = data.get('soundId')
+    sound = None
+    if sound_id is not None:
+        sound = SoundAsset.query.get(sound_id)
+        if not sound:
+            return jsonify({'message': 'Sound not found'}), 404
+        if sound.category != 'sfx':
+            return jsonify({'message': 'Quick FX slots only accept sound effects'}), 400
+
+    configured = SoundQuickEffectSlot.query.filter_by(campaign_id=campaign.id, slot=slot).first()
+    if not configured:
+        configured = SoundQuickEffectSlot(campaign_id=campaign.id, slot=slot)
+        db.session.add(configured)
+    configured.sound_asset = sound
+    db.session.commit()
+    socketio.emit('sound_quick_effects_updated', {'campaignID': campaign.id})
+    return jsonify({'slots': serialized_quick_effect_slots(campaign.id)}), 200
+
+
+@app.route('/api/sound-playlists/<int:playlist_id>', methods=['PATCH', 'DELETE'])
+@jwt_required()
+def sound_playlist(playlist_id):
+    _user, campaign = sound_library_context()
+    if not campaign:
+        return jsonify({'message': 'Only a campaign DM or owner may manage playlists'}), 403
+    playlist = SoundPlaylist.query.filter_by(id=playlist_id, campaign_id=campaign.id).first()
+    if not playlist:
+        return jsonify({'message': 'Playlist not found'}), 404
+
+    if request.method == 'DELETE':
+        db.session.delete(playlist)
+        db.session.commit()
+        socketio.emit('sound_playlists_updated', {'campaignID': campaign.id})
+        return '', 204
+
+    data = request.get_json(silent=True) or {}
+    if 'name' in data:
+        name = str(data.get('name') or '').strip()[:120]
+        if not name:
+            return jsonify({'message': 'A playlist name is required'}), 400
+        duplicate = SoundPlaylist.query.filter(
+            SoundPlaylist.campaign_id == campaign.id,
+            SoundPlaylist.id != playlist.id,
+            db.func.lower(SoundPlaylist.name) == name.lower(),
+        ).first()
+        if duplicate:
+            return jsonify({'message': 'That playlist already exists'}), 409
+        playlist.name = name
+    if 'shuffle' in data:
+        playlist.shuffle = bool(data['shuffle'])
+    db.session.commit()
+    socketio.emit('sound_playlists_updated', {'campaignID': campaign.id})
+    return jsonify({'playlist': playlist.to_dict()}), 200
+
+
+@app.route('/api/sound-playlists/<int:playlist_id>/tracks', methods=['POST'])
+@jwt_required()
+def add_sound_playlist_track(playlist_id):
+    _user, campaign = sound_library_context()
+    if not campaign:
+        return jsonify({'message': 'Only a campaign DM or owner may manage playlists'}), 403
+    playlist = SoundPlaylist.query.filter_by(id=playlist_id, campaign_id=campaign.id).first()
+    if not playlist:
+        return jsonify({'message': 'Playlist not found'}), 404
+    data = request.get_json(silent=True) or {}
+    sound = SoundAsset.query.get(data.get('soundId'))
+    if not sound or sound.category == 'sfx':
+        return jsonify({'message': 'Choose a music or environment track'}), 400
+    existing = SoundPlaylistTrack.query.filter_by(playlist_id=playlist.id, sound_asset_id=sound.id).first()
+    if not existing:
+        next_position = max((entry.position for entry in playlist.tracks), default=-1) + 1
+        db.session.add(SoundPlaylistTrack(
+            playlist_id=playlist.id,
+            sound_asset_id=sound.id,
+            position=next_position,
+        ))
+        db.session.commit()
+    socketio.emit('sound_playlists_updated', {'campaignID': campaign.id})
+    return jsonify({'playlist': playlist.to_dict()}), 200
+
+
+@app.route('/api/sound-playlists/<int:playlist_id>/tracks/<int:sound_id>', methods=['DELETE'])
+@jwt_required()
+def remove_sound_playlist_track(playlist_id, sound_id):
+    _user, campaign = sound_library_context()
+    if not campaign:
+        return jsonify({'message': 'Only a campaign DM or owner may manage playlists'}), 403
+    playlist = SoundPlaylist.query.filter_by(id=playlist_id, campaign_id=campaign.id).first()
+    if not playlist:
+        return jsonify({'message': 'Playlist not found'}), 404
+    entry = SoundPlaylistTrack.query.filter_by(playlist_id=playlist.id, sound_asset_id=sound_id).first()
+    if entry:
+        db.session.delete(entry)
+        db.session.flush()
+        remaining_tracks = [remaining for remaining in playlist.tracks if remaining.id != entry.id]
+        for position, remaining in enumerate(remaining_tracks):
+            remaining.position = position
+        db.session.commit()
+    socketio.emit('sound_playlists_updated', {'campaignID': campaign.id})
+    return jsonify({'playlist': playlist.to_dict()}), 200
+
+
+@app.route('/media/<path:filename>', methods=['GET'])
+def development_media(filename):
+    return send_from_directory(app.config["MEDIA_ROOT"], filename)
 
 def ensure_avatar_dirs(user_id: int) -> tuple[Path, Path]:
     user_root = Path(app.config["AVATAR_UPLOAD_ROOT"]) / str(user_id)
@@ -1174,9 +2121,8 @@ def refresh_expiring_jwts(response):
         target_timestamp = datetime.timestamp(now + timedelta(minutes=30))
             
         if target_timestamp > exp_timestamp:
-            print(target_timestamp, ">", exp_timestamp)
             access_token = create_access_token(identity=get_jwt_identity())
-            response.set_cookie('access_token', access_token)  # Set the new token in a cookie
+            set_shared_session_cookie(response, access_token)
             
             # Get the JSON data from the response
             data = response.get_json()
@@ -1191,13 +2137,65 @@ def refresh_expiring_jwts(response):
                 # Add the new token to the data dictionary
                 data['new_token'] = access_token
             
-            # Create a new response with the updated JSON data
-            response = jsonify(data)
+            # Keep the original status code and headers while exposing the refreshed
+            # bearer token to clients that already understand `new_token`.
+            if data is not None:
+                response.set_data(app.json.dumps(data))
+                response.content_type = 'application/json'
         return response
     
     except (RuntimeError, KeyError):
         # Case where there is not a valid JWT. Just return the original response
         return response
+
+
+SHARED_SESSION_COOKIE = 'kachhapa_session'
+
+
+def shared_session_cookie_domain():
+    """Return the hostname shared by the Kachhapa sibling sites.
+
+    Browsers isolate localStorage by origin, but a Domain cookie issued for
+    raspberrypi.local is available to maps.raspberrypi.local and the other
+    Nginx virtual hosts. Localhost and numeric development hosts remain
+    host-only cookies.
+    """
+    hostname = (request.host or '').split(':', 1)[0].lower().rstrip('.')
+    if not hostname or hostname == 'localhost' or hostname.replace('.', '').isdigit():
+        return None
+    first_label, separator, parent = hostname.partition('.')
+    if separator and first_label in {'app', 'maps', 'mtg', 'tools'}:
+        return parent
+    return hostname if '.' in hostname else None
+
+
+def shared_session_cookie_secure():
+    forwarded_proto = request.headers.get('X-Forwarded-Proto', '').split(',', 1)[0].strip()
+    return request.is_secure or forwarded_proto == 'https'
+
+
+def set_shared_session_cookie(response, token):
+    response.set_cookie(
+        SHARED_SESSION_COOKIE,
+        token,
+        max_age=int(app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()),
+        httponly=True,
+        secure=shared_session_cookie_secure(),
+        samesite='Lax',
+        domain=shared_session_cookie_domain(),
+        path='/',
+    )
+
+
+def clear_shared_session_cookie(response):
+    response.delete_cookie(
+        SHARED_SESSION_COOKIE,
+        httponly=True,
+        secure=shared_session_cookie_secure(),
+        samesite='Lax',
+        domain=shared_session_cookie_domain(),
+        path='/',
+    )
 
 ## Verify a user's JWT token
 @app.route('/api/verify', methods=['POST'])
@@ -1217,7 +2215,10 @@ def verify_token():
             print("Invalid user")
             app.logger.info("Invalid user")
             return jsonify({'error': 'Invalid user'}), 401
-        return jsonify({'success': True, "id": user.id, "username": user.username})
+        response = jsonify({'success': True, "id": user.id, "username": user.username})
+        # Upgrade existing origin-local sessions to the shared sibling-host cookie.
+        set_shared_session_cookie(response, token)
+        return response
     except InvalidTokenError:
         return jsonify({'error': 'InvalidTokenError- POST /api/verify'}), 401
     except ExpiredSignatureError:
@@ -1225,13 +2226,50 @@ def verify_token():
         app.logger.info("Expired token")
         return jsonify({'error': 'Expired token- ExpiredSignatureError'}), 401
 
+
+@app.route('/api/session', methods=['GET'])
+def restore_shared_session():
+    """Bootstrap the existing bearer-token frontend on any sibling hostname."""
+    token = request.cookies.get(SHARED_SESSION_COOKIE)
+    if not token:
+        return jsonify({'message': 'No shared session'}), 401
+    try:
+        decoded_token = decode_token(token)
+        user = User.query.filter_by(username=decoded_token['sub']).first()
+        if user is None:
+            raise InvalidTokenError('Unknown user')
+        return jsonify({
+            'success': True,
+            'access_token': token,
+            'id': user.id,
+            'username': user.username,
+        }), 200
+    except (InvalidTokenError, ExpiredSignatureError):
+        response = jsonify({'message': 'Shared session expired'})
+        clear_shared_session_cookie(response)
+        return response, 401
+
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    response = jsonify({'success': True})
+    clear_shared_session_cookie(response)
+    return response, 200
+
 ## Used to log in a new user
 @app.route('/api/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     if 'username' not in data or 'password' not in data:
         return jsonify({'message': 'Username and password are required!'}), 400
-    user = User.query.filter_by(username=data['username'].lower()).first()
+    try:
+        user = User.query.filter_by(username=str(data['username']).lower()).first()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception('Login failed because the application database is unavailable')
+        return jsonify({
+            'message': 'The server database is unavailable or has not finished initializing. Please try again shortly.'
+        }), 503
     if not user:
         return jsonify({'message': 'Invalid Username'}), 401
     elif not check_password_hash(user.password, data['password']):
@@ -1244,11 +2282,14 @@ def login():
     db.session.commit()
     # campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
     # emit_active_users(campaign_id)
-    return jsonify({
+    response = jsonify({
         'message': 'Login successful!', 
         'access_token': access_token,
-        'userID': user.id  # Include the user's ID in the response
-    }), 200
+        'userID': user.id,  # Include the user's ID in the response
+        'username': user.username,
+    })
+    set_shared_session_cookie(response, access_token)
+    return response, 200
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -1343,7 +2384,7 @@ def register():
         app.logger.exception('Error creating initial character for new user')
         db.session.rollback()
 
-    return jsonify({
+    response = jsonify({
         'message': 'Registration successful!', 
         'access_token': access_token,
         'userID': new_user.id,  # legacy key (camelCase)
@@ -1351,6 +2392,8 @@ def register():
         'character_id': created_character.id if created_character else None,
         'character': created_character.to_dict() if created_character else None
     })
+    set_shared_session_cookie(response, access_token)
+    return response
 
 ## Get a user's profile information
 @app.route('/api/profile', methods=['GET'])
@@ -1397,6 +2440,7 @@ def campaigns():
         campaign = Campaign(
             name=data['name'],
             system=data['system'],
+            module=data.get('module'),
             owner_id=user.id,
             dm_id=user.id,
             icon=data.get('icon', None),
@@ -1405,27 +2449,62 @@ def campaigns():
         )
         db.session.add(campaign)
         db.session.flush()  # Ensure the campaign ID is generated
+
+        if not seed_campaign_world(campaign):
+            db.session.add(WorldAtlasLocation(
+                campaign_id=campaign.id,
+                name='New Settlement',
+                map_key=uuid4().hex,
+                is_primary=True,
+            ))
     
         app.logger.debug("Creating new campaign %s", campaign.to_dict())
     
-        # Check if the user wants to use a module
-        if 'module' in data and data['module']:
-            # Retrieve the module's information from the GameElements table
-            pages = GameElement.query.filter_by(name=data['module'], element_type="wiki").all()
-            for page in pages:
-                if page:
-                    # Pre-populate the wiki with the module's information
-                    wiki = Page(title=page.data.title, content=page.data.content, campaignID=campaign.id)
-                    db.session.add(wiki)
-            # Create the Main Page entry indicating the use of a module
-            main_page_content = f"This campaign is using the {data['module']} module."
-        else:
-            # Create a generic Main Page entry using the campaign's description
-            main_page_content = campaign.description or "Welcome to the campaign!"
-    
-        # Add the Main Page entry to the Page table
-        main_page = Page(title="Main Page", content=main_page_content, campaignID=campaign.id)
-        db.session.add(main_page)
+        seed_campaign_wiki(campaign, data.get('module'))
+
+        initial_definition = module_definition(data.get('module'))
+        if initial_definition:
+            ensure_module_calendar(campaign, initial_definition, strategy='use_module')
+            record_module_installation(
+                campaign, initial_definition, user.id,
+                settlement_strategy='override', calendar_strategy='use_module',
+            )
+        elif data.get('calendar_enabled'):
+            format_slug = str(data.get('calendar_format') or 'gregorian').strip().lower()
+            format_element = ensure_calendar_format(format_slug)
+            if not format_element:
+                db.session.rollback()
+                return jsonify({'message': 'Unsupported calendar format'}), 400
+            try:
+                calendar_year = int(data.get('calendar_year', 1))
+                calendar_month_index = int(data.get('calendar_month', 1)) - 1
+                calendar_day = int(data.get('calendar_day', 1))
+            except (TypeError, ValueError):
+                db.session.rollback()
+                return jsonify({'message': 'Calendar year, month, and day must be whole numbers'}), 400
+            months = (format_element.data or {}).get('months', [])
+            if calendar_month_index < 0 or calendar_month_index >= len(months):
+                db.session.rollback()
+                return jsonify({'message': 'The selected calendar month is invalid'}), 400
+            max_day = int(months[calendar_month_index].get('length', 0))
+            if calendar_day < 1 or calendar_day > max_day:
+                db.session.rollback()
+                return jsonify({'message': f'Calendar day must be between 1 and {max_day}'}), 400
+            db.session.add(Calendar(
+                name=f'{campaign.name} Calendar',
+                description=f'Calendar for {campaign.name}',
+                campaign_id=campaign.id,
+                format_id=format_element.id,
+                format_slug=format_slug,
+                current_year=calendar_year,
+                current_month_index=calendar_month_index,
+                current_day=calendar_day,
+                current_hour=0,
+                current_minute=0,
+                epoch_year=1,
+                epoch_month_index=0,
+                epoch_day=1,
+            ))
     
         # Add the campaign creator as a member of their own campaign
         app.logger.debug("Adding user %s to campaign %s", user.id, campaign.id)
@@ -1440,6 +2519,146 @@ def campaigns():
     
         db.session.commit()
         return jsonify(campaign.to_dict()), 201
+
+
+def campaign_modules_payload(campaign):
+    installations = CampaignModuleInstallation.query.filter_by(campaign_id=campaign.id).order_by(
+        CampaignModuleInstallation.installed_at, CampaignModuleInstallation.id
+    ).all()
+    installed_keys = {installation.module_key for installation in installations}
+    calendar = Calendar.query.filter_by(campaign_id=campaign.id).first()
+    return {
+        'campaign': campaign.to_dict(),
+        'installed_modules': [installation.to_dict() for installation in installations],
+        'available_modules': [
+            {**definition, 'installed': definition['key'] in installed_keys}
+            for definition in module_catalog()
+        ],
+        'calendar': ({
+            'name': calendar.name,
+            'format_slug': calendar.format_slug,
+            'current_year': calendar.current_year,
+            'current_month_index': calendar.current_month_index,
+            'current_day': calendar.current_day,
+        } if calendar else None),
+    }
+
+
+@app.route('/api/campaigns/<int:campaign_id>/modules', methods=['GET'])
+@jwt_required()
+def get_campaign_modules(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may manage modules'}), 403
+    return jsonify(campaign_modules_payload(campaign)), 200
+
+
+@app.route('/api/campaigns/<int:campaign_id>/modules/preview', methods=['POST'])
+@jwt_required()
+def preview_campaign_module(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may manage modules'}), 403
+    data = request.get_json(silent=True) or {}
+    definition = module_definition(data.get('module_key'))
+    if not definition:
+        return jsonify({'message': 'Unknown module'}), 404
+    installed = CampaignModuleInstallation.query.filter_by(
+        campaign_id=campaign.id, module_key=definition['key']
+    ).first()
+    template = campaign_module_template(definition['key'], MEDIA_ROOT)
+    conflicts = []
+    if template:
+        incoming_name = template['name'].strip().casefold()
+        for location in WorldAtlasLocation.query.filter_by(campaign_id=campaign.id).all():
+            if location.map_key == template['map_key'] or location.name.strip().casefold() == incoming_name:
+                conflicts.append({
+                    'settlement_id': location.id,
+                    'existing_name': location.name,
+                    'incoming_name': template['name'],
+                    'map_key': location.map_key,
+                })
+    calendar = Calendar.query.filter_by(campaign_id=campaign.id).first()
+    current_year = calendar.current_year if calendar else None
+    module_year = definition.get('starting_year')
+    public_definition = next(item for item in module_catalog() if item['key'] == definition['key'])
+    return jsonify({
+        'module': public_definition,
+        'already_installed': installed is not None,
+        'settlement_template_available': template is not None,
+        'settlement_conflicts': conflicts,
+        'calendar': {
+            'exists': calendar is not None,
+            'current_year': current_year,
+            'current_format': calendar.format_slug if calendar else None,
+            'module_year': module_year,
+            'module_format': definition.get('calendar', {}).get('slug'),
+            'year_mismatch': current_year is not None and module_year is not None and current_year != module_year,
+            'format_mismatch': calendar is not None and calendar.format_slug != definition.get('calendar', {}).get('slug'),
+        },
+    }), 200
+
+
+@app.route('/api/campaigns/<int:campaign_id>/modules', methods=['POST'])
+@jwt_required()
+def install_campaign_module(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may manage modules'}), 403
+    data = request.get_json(silent=True) or {}
+    definition = module_definition(data.get('module_key'))
+    if not definition:
+        return jsonify({'message': 'Unknown module'}), 404
+    if CampaignModuleInstallation.query.filter_by(campaign_id=campaign.id, module_key=definition['key']).first():
+        return jsonify({'message': 'That module is already installed in this campaign'}), 409
+
+    settlement_strategy = data.get('settlement_strategy', 'merge')
+    calendar_strategy = data.get('calendar_strategy', 'keep_current')
+    if settlement_strategy not in {'merge', 'keep', 'override'}:
+        return jsonify({'message': 'Settlement strategy must be merge, keep, or override'}), 400
+    if calendar_strategy not in {'keep_current', 'use_module'}:
+        return jsonify({'message': 'Calendar strategy must be keep_current or use_module'}), 400
+
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    try:
+        template = campaign_module_template(definition['key'], MEDIA_ROOT)
+        settlement_result = 'none'
+        location = None
+        if template:
+            location, settlement_result = import_module_settlement(campaign, template, settlement_strategy)
+        calendar = ensure_module_calendar(campaign, definition, strategy=calendar_strategy)
+        wiki_pages_added = seed_module_wiki_pages(campaign, definition['name'])
+        installation = record_module_installation(
+            campaign, definition, user.id if user else None, settlement_strategy, calendar_strategy
+        )
+        if not campaign.module:
+            campaign.module = definition['name']
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Unable to install module %s into campaign %s', definition['key'], campaign.id)
+        return jsonify({'message': 'The module import failed and no changes were saved'}), 500
+
+    if location:
+        socketio.emit(
+            'world_atlas_updated',
+            {'action': settlement_result, 'settlement': location.atlas_dict()},
+            to=f'campaign:{campaign.id}',
+        )
+    emit_calendar_updated(campaign.id)
+    return jsonify({
+        'installation': installation.to_dict(),
+        'settlement_result': settlement_result,
+        'wiki_pages_added': wiki_pages_added,
+        'calendar': calendar.to_dict() if calendar else None,
+        **campaign_modules_payload(campaign),
+    }), 201
 
 
 
@@ -1508,6 +2727,29 @@ def get_user_characters():
 
         # Add the new character to the session and commit
         db.session.add(new_character)
+        db.session.flush()
+
+        if new_character.campaignID:
+            membership = db.session.execute(
+                select(campaign_members).where(
+                    campaign_members.c.userID == user.id,
+                    campaign_members.c.campaignID == new_character.campaignID
+                )
+            ).first()
+            if membership:
+                db.session.execute(
+                    campaign_members.update().where(
+                        campaign_members.c.userID == user.id,
+                        campaign_members.c.campaignID == new_character.campaignID
+                    ).values(characterID=new_character.id)
+                )
+            else:
+                db.session.execute(campaign_members.insert().values(
+                    userID=user.id,
+                    campaignID=new_character.campaignID,
+                    characterID=new_character.id
+                ))
+
         db.session.commit()
 
         return jsonify(new_character.to_dict()), 201
@@ -1891,6 +3133,9 @@ def update_character():
 @app.route("/api/character/avatar", methods=["POST"])
 @jwt_required()
 def upload_character_avatar():
+    if request.content_length and request.content_length > 5 * 1024 * 1024:
+        return jsonify({"error": "Avatar uploads must be 5 MB or smaller."}), 413
+
     username = get_jwt_identity()
     user = User.query.filter_by(username=username).first()
     if user is None:
@@ -3286,38 +4531,98 @@ def update_spellbook_item(spellID):
 ##************************##
 ## **    Loot Boxes    ** ##
 ##************************##
+def catalog_campaign_context(require_editor=False):
+    """Resolve and authorize the campaign catalog selected by the client."""
+    try:
+        campaign_id = int(request.headers.get('CampaignID'))
+    except (TypeError, ValueError):
+        return None, None, (jsonify({'message': 'CampaignID is required'}), 400)
+    campaign = Campaign.query.get(campaign_id)
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    if not campaign or not user:
+        return None, None, (jsonify({'message': 'Campaign not found'}), 404)
+    is_editor = user.id in {campaign.owner_id, campaign.dm_id}
+    is_member = is_editor or db.session.execute(select(campaign_members.c.userID).where(
+        campaign_members.c.campaignID == campaign.id,
+        campaign_members.c.userID == user.id,
+    )).first() is not None
+    if not is_member or (require_editor and not is_editor):
+        return None, None, (jsonify({'message': 'You do not have access to this campaign catalog'}), 403)
+    return campaign, user, None
+
+
+def installed_module_keys(campaign_id):
+    return {row.module_key for row in CampaignModuleInstallation.query.filter_by(campaign_id=campaign_id).all()}
+
+
+def catalog_record_visible(record, campaign, modules=None):
+    if record.campaign_id == campaign.id:
+        return True
+    if not record.is_preset or record.campaign_id is not None or record.system != campaign.system:
+        return False
+    return not record.module_key or record.module_key in (modules if modules is not None else installed_module_keys(campaign.id))
+
+
+def validate_catalog_module(campaign, module_key):
+    module_key = str(module_key or '').strip()[:120] or None
+    if module_key and module_key not in installed_module_keys(campaign.id):
+        return None, (jsonify({'message': 'The selected module is not installed in this campaign'}), 400)
+    return module_key, None
+
+
 @app.route('/api/lootboxes', methods=['GET'])
+@jwt_required()
 def get_all_loot_boxes():
-    loot_boxes = LootBox.query.all()
-    return jsonify({'lootBoxes': [box.to_dict() for box in loot_boxes]})
+    campaign, _user, error = catalog_campaign_context()
+    if error:
+        return error
+    modules = installed_module_keys(campaign.id)
+    loot_boxes = [box for box in LootBox.query.order_by(LootBox.name).all() if catalog_record_visible(box, campaign, modules)]
+    installations = CampaignModuleInstallation.query.filter_by(campaign_id=campaign.id).order_by(CampaignModuleInstallation.module_name).all()
+    return jsonify({'lootBoxes': [box.to_dict() for box in loot_boxes], 'modules': [row.to_dict() for row in installations]})
 
 @app.route('/api/lootboxes', methods=['POST'])
+@jwt_required()
 def create_loot_box():
-    data = request.get_json()
-    loot_box_name = data['name']
-    items = data['items']  # This is now a list of dictionaries
+    campaign, user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    loot_box_name = str(data.get('name') or '').strip()[:80]
+    items = data.get('items') if isinstance(data.get('items'), list) else []
+    if not loot_box_name:
+        return jsonify({'message': 'Loot box name is required'}), 400
+    module_key, error = validate_catalog_module(campaign, data.get('module_key'))
+    if error:
+        return error
 
-    # Create the LootBox
-    loot_box = LootBox(name=loot_box_name)
+    loot_box = LootBox(name=loot_box_name, campaign_id=campaign.id, system=campaign.system,
+                       module_key=module_key, is_preset=False, created_by_id=user.id)
     db.session.add(loot_box)
-    db.session.commit()
+    db.session.flush()
 
     for item in items:
-        itemID = item['id']
-        quantity = item['quantity']
-        # itemDB = Item.query.get(itemID)
+        itemID = item.get('id')
+        try:
+            quantity = max(1, int(item.get('quantity', 1)))
+        except (TypeError, ValueError):
+            continue
         itemDB = Item.query.filter_by(id=itemID).first()
         if itemDB:
             association = loot_box_items.insert().values(loot_boxID=loot_box.id, itemID=itemDB.id, quantity=quantity)
             db.session.execute(association)
-            db.session.commit()  # Commit after each iteration
+    db.session.commit()
 
-    return jsonify({'message': 'Loot box created successfully'})
+    return jsonify({'message': 'Loot box created successfully', 'lootBox': loot_box.to_dict()}), 201
 
 ## Save a Loot Box
 @app.route('/api/lootboxes/<int:box_id>', methods=['PUT'])
+@jwt_required()
 def update_loot_box(box_id):
-    data = request.get_json()
+    campaign, _user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
     # print("data:", data)
     app.logger.info("data: %s", data)
     loot_box_name = data['name']
@@ -3325,19 +4630,21 @@ def update_loot_box(box_id):
 
     # Get the LootBox
     # loot_box = LootBox.query.get(box_id)
-    loot_box = LootBox.query.filter_by(id=box_id).first()
+    loot_box = LootBox.query.filter_by(id=box_id, campaign_id=campaign.id, is_preset=False).first()
     if loot_box is None:
         return jsonify({'message': 'Loot box not found'}), 404
+    module_key, error = validate_catalog_module(campaign, data.get('module_key'))
+    if error:
+        return error
 
     # Update the name
     loot_box.name = loot_box_name
+    loot_box.module_key = module_key
 
     # Clear the current items
     loot_box.items = []
 
     db.session.execute(loot_box_items.delete().where(loot_box_items.c.loot_boxID == box_id))
-    db.session.commit()
-
     # Add the new items
     for item in items:
         itemID = item['id']
@@ -3347,14 +4654,17 @@ def update_loot_box(box_id):
         if itemDB:
             association = loot_box_items.insert().values(loot_boxID=loot_box.id, itemID=itemDB.id, quantity=quantity)
             db.session.execute(association)
-            db.session.commit()  # Commit after each iteration
+    db.session.commit()
 
     return jsonify({'message': 'Loot box updated successfully'})
 
 @app.route('/api/lootboxes/<int:box_id>', methods=['DELETE'])
+@jwt_required()
 def delete_loot_box(box_id):
-    # Get the LootBox
-    loot_box = LootBox.query.filter_by(id=box_id).first()
+    campaign, _user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    loot_box = LootBox.query.filter_by(id=box_id, campaign_id=campaign.id, is_preset=False).first()
     if loot_box is None:
         return jsonify({'message': 'Loot box not found'}), 404
 
@@ -3365,16 +4675,19 @@ def delete_loot_box(box_id):
 
 ## Get list of loot in a lootbox
 @app.route('/api/lootboxes/<int:box_id>', methods=['GET'])
+@jwt_required()
 def get_loot_box(box_id):
-    # loot_box = LootBox.query.get(box_id)
+    campaign, _user, error = catalog_campaign_context()
+    if error:
+        return error
     loot_box = LootBox.query.filter_by(id=box_id).first()
-    if loot_box:
+    if loot_box and catalog_record_visible(loot_box, campaign):
         # Use the association table to get the items in this loot box along with their quantities
         items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
             loot_box_items.c.loot_boxID == loot_box.id,
             loot_box_items.c.itemID == Item.id
         ).all()
-        return jsonify({'items': [{'id': item.id, 'name': item.name, 'quantity': quantity} for item, quantity in items_with_quantities]})
+        return jsonify({**loot_box.to_dict(), 'items': [{'id': item.id, 'name': item.name, 'quantity': quantity} for item, quantity in items_with_quantities]})
     else:
         return jsonify({'message': 'Loot box not found'}), 404
 
@@ -3385,7 +4698,10 @@ def issue_loot_box(box_id):
     app.logger.debug("ISSUE LOOT BOX- box_id: %s", box_id)
     app.logger.debug("ISSUE LOOT BOX- request json: %s", request.json)
     
-    selectedPlayer = request.json.get('player')
+    campaign, _user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    selectedPlayer = (request.json or {}).get('player') or {}
     character_id = selectedPlayer.get('id')
     character_name = selectedPlayer.get('character_name')
     username = selectedPlayer.get('username')
@@ -3393,8 +4709,11 @@ def issue_loot_box(box_id):
 
     # Get the LootBox instance
     loot_box = LootBox.query.filter_by(id=box_id).first()
-    if loot_box is None:
+    if loot_box is None or not catalog_record_visible(loot_box, campaign):
         return jsonify({'message': 'Loot box not found.'}), 404
+    character = Character.query.filter_by(id=character_id, campaignID=campaign.id).first()
+    if not character:
+        return jsonify({'message': 'The selected character is not in this campaign.'}), 400
 
     # Use the association table to get the items in this loot box along with their quantities
     items_with_quantities = db.session.query(Item, loot_box_items.c.quantity).filter(
@@ -3510,7 +4829,10 @@ def get_npcs():
 @app.route('/api/random_tables', methods=['POST'])
 @jwt_required()
 def create_random_table():
-    data = request.json
+    campaign, user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    data = request.json or {}
     app.logger.debug("CREATE RANDOM TABLE- data: %s", data)
     name = data.get('name')
     description = data.get('description')
@@ -3520,10 +4842,18 @@ def create_random_table():
     if not name or not dice_type:
         return jsonify({'error': 'Name and dice_type are required'}), 400
 
+    module_key, error = validate_catalog_module(campaign, data.get('moduleKey') or data.get('module_key'))
+    if error:
+        return error
     new_random_table = RandomTable(
         name=name,
         description=description,
-        dice_type=dice_type
+        dice_type=dice_type,
+        campaign_id=campaign.id,
+        system=campaign.system,
+        module_key=module_key,
+        is_preset=False,
+        created_by_id=user.id,
     )
     db.session.add(new_random_table)
     db.session.flush()  # Ensure new_random_table.id is available
@@ -3554,7 +4884,10 @@ def create_random_table():
 @app.route('/api/random_tables/<int:table_id>', methods=['PUT'])
 @jwt_required()
 def update_random_table(table_id):
-    data = request.json
+    campaign, _user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    data = request.json or {}
     app.logger.debug("UPDATE RANDOM TABLE- data: %s", data)
     name = data.get('name')
     description = data.get('description')
@@ -3565,10 +4898,14 @@ def update_random_table(table_id):
         return jsonify({'error': 'Name and dice_type are required'}), 400
 
     # Fetch the existing table
-    random_table = RandomTable.query.get_or_404(table_id)
+    random_table = RandomTable.query.filter_by(id=table_id, campaign_id=campaign.id, is_preset=False).first_or_404()
+    module_key, error = validate_catalog_module(campaign, data.get('moduleKey') or data.get('module_key'))
+    if error:
+        return error
     random_table.name = name
     random_table.description = description
     random_table.dice_type = dice_type
+    random_table.module_key = module_key
 
     # Clear existing entries
     TableEntry.query.filter_by(table_id=table_id).delete()
@@ -3602,24 +4939,42 @@ def update_random_table(table_id):
 @app.route('/api/random_tables', methods=['GET'])
 @jwt_required()
 def get_random_tables():
-    random_tables = RandomTable.query.all()
+    campaign, _user, error = catalog_campaign_context()
+    if error:
+        return error
+    modules = installed_module_keys(campaign.id)
+    random_tables = [table for table in RandomTable.query.order_by(RandomTable.name).all() if catalog_record_visible(table, campaign, modules)]
     return jsonify([{
         'id': table.id,
         'name': table.name,
         'description': table.description,
-        'dice_type': table.dice_type
+        'dice_type': table.dice_type,
+        'campaign_id': table.campaign_id,
+        'system': table.system,
+        'module_key': table.module_key,
+        'is_preset': table.is_preset,
+        'editable': not table.is_preset,
+        'scope': 'module_preset' if table.is_preset and table.module_key else ('system_preset' if table.is_preset else 'campaign'),
     } for table in random_tables]), 200
 
 @app.route('/api/random_tables/<int:table_id>', methods=['GET'])
 @jwt_required()
 def get_random_table_entries(table_id):
+    campaign, _user, error = catalog_campaign_context()
+    if error:
+        return error
     random_table = RandomTable.query.get_or_404(table_id)
+    if not catalog_record_visible(random_table, campaign):
+        return jsonify({'message': 'Random table not found'}), 404
     return jsonify(random_table.to_dict()), 200
 
 @app.route('/api/random_tables/<int:table_id>', methods=['DELETE'])
 @jwt_required()
 def delete_random_table(table_id):
-    random_table = RandomTable.query.get_or_404(table_id)
+    campaign, _user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    random_table = RandomTable.query.filter_by(id=table_id, campaign_id=campaign.id, is_preset=False).first_or_404()
     app.logger.debug("DELETE RANDOM TABLE- table_id: %s", table_id)
 
     # Delete associated table entries
@@ -3635,6 +4990,24 @@ def delete_random_table(table_id):
 ##************************##
 ## **    Wiki Stuff    ** ##
 ##************************##
+@app.route('/wiki/health', methods=['GET'])
+def wiki_health():
+    return jsonify({'ok': True, 'service': 'kachhapa-wiki'}), 200
+
+
+@app.route('/wiki-static/<path:filename>', methods=['GET'])
+def wiki_static(filename):
+    """Serve wiki-only assets without colliding with the React /static tree."""
+    return send_from_directory(app.static_folder, filename)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/wiki', methods=['GET'])
+@app.route('/api/campaigns/<int:campaign_id>/wiki/pages', methods=['GET'])
+def campaign_wiki_pages(campaign_id):
+    campaign = Campaign.query.get_or_404(campaign_id)
+    pages = Page.query.filter_by(wiki_id=campaign.id).order_by(Page.id).all()
+    return jsonify([page.to_dict() for page in pages])
+
 @app.route('/wiki/<campaign_name>/search', methods=['GET'])
 def search(campaign_name):
     app.logger.debug("campaign_name: %s", campaign_name)
@@ -3645,7 +5018,11 @@ def search(campaign_name):
         app.logger.warning("No query provided")
         return jsonify([])
 
-    search_query = db.session.query(Page).filter(Page.tsv.match(query)).all()
+    campaign = Campaign.query.filter_by(name=campaign_name).first_or_404()
+    search_query = db.session.query(Page).filter(
+        Page.wiki_id == campaign.id,
+        Page.tsv.match(query)
+    ).all()
     results = [{'id': page.id, 'title': page.title} for page in search_query]
     app.logger.debug("search results: %s", results)
 
@@ -3673,10 +5050,12 @@ def wiki_page(campaign_name, page_title):
 
     # Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
+    if campaign is None:
+        return "Campaign not found", 404
     app.logger.debug("campaign ID: %s", campaign.id)
 
     # Get the page using the Campaign ID and the page title
-    page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title == page_title, Campaign.name == campaign_name).first()
+    page = Page.query.filter_by(wiki_id=campaign.id, title=page_title).first()
 
     if page is None:
         app.logger.error("Page %s not found", page_title)
@@ -3693,6 +5072,18 @@ def create_page(campaign_name, page_title):
     app.logger.debug("Creating %s page for %s wiki", page_title, campaign_name)
     # Get the campaign ID from the campaign name
     campaign = Campaign.query.filter_by(name=campaign_name).first()
+    if campaign is None:
+        return "Campaign not found", 404
+
+    existing_page = Page.query.filter_by(wiki_id=campaign.id, title=page_title).first()
+    if existing_page is not None:
+        if request.method == 'GET':
+            return redirect(url_for(
+                'edit_page',
+                campaign_name=campaign_name,
+                page_title=page_title
+            ))
+        return "Page already exists", 409
 
     # # Ensure the sequence is correctly set
     # max_id_result = db.session.execute(text("SELECT MAX(id) FROM page"))
@@ -3730,7 +5121,10 @@ def create_page(campaign_name, page_title):
     
 @app.route('/wiki/<campaign_name>/<page_title>/edit', methods=['GET', 'POST'])
 def edit_page(campaign_name, page_title):
-    page = Page.query.join(Campaign, Page.wiki_id == Campaign.id).filter(Page.title==page_title, Campaign.name==campaign_name).first()
+    campaign = Campaign.query.filter_by(name=campaign_name).first()
+    if campaign is None:
+        return "Campaign not found", 404
+    page = Page.query.filter_by(wiki_id=campaign.id, title=page_title).first()
     if not page:
         return "Page not found", 404
 
@@ -3780,7 +5174,7 @@ def emit_calendar_updated(campaign_id, payload=None):
     socketio.emit(
         'calendar_updated',
         base_payload,
-        to=str(campaign_id)
+        to=f'campaign:{campaign_id}'
     )
 
 def get_calendar_format(calendar):
@@ -3968,15 +5362,951 @@ def get_holidays_for_month(calendar, year, month_index):
 
     return results
 
+def get_settlement_simulation_state(campaign_id, persist=True):
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    minute_of_day = (calendar.current_hour * 60 + calendar.current_minute) if calendar else 720
+    routes = LamplighterRoute.query.filter_by(campaign_id=campaign_id, active=True).order_by(LamplighterRoute.id).all()
+    route_states = []
+    changed = False
+
+    for route in routes:
+        lamps = StreetLamp.query.filter_by(route_id=route.id).order_by(StreetLamp.route_order).all()
+        state = calculate_lamplighter_state(route, lamps, minute_of_day)
+        lit_by_id = {lamp['id']: lamp['lit'] for lamp in state['lamps']}
+        for lamp in lamps:
+            new_lit = lit_by_id.get(lamp.id, False)
+            if lamp.lit != new_lit:
+                lamp.lit = new_lit
+                changed = True
+        route_states.append({
+            'id': route.id,
+            'name': route.name,
+            'phase': state['phase'],
+            'lamplighter_position': state['position'],
+            'next_lamp_id': state['next_lamp_id'],
+            'lamps': state['lamps'],
+        })
+
+    if changed and persist:
+        db.session.commit()
+
+    return {
+        'campaign_id': campaign_id,
+        'time': {
+            'year': calendar.current_year if calendar else 1,
+            'month_index': calendar.current_month_index if calendar else 0,
+            'day': calendar.current_day if calendar else 1,
+            'hour': calendar.current_hour if calendar else 12,
+            'minute': calendar.current_minute if calendar else 0,
+        },
+        'routes': route_states,
+    }
+
+
+def emit_settlement_simulation_updated(campaign_id):
+    state = get_settlement_simulation_state(campaign_id)
+    socketio.emit('settlement_simulation_updated', state, to=f'campaign:{campaign_id}')
+    return state
+
+
+SETTLEMENT_BUILDING_ASSETS = [
+    {
+        'key': 'timber_cottage', 'name': 'Timber Cottage', 'category': 'residential',
+        'width_feet': 42, 'depth_feet': 32, 'height_feet': 28, 'model_url': None,
+        'color': '#b87742', 'roof_color': '#513a30',
+        'rooms': ['Common room', 'Kitchen', 'Bedroom', 'Pantry', 'Loft'],
+    },
+    {
+        'key': 'stone_townhouse', 'name': 'Stone Townhouse', 'category': 'residential',
+        'width_feet': 36, 'depth_feet': 46, 'height_feet': 36, 'model_url': None,
+        'color': '#8f8373', 'roof_color': '#3d4650',
+        'rooms': ['Entry hall', 'Parlor', 'Kitchen', 'Primary bedroom', 'Bedroom', 'Study', 'Cellar'],
+    },
+    {
+        'key': 'shop_house', 'name': 'Shop House', 'category': 'commercial',
+        'width_feet': 52, 'depth_feet': 40, 'height_feet': 32, 'model_url': None,
+        'color': '#a76d43', 'roof_color': '#4c352b',
+        'rooms': ['Shop floor', 'Workshop', 'Stockroom', 'Kitchen', 'Owner bedroom', 'Cellar'],
+    },
+    {
+        'key': 'coaching_inn', 'name': 'Coaching Inn', 'category': 'hospitality',
+        'width_feet': 88, 'depth_feet': 62, 'height_feet': 40, 'model_url': None,
+        'color': '#9a633b', 'roof_color': '#463128',
+        'rooms': ['Common room', 'Taproom', 'Kitchen', 'Pantry', 'Office', 'Six guest rooms', 'Stable', 'Cellar'],
+    },
+    {
+        'key': 'storehouse', 'name': 'Storehouse', 'category': 'industrial',
+        'width_feet': 64, 'depth_feet': 48, 'height_feet': 30, 'model_url': None,
+        'color': '#87603e', 'roof_color': '#3f342d',
+        'rooms': ['Receiving floor', 'Main storage', 'Secure cage', 'Clerk office', 'Loading bay'],
+    },
+]
+
+
+def default_settlement_map_design(campaign_id):
+    return SettlementMapDesign(campaign_id=campaign_id)
+
+
+def ensure_campaign_settlement(campaign_id, commit=True):
+    location = WorldAtlasLocation.query.filter_by(campaign_id=campaign_id).order_by(
+        WorldAtlasLocation.is_primary.desc(), WorldAtlasLocation.id
+    ).first()
+    if location:
+        return location
+    legacy = SettlementMapDesign.query.filter_by(campaign_id=campaign_id).first()
+    has_legacy_content = bool(legacy and any((legacy.terrain_strokes, legacy.roads, legacy.buildings, legacy.reference_layers)))
+    location = WorldAtlasLocation(
+        campaign_id=campaign_id,
+        name='Pinewater Crossing' if has_legacy_content else 'New Settlement',
+        map_key=uuid4().hex,
+        is_primary=True,
+        terrain_strokes=(legacy.terrain_strokes or []) if legacy else [],
+        roads=(legacy.roads or []) if legacy else [],
+        buildings=(legacy.buildings or []) if legacy else [],
+        reference_layers=(legacy.reference_layers or []) if legacy else [],
+    )
+    db.session.add(location)
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
+    return location
+
+
+def resolve_settlement(campaign_id, supplied_id=None):
+    settlement_id = supplied_id or request.args.get('settlement_id')
+    if settlement_id:
+        try:
+            return WorldAtlasLocation.query.filter_by(id=int(settlement_id), campaign_id=campaign_id).first()
+        except (TypeError, ValueError):
+            return None
+    return ensure_campaign_settlement(campaign_id)
+
+
+def campaign_atlas_config(campaign):
+    module_name = (campaign.module or '').lower()
+    faerun_terms = ('faerun', 'forgotten realms', 'waterdeep', 'neverwinter', 'baldur', 'icewind', 'chult', 'sword coast')
+    is_faerun = any(term in module_name for term in faerun_terms)
+    if not is_faerun:
+        return {'key': 'blank', 'name': 'Campaign World', 'tile_url_template': None, 'image_url': None}
+    return {
+        'key': 'faerun', 'name': 'Faerûn',
+        'tile_url_template': os.environ.get('FAERUN_ATLAS_TILE_URL'),
+        'tile_zoom': int(os.environ.get('FAERUN_ATLAS_TILE_ZOOM', '2')),
+        'image_url': os.environ.get('FAERUN_ATLAS_IMAGE_URL'),
+        'source_url': 'https://www.aidedd.org/atlas/faerun',
+        'attribution': os.environ.get('FAERUN_ATLAS_ATTRIBUTION', 'Configure a licensed Faerûn tile source'),
+    }
+
+
+WORLD_SETTLEMENT_TYPES = {'hamlet', 'village', 'town', 'city', 'fortress', 'port', 'ruin', 'other'}
+
+
+def settlement_generation_context(campaign):
+    """Campaign-scoped choices used to make a new place feel like the same world."""
+    existing = WorldAtlasLocation.query.filter_by(campaign_id=campaign.id).all()
+    inherited_races = []
+    inherited_factions = []
+    for location in existing:
+        config = location.generation_config or {}
+        inherited_races.extend(item.get('name') for item in config.get('race_distribution', []) if item.get('name'))
+        inherited_factions.extend(config.get('factions', []))
+    try:
+        rules_races = [item.name for item in GameElement.query.filter_by(element_type='race', system=campaign.system).limit(80).all()]
+        rules_factions = [item.name for item in GameElement.query.filter_by(element_type='faction', system=campaign.system).limit(80).all()]
+    except (AttributeError, SQLAlchemyError):
+        rules_races, rules_factions = [], []
+    race_names = list(dict.fromkeys([*inherited_races, *rules_races, 'Human', 'Elf', 'Dwarf', 'Halfling', 'Gnome']))
+    faction_names = list(dict.fromkeys([*inherited_factions, *rules_factions]))
+    return {
+        'settlement_presets': SETTLEMENT_PRESETS,
+        'governments': GOVERNMENTS, 'biomes': BIOMES, 'resources': RESOURCES,
+        'races': race_names[:100], 'factions': faction_names[:100],
+        'inherited': {'races': inherited_races[:20], 'factions': inherited_factions[:20]},
+    }
+
+
+@app.route('/api/world-atlas/<int:campaign_id>', methods=['GET'])
+@jwt_required()
+def get_world_atlas(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    ensure_campaign_settlement(campaign_id)
+    locations = WorldAtlasLocation.query.filter_by(campaign_id=campaign_id).order_by(
+        WorldAtlasLocation.is_primary.desc(), WorldAtlasLocation.name
+    ).all()
+    return jsonify({'campaign': campaign.to_dict(), 'atlas': campaign_atlas_config(campaign),
+                    'locations': [location.atlas_dict() for location in locations]}), 200
+
+
+@app.route('/api/world-atlas/<int:campaign_id>/generation-options', methods=['GET'])
+@jwt_required()
+def get_settlement_generation_options(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    return jsonify(settlement_generation_context(campaign)), 200
+
+
+@app.route('/api/world-atlas/<int:campaign_id>/settlements', methods=['POST'])
+@jwt_required()
+def create_world_atlas_settlement(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may create settlements'}), 403
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name') or 'New Settlement').strip()[:120]
+    settlement_type = str(data.get('settlement_type') or 'town').lower()
+    if settlement_type not in WORLD_SETTLEMENT_TYPES:
+        return jsonify({'message': 'Unknown settlement type'}), 400
+    try:
+        population = None if data.get('population') in (None, '') else max(0, int(data['population']))
+        atlas_x = None if data.get('atlas_x') is None else min(1.0, max(0.0, float(data['atlas_x'])))
+        atlas_y = None if data.get('atlas_y') is None else min(1.0, max(0.0, float(data['atlas_y'])))
+    except (TypeError, ValueError):
+        return jsonify({'message': 'Population and atlas coordinates must be numbers'}), 400
+    environment = data.get('environment') if isinstance(data.get('environment'), dict) else {}
+    should_generate = data.get('generate', True) is not False and not data.get('blank_canvas', False)
+    generated = generate_settlement({
+        **data, 'name': name, 'settlement_type': settlement_type,
+        'population': population if population is not None else SETTLEMENT_PRESETS.get(settlement_type, SETTLEMENT_PRESETS['other'])['population'],
+        'environment': environment,
+    }) if should_generate else {
+        'population': population, 'environment': environment, 'generation_config': {'generator': 'blank-canvas'},
+        'terrain_strokes': [], 'roads': [], 'water_bodies': [], 'buildings': [], 'reference_layers': [],
+    }
+    location = WorldAtlasLocation(
+        campaign_id=campaign_id, name=name or 'New Settlement', map_key=uuid4().hex,
+        settlement_type=settlement_type, population=generated['population'],
+        notes=str(data.get('notes') or '').strip()[:4000], atlas_x=atlas_x, atlas_y=atlas_y,
+        environment=generated['environment'], generation_config=generated['generation_config'],
+        terrain_strokes=generated['terrain_strokes'], roads=generated['roads'],
+        water_bodies=generated['water_bodies'], buildings=generated['buildings'],
+        reference_layers=generated['reference_layers'],
+    )
+    if not WorldAtlasLocation.query.filter_by(campaign_id=campaign_id).first():
+        location.is_primary = True
+    db.session.add(location)
+    db.session.commit()
+    socketio.emit('world_atlas_updated', {'action': 'created', 'settlement': location.atlas_dict()}, to=f'campaign:{campaign_id}')
+    return jsonify(location.atlas_dict()), 201
+
+
+@app.route('/api/world-atlas/<int:campaign_id>/settlements/<int:settlement_id>', methods=['PATCH', 'DELETE'])
+@jwt_required()
+def edit_world_atlas_settlement(campaign_id, settlement_id):
+    campaign = Campaign.query.get(campaign_id)
+    location = WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign_id).first()
+    if not campaign or not location:
+        return jsonify({'message': 'Settlement not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may edit settlements'}), 403
+    if request.method == 'DELETE':
+        if request.args.get('reason') != 'mistake':
+            return jsonify({'message': 'Permanent deletion requires reason=mistake; mark a settlement destroyed for an in-world event'}), 400
+        deleted = location.atlas_dict()
+        was_primary = location.is_primary
+        db.session.delete(location)
+        db.session.flush()
+        replacement = WorldAtlasLocation.query.filter_by(campaign_id=campaign_id).order_by(WorldAtlasLocation.id).first()
+        if not replacement:
+            replacement = WorldAtlasLocation(campaign_id=campaign_id, name='New Settlement', map_key=uuid4().hex, is_primary=True)
+            db.session.add(replacement)
+            db.session.flush()
+        elif was_primary:
+            replacement.is_primary = True
+        db.session.commit()
+        socketio.emit('world_atlas_updated', {'action': 'deleted', 'settlement': deleted}, to=f'campaign:{campaign_id}')
+        return jsonify({'deleted_id': settlement_id, 'active_settlement': replacement.atlas_dict()}), 200
+    data = request.get_json(silent=True) or {}
+    if 'name' in data:
+        name = str(data['name']).strip()[:120]
+        if not name:
+            return jsonify({'message': 'Settlement name cannot be blank'}), 400
+        location.name = name
+    if 'settlement_type' in data:
+        settlement_type = str(data['settlement_type']).lower()
+        if settlement_type not in WORLD_SETTLEMENT_TYPES:
+            return jsonify({'message': 'Unknown settlement type'}), 400
+        location.settlement_type = settlement_type
+    if 'status' in data:
+        status = str(data['status']).lower()
+        if status not in {'active', 'destroyed'}:
+            return jsonify({'message': 'Settlement status must be active or destroyed'}), 400
+        location.status = status
+        location.destroyed_at = datetime.now(timezone.utc) if status == 'destroyed' else None
+    if 'notes' in data:
+        location.notes = str(data['notes'] or '').strip()[:4000]
+    if 'environment' in data:
+        if not isinstance(data['environment'], dict):
+            return jsonify({'message': 'Environment must be an object'}), 400
+        location.environment = data['environment']
+    try:
+        if 'population' in data:
+            location.population = None if data['population'] in (None, '') else max(0, int(data['population']))
+        for field in ('atlas_x', 'atlas_y'):
+            if field in data:
+                setattr(location, field, None if data[field] is None else min(1.0, max(0.0, float(data[field]))))
+    except (TypeError, ValueError):
+        return jsonify({'message': 'Population and atlas coordinates must be numbers'}), 400
+    if data.get('is_primary'):
+        WorldAtlasLocation.query.filter_by(campaign_id=campaign_id).update({'is_primary': False})
+        location.is_primary = True
+    location.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    socketio.emit('world_atlas_updated', {'action': 'updated', 'settlement': location.atlas_dict()}, to=f'campaign:{campaign_id}')
+    return jsonify(location.atlas_dict()), 200
+
+
+def user_can_edit_campaign(campaign):
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    return bool(user and user.id in {campaign.dm_id, campaign.owner_id})
+
+
+@app.route('/api/settlement-map/<int:campaign_id>', methods=['GET'])
+@jwt_required()
+def get_settlement_map_design(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    design = resolve_settlement(campaign_id)
+    if not design:
+        return jsonify({'message': 'Settlement not found'}), 404
+    return jsonify({**design.to_map_dict(), 'asset_catalog': SETTLEMENT_BUILDING_ASSETS}), 200
+
+
+@app.route('/api/settlement-map/<int:campaign_id>/reference-layers', methods=['POST'])
+@jwt_required()
+def upload_settlement_reference_layer(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may edit this map'}), 403
+    if request.content_length and request.content_length > 61 * 1024 * 1024:
+        return jsonify({'message': 'Reference images must be 60 MB or smaller'}), 413
+
+    uploaded = request.files.get('file')
+    if not uploaded or not uploaded.filename:
+        return jsonify({'message': 'A reference image is required'}), 400
+    if not allowed_map_reference_file(uploaded.filename):
+        return jsonify({'message': 'Reference images must be PNG, JPEG, or WebP'}), 400
+
+    uploaded.stream.seek(0, 2)
+    uploaded_size = uploaded.stream.tell()
+    uploaded.stream.seek(0)
+    if uploaded_size > 60 * 1024 * 1024:
+        return jsonify({'message': 'Reference images must be 60 MB or smaller'}), 413
+
+    try:
+        with Image.open(uploaded.stream) as image:
+            pixel_width, pixel_height = image.size
+            if image.format not in {'PNG', 'JPEG', 'WEBP'}:
+                return jsonify({'message': 'Reference images must be PNG, JPEG, or WebP'}), 400
+            if pixel_width * pixel_height > 300_000_000:
+                return jsonify({
+                    'message': 'Reference images may contain at most 300 megapixels.'
+                }), 400
+            image.verify()
+        uploaded.stream.seek(0)
+    except Image.DecompressionBombError:
+        return jsonify({
+            'message': (
+                'The image has too many pixels to process safely on the server.'
+            )
+        }), 400
+    except Exception:
+        return jsonify({'message': 'The uploaded file is not a valid image'}), 400
+
+    def form_float(name, default, minimum=None, maximum=None):
+        try:
+            value = float(request.form.get(name, default))
+        except (TypeError, ValueError):
+            value = float(default)
+        if minimum is not None:
+            value = max(minimum, value)
+        if maximum is not None:
+            value = min(maximum, value)
+        return value
+
+    requested_width = form_float('width_feet', pixel_width, 1)
+    requested_height = form_float('height_feet', requested_width * pixel_height / max(pixel_width, 1), 1)
+    extension = secure_filename(uploaded.filename).rsplit('.', 1)[1].lower()
+    safe_stem = secure_filename(Path(uploaded.filename).stem)[:60] or 'reference-map'
+    layer_id = uuid4().hex
+    campaign_root = MAP_REFERENCE_ROOT / str(campaign_id)
+    campaign_root.mkdir(parents=True, exist_ok=True)
+    filename = f'{safe_stem}-{layer_id}.{extension}'
+    original_path = campaign_root / filename
+    uploaded.save(original_path)
+    preview_filename = f'{safe_stem}-{layer_id}-viewer.jpg'
+    preview_path = campaign_root / preview_filename
+    try:
+        with Image.open(original_path) as source:
+            if source.format == 'JPEG':
+                source.draft('RGB', (5500, 5500))
+            source.thumbnail((5500, 5500), Image.Resampling.LANCZOS)
+            if source.mode != 'RGB':
+                flattened = Image.new('RGB', source.size, 'white')
+                if 'A' in source.getbands():
+                    flattened.paste(source, mask=source.getchannel('A'))
+                else:
+                    flattened.paste(source)
+                source = flattened
+            preview_width, preview_height = source.size
+            source.save(preview_path, 'JPEG', quality=90, optimize=True)
+    except Exception:
+        original_path.unlink(missing_ok=True)
+        preview_path.unlink(missing_ok=True)
+        app.logger.exception('Unable to generate map reference viewer image')
+        return jsonify({'message': 'The original was valid, but a viewer image could not be generated'}), 500
+
+    layer = {
+        'id': layer_id,
+        'name': request.form.get('name', '').strip()[:120] or Path(uploaded.filename).stem[:120],
+        'image_url': f'/media/maps/{campaign_id}/{preview_filename}',
+        'original_image_url': f'/media/maps/{campaign_id}/{filename}',
+        'source_bytes': uploaded_size,
+        'preview_pixel_width': preview_width,
+        'preview_pixel_height': preview_height,
+        'rendering_mode': 'viewer_derivative',
+        'visible': True,
+        'project_to_terrain': True,
+        'opacity': form_float('opacity', 0.7, 0, 1),
+        'origin_x': form_float('origin_x', 0),
+        'origin_y': form_float('origin_y', 0),
+        'width_feet': requested_width,
+        'height_feet': requested_height,
+        'rotation_degrees': form_float('rotation_degrees', 0, -360, 360),
+        'pixel_width': pixel_width,
+        'pixel_height': pixel_height,
+        'feet_per_pixel': requested_width / max(pixel_width, 1),
+        'feet_per_pixel_x': requested_width / max(pixel_width, 1),
+        'feet_per_pixel_y': requested_height / max(pixel_height, 1),
+        'layer_order': 0,
+        'scope': request.form.get('scope', 'city') if request.form.get('scope') in {'city', 'building', 'battle'} else 'city',
+        'linked_building_id': request.form.get('linked_building_id') or None,
+        'sync_exterior': request.form.get('sync_exterior', '').lower() in {'1', 'true', 'yes', 'on'},
+    }
+
+    design = resolve_settlement(campaign_id, request.form.get('settlement_id'))
+    if not design:
+        return jsonify({'message': 'Settlement not found'}), 404
+    if layer['sync_exterior'] and layer['linked_building_id']:
+        linked = next((building for building in (design.buildings or []) if str(building.get('id')) == str(layer['linked_building_id'])), None)
+        if linked:
+            linked_width = float(linked.get('width_feet', layer['width_feet']))
+            linked_height = float(linked.get('depth_feet', layer['height_feet']))
+            layer.update({
+                'origin_x': float(linked.get('x', 0)), 'origin_y': float(linked.get('y', 0)),
+                'width_feet': linked_width, 'height_feet': linked_height,
+                'feet_per_pixel': linked_width / max(pixel_width, 1),
+                'feet_per_pixel_x': linked_width / max(pixel_width, 1),
+                'feet_per_pixel_y': linked_height / max(pixel_height, 1),
+                'rotation_degrees': float(linked.get('rotation', 0)) * 180 / 3.141592653589793,
+            })
+    design.reference_layers = [*(design.reference_layers or []), layer]
+    design.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    payload = {**design.to_map_dict(), 'asset_catalog': SETTLEMENT_BUILDING_ASSETS}
+    socketio.emit('settlement_map_updated', payload, to=f'campaign:{campaign_id}')
+    return jsonify({'layer': layer, 'map': payload}), 201
+
+
+@app.route('/api/settlement-map/<int:campaign_id>', methods=['PUT'])
+@jwt_required()
+def save_settlement_map_design(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may edit this map'}), 403
+
+    data = request.get_json(silent=True) or {}
+    terrain_strokes = data.get('terrain_strokes')
+    roads = data.get('roads')
+    water_bodies = data.get('water_bodies', [])
+    buildings = data.get('buildings')
+    reference_layers = data.get('reference_layers', [])
+    environment = data.get('environment')
+    if not all(isinstance(value, list) for value in (terrain_strokes, roads, water_bodies, buildings, reference_layers)):
+        return jsonify({'message': 'terrain_strokes, roads, water_bodies, buildings, and reference_layers must be arrays'}), 400
+    if environment is not None and (not isinstance(environment, dict) or not isinstance(environment.get('regions', []), list)):
+        return jsonify({'message': 'environment must be an object and environment.regions must be an array'}), 400
+    if environment is not None and len(environment.get('regions', [])) > 250:
+        return jsonify({'message': 'Map design exceeds the region limit'}), 413
+    if len(terrain_strokes) > 1500 or len(roads) > 500 or len(water_bodies) > 250 or len(buildings) > 5000 or len(reference_layers) > 100:
+        return jsonify({'message': 'Map design exceeds the editor limits'}), 413
+    if len(json.dumps(data)) > 2_000_000:
+        return jsonify({'message': 'Map design payload exceeds 2 MB'}), 413
+
+    design = resolve_settlement(campaign_id, data.get('settlement_id'))
+    if not design:
+        return jsonify({'message': 'Settlement not found'}), 404
+    design.terrain_strokes = terrain_strokes
+    design.roads = roads
+    design.water_bodies = water_bodies
+    design.buildings = buildings
+    design.reference_layers = reference_layers
+    if environment is not None:
+        design.environment = environment
+    design.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    payload = {**design.to_map_dict(), 'asset_catalog': SETTLEMENT_BUILDING_ASSETS}
+    socketio.emit('settlement_map_updated', payload, to=f'campaign:{campaign_id}')
+    return jsonify(payload), 200
+
+
+@app.route('/api/settlement-simulation/<int:campaign_id>', methods=['GET'])
+def settlement_simulation_state(campaign_id):
+    if not Campaign.query.get(campaign_id):
+        return jsonify({'message': 'Campaign not found'}), 404
+    return jsonify(get_settlement_simulation_state(campaign_id)), 200
+
+
+@app.route('/api/settlement-simulation/<int:campaign_id>/bootstrap', methods=['POST'])
+def bootstrap_settlement_simulation(campaign_id):
+    if not Campaign.query.get(campaign_id):
+        return jsonify({'message': 'Campaign not found'}), 404
+    location = ensure_campaign_settlement(campaign_id)
+    blank_settlement = not any((location.terrain_strokes, location.roads, location.water_bodies, location.buildings, location.reference_layers))
+    existing = LamplighterRoute.query.filter_by(campaign_id=campaign_id).first()
+    if not existing and not blank_settlement:
+        route = LamplighterRoute(campaign_id=campaign_id, name='Pinewater evening circuit')
+        db.session.add(route)
+        db.session.flush()
+        stops = [(-550, 0), (-350, 260), (-80, 360), (220, 300), (410, 80), (320, -260), (40, -380), (-320, -310)]
+        for order, (x, y) in enumerate(stops):
+            db.session.add(StreetLamp(
+                campaign_id=campaign_id,
+                route_id=route.id,
+                name=f'Pinewater lamp {order + 1}',
+                x=x,
+                y=y,
+                elevation=0,
+                route_order=order,
+                fuel_remaining=100,
+            ))
+        db.session.commit()
+    party_position = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
+    if not party_position:
+        db.session.add(PartyMapPosition(campaign_id=campaign_id, map_key=location.map_key, x=0, y=0, road_access=True))
+    if not blank_settlement and not MapPointOfInterest.query.filter_by(campaign_id=campaign_id).first():
+        points = [
+            ('Timber Hall', 'civic', -100, 0, False, True),
+            ('River Landing', 'dock', 560, 40, True, True),
+            ('North Gate', 'gate', -420, 330, False, True),
+            ('Sunfield Farm', 'farm', -500, -500, False, True),
+        ]
+        for name, point_type, x, y, water_access, road_access in points:
+            db.session.add(MapPointOfInterest(campaign_id=campaign_id, map_key='pinewater', name=name,
+                                              point_type=point_type, x=x, y=y, water_access=water_access,
+                                              road_access=road_access))
+    db.session.commit()
+    bootstrap_settlement_economy(campaign_id)
+    state = emit_settlement_simulation_updated(campaign_id)
+    return jsonify(state), 201 if not existing else 200
+
+
+@app.route('/api/travel/<int:campaign_id>/context', methods=['GET'])
+def get_travel_context(campaign_id):
+    position = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
+    if not position:
+        return jsonify({'message': 'Party position has not been set'}), 404
+    points = MapPointOfInterest.query.filter_by(campaign_id=campaign_id).order_by(MapPointOfInterest.name).all()
+    return jsonify({'party_position': position.to_dict(), 'points_of_interest': [point.to_dict() for point in points]}), 200
+
+
+@app.route('/api/travel/<int:campaign_id>/party-position', methods=['PATCH'])
+def update_party_map_position(campaign_id):
+    data = request.json or {}
+    position = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
+    if not position:
+        position = PartyMapPosition(campaign_id=campaign_id)
+        db.session.add(position)
+    for field in ('map_key', 'x', 'y', 'elevation', 'water_access', 'road_access'):
+        if field in data:
+            setattr(position, field, data[field])
+    position.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    socketio.emit('party_position_updated', position.to_dict(), to=f'campaign:{campaign_id}')
+    return jsonify(position.to_dict()), 200
+
+
+@app.route('/api/travel/<int:campaign_id>/calculate', methods=['POST'])
+def calculate_travel(campaign_id):
+    data = request.json or {}
+    origin_record = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
+    if not origin_record:
+        return jsonify({'message': 'Party position has not been set'}), 404
+
+    destination = data.get('destination')
+    poi_id = data.get('poi_id')
+    if poi_id is not None:
+        poi = MapPointOfInterest.query.filter_by(id=poi_id, campaign_id=campaign_id).first()
+        if not poi:
+            return jsonify({'message': 'Point of interest not found'}), 404
+        destination = poi.to_dict()
+    if not destination or destination.get('x') is None or destination.get('y') is None:
+        return jsonify({'message': 'A destination point or poi_id is required'}), 400
+
+    origin = origin_record.to_dict()
+    destination.setdefault('map_key', origin['map_key'])
+    try:
+        estimate = estimate_travel_options(
+            origin,
+            destination,
+            party_size=max(1, int(data.get('party_size', 1))),
+            route_distance_miles=data.get('route_distance_miles'),
+        )
+    except (TypeError, ValueError) as error:
+        return jsonify({'message': str(error)}), 400
+    return jsonify({'origin': origin, 'destination': destination, **estimate}), 200
+
+
+def bootstrap_settlement_economy(campaign_id):
+    state = SettlementEconomyState.query.filter_by(campaign_id=campaign_id).first()
+    if not state:
+        db.session.add(SettlementEconomyState(campaign_id=campaign_id, day_index=0))
+        location = ensure_campaign_settlement(campaign_id)
+        if not any((location.terrain_strokes, location.roads, location.water_bodies, location.buildings, location.reference_layers)):
+            db.session.commit()
+            return
+    elif not any((CommodityMarket.query.filter_by(campaign_id=campaign_id).first(),
+                  SettlementBusiness.query.filter_by(campaign_id=campaign_id).first(),
+                  OccupationDefinition.query.filter_by(campaign_id=campaign_id).first(),
+                  SettlementEconomicAgent.query.filter_by(campaign_id=campaign_id).first())):
+        return
+    if not CommodityMarket.query.filter_by(campaign_id=campaign_id).first():
+        markets = [
+            ('ale','Ale',8,420,38,38,140), ('grain','Grain',2,900,72,72,300),
+            ('timber','Timber',12,300,22,22,120), ('basic_food','Basic food',5,760,65,65,260),
+        ]
+        for key,name,price,target,demand,supply,imports in markets:
+            db.session.add(CommodityMarket(campaign_id=campaign_id,commodity_key=key,name=name,base_price_cp=price,
+                current_price_cp=price,stock=target,target_stock=target,daily_demand=demand,daily_supply=supply,
+                import_threshold=.32,import_quantity=imports,elasticity=.65))
+    if not SettlementBusiness.query.filter_by(campaign_id=campaign_id).first():
+        businesses = [
+            ('Trollskull Manor','tavern',0,0,1.15,1.05,1.0,50000,120,45,650,.38,True),
+            ("Frewn's Brews",'tavern',240,80,.76,.82,.95,9000,75,36,520,.4,False),
+            ('The Yawning Portal','tavern',1350,-900,1.4,1.3,1.0,140000,180,55,1100,.36,False),
+        ]
+        for name,btype,x,y,traffic,quality,access,reserves,capacity,sale,overhead,cogs,owned in businesses:
+            db.session.add(SettlementBusiness(campaign_id=campaign_id,name=name,business_type=btype,x=x,y=y,
+                foot_traffic=traffic,quality=quality,accessibility=access,cash_reserves_cp=reserves,daily_capacity=capacity,
+                average_sale_cp=sale,daily_overhead_cp=overhead,cost_of_goods_rate=cogs,player_owned=owned))
+    if not OccupationDefinition.query.filter_by(campaign_id=campaign_id).first():
+        occupations=[
+            ('laborer','Laborer',{'strength':.55,'constitution':.35,'dexterity':.1},3,18,'timber'),
+            ('hauler','Hauler',{'strength':.65,'constitution':.25,'wisdom':.1},2,20,None),
+            ('sales','Salesperson',{'charisma':.6,'wisdom':.25,'intelligence':.15},3,26,None),
+            ('performer','Performer',{'charisma':.6,'dexterity':.25,'wisdom':.15},2,28,None),
+            ('artisan','Artisan',{'dexterity':.4,'intelligence':.3,'wisdom':.2,'constitution':.1},3,32,None),
+            ('farmer','Farmer',{'constitution':.4,'strength':.3,'wisdom':.3},4,20,'basic_food'),
+            ('scholar','Scholar',{'intelligence':.6,'wisdom':.3,'charisma':.1},2,38,None),
+            ('manager','Manager',{'intelligence':.35,'charisma':.35,'wisdom':.3},2,45,None),
+        ]
+        for key,name,weights,target,wage,commodity in occupations:
+            db.session.add(OccupationDefinition(campaign_id=campaign_id,occupation_key=key,name=name,ability_weights=weights,target_workers=target,base_wage_cp=wage,produces_commodity_key=commodity))
+    if not SettlementEconomicAgent.query.filter_by(campaign_id=campaign_id).first():
+        ability_sets=[(17,10,16,8,9,8),(18,9,17,8,10,7),(16,12,15,9,11,8),(9,14,10,13,12,18),(8,16,10,11,13,19),(10,17,12,15,13,9),(12,15,13,16,14,10),(14,10,17,9,15,8),(13,11,16,10,17,9),(8,10,9,18,17,13),(9,13,10,17,15,14),(11,14,12,12,13,17),(15,13,15,10,12,11),(10,12,11,14,16,15)]
+        for index,values in enumerate(ability_sets):
+            db.session.add(SettlementEconomicAgent(campaign_id=campaign_id,name=f'Pinewater resident {index+1}',strength=values[0],dexterity=values[1],constitution=values[2],intelligence=values[3],wisdom=values[4],charisma=values[5],occupation_key='laborer',economic_autonomy=True,simulation_generated=True))
+        family=NobleFamily(campaign_id=campaign_id,name='House Rosznar',wealth_cp=250000,investment_risk=.55)
+        db.session.add(family);db.session.flush()
+        db.session.add(SettlementEconomicAgent(campaign_id=campaign_id,name='Lady Rosznar',strength=8,dexterity=11,constitution=10,intelligence=16,wisdom=15,charisma=18,economic_autonomy=True,story_locked=True,simulation_generated=False,social_class='noble',noble_family_id=family.id,wealth_cp=20000))
+    db.session.commit()
+
+
+def run_workforce_rebalance(campaign_id,state,markets):
+    occupations=OccupationDefinition.query.filter_by(campaign_id=campaign_id).all()
+    agents=SettlementEconomicAgent.query.filter_by(campaign_id=campaign_id).all()
+    price_by_key={market.commodity_key:market.current_price_cp/market.base_price_cp for market in markets}
+    demand={occupation.occupation_key:min(1.6,max(.75,price_by_key.get(occupation.produces_commodity_key,1))) for occupation in occupations}
+    businesses=SettlementBusiness.query.filter_by(campaign_id=campaign_id,closed=False).all()
+    recent_profit=0;recent_overhead=0
+    for business in businesses:
+        rows=BusinessDailyLedger.query.filter(BusinessDailyLedger.business_id==business.id,BusinessDailyLedger.day_index>state.day_index-10).all()
+        recent_profit+=sum(row.profit_cp for row in rows);recent_overhead+=business.daily_overhead_cp*max(1,len(rows))
+    service_demand=min(1.45,max(.7,1+(recent_profit/max(1,recent_overhead))*.25))
+    for key in ('sales','performer','manager'):
+        if key in demand: demand[key]=service_demand
+    agent_dicts=[agent.simulation_dict() for agent in agents]
+    result=rebalance_workforce(agent_dicts,[occupation.simulation_dict() for occupation in occupations],state.day_index,demand)
+    agents_by_id={agent.id:agent for agent in agents}
+    for change in result['changes']:
+        agent=agents_by_id[change['agent_id']];agent.occupation_key=change['to'];agent.career_cooldown_until_day=state.day_index+30
+        db.session.add(EmploymentHistory(agent_id=agent.id,day_index=state.day_index,from_occupation=change['from'],to_occupation=change['to'],reason=change['reason']))
+    return result
+
+
+def run_noble_investment_meetings(campaign_id,state,businesses):
+    decisions=[]
+    for family in NobleFamily.query.filter_by(campaign_id=campaign_id,active=True).all():
+        investments=NobleInvestment.query.filter_by(family_id=family.id).all()
+        for investment in investments:
+            business=next((item for item in businesses if item.id==investment.business_id),None)
+            if not business: continue
+            recent=BusinessDailyLedger.query.filter(BusinessDailyLedger.business_id==business.id,BusinessDailyLedger.day_index>state.day_index-10).all()
+            profit=sum(row.profit_cp for row in recent);ownership=investment.principal_cp/max(1,investment.principal_cp+max(0,business.cash_reserves_cp))
+            dividend=min(max(0,business.cash_reserves_cp),round(max(0,profit)*.15*ownership))
+            if dividend:
+                business.cash_reserves_cp-=dividend;family.wealth_cp+=dividend;investment.total_dividends_cp+=dividend
+                db.session.add(NobleDecisionLedger(family_id=family.id,day_index=state.day_index,decision_type='dividend',business_id=business.id,amount_cp=dividend,summary=f'{family.name} received a dividend from {business.name}.'))
+        recent_profit={}
+        for business in businesses:
+            rows=BusinessDailyLedger.query.filter(BusinessDailyLedger.business_id==business.id,BusinessDailyLedger.day_index>state.day_index-10).all()
+            recent_profit[business.id]=sum(row.profit_cp for row in rows)
+        choice=choose_noble_investment(family.to_dict(),[{**business.simulation_dict(),'desired_investment_cp':12000} for business in businesses],recent_profit,max_fraction=.05+.1*family.investment_risk)
+        if choice:
+            business=next(item for item in businesses if item.id==choice['business_id']);amount=min(choice['amount_cp'],family.wealth_cp)
+            investment=NobleInvestment.query.filter_by(family_id=family.id,business_id=business.id).first()
+            if not investment: investment=NobleInvestment(family_id=family.id,business_id=business.id);db.session.add(investment)
+            investment.principal_cp+=amount;family.wealth_cp-=amount;business.cash_reserves_cp+=amount
+            summary=f'{family.name} invested {amount} cp in {business.name} after its tenday meeting.'
+            db.session.add(NobleDecisionLedger(family_id=family.id,day_index=state.day_index,decision_type='investment',business_id=business.id,amount_cp=amount,summary=summary));decisions.append(summary)
+    return decisions
+
+
+def economy_dashboard(campaign_id):
+    state = SettlementEconomyState.query.filter_by(campaign_id=campaign_id).first()
+    markets = CommodityMarket.query.filter_by(campaign_id=campaign_id).order_by(CommodityMarket.name).all()
+    businesses = SettlementBusiness.query.filter_by(campaign_id=campaign_id).order_by(SettlementBusiness.name).all()
+    history = {}
+    for business in businesses:
+        ledgers = BusinessDailyLedger.query.filter_by(business_id=business.id).order_by(BusinessDailyLedger.day_index).all()
+        history[str(business.id)] = [ledger.to_dict() for ledger in ledgers[-40:]]
+    agents=SettlementEconomicAgent.query.filter_by(campaign_id=campaign_id).all();occupations=OccupationDefinition.query.filter_by(campaign_id=campaign_id).all()
+    counts={occupation.occupation_key:0 for occupation in occupations}
+    for agent in agents:
+        if agent.occupation_key in counts: counts[agent.occupation_key]+=1
+    families=NobleFamily.query.filter_by(campaign_id=campaign_id).all();family_data=[]
+    for family in families:
+        investments=NobleInvestment.query.filter_by(family_id=family.id).all();decisions=NobleDecisionLedger.query.filter_by(family_id=family.id).order_by(NobleDecisionLedger.day_index.desc()).limit(10).all()
+        family_data.append({**family.to_dict(),'investments':[item.to_dict() for item in investments],'recent_decisions':[{'day_index':item.day_index,'type':item.decision_type,'amount_cp':item.amount_cp,'summary':item.summary} for item in decisions]})
+    return {'day_index':state.day_index if state else 0,'markets':[market.to_dict() for market in markets],
+            'businesses':[business.to_dict() for business in businesses],'history':history,
+            'workforce':{'occupations':[{**occupation.to_dict(),'workers':counts[occupation.occupation_key]} for occupation in occupations],'agents':[agent.to_dict() for agent in agents]},'noble_families':family_data}
+
+
+def run_economy(campaign_id, days):
+    bootstrap_settlement_economy(campaign_id)
+    state = SettlementEconomyState.query.filter_by(campaign_id=campaign_id).first()
+    markets = CommodityMarket.query.filter_by(campaign_id=campaign_id).all()
+    for _ in range(days):
+        state.day_index += 1
+        for market in markets:
+            result = simulate_commodity_day({'base_price_cp':market.base_price_cp,'stock':market.stock,
+                'target_stock':market.target_stock,'elasticity':market.elasticity,'daily_demand':market.daily_demand,
+                'daily_supply':market.daily_supply,'import_threshold':market.import_threshold,'import_quantity':market.import_quantity})
+            market.stock=result['stock'];market.current_price_cp=result['price_cp'];market.last_imported=result['imported']
+        businesses = SettlementBusiness.query.filter_by(campaign_id=campaign_id).all()
+        by_type = {}
+        for business in businesses: by_type.setdefault(business.business_type,[]).append(business)
+        for business in businesses:
+            result = simulate_business_day(business.simulation_dict(),[item.simulation_dict() for item in by_type[business.business_type]],state.day_index)
+            business.cash_reserves_cp=result['cash_reserves_cp'];business.slump_days=result['slump_days'];business.closed=result['closed']
+            db.session.add(BusinessDailyLedger(business_id=business.id,day_index=state.day_index,customers=result['customers'],
+                revenue_cp=result['revenue_cp'],costs_cp=result['costs_cp'],profit_cp=result['profit_cp'],
+                cash_reserves_cp=result['cash_reserves_cp'],market_share=result.get('market_share')))
+        if state.day_index % 10 == 0:
+            run_workforce_rebalance(campaign_id,state,markets)
+            run_noble_investment_meetings(campaign_id,state,businesses)
+    db.session.commit()
+    dashboard=economy_dashboard(campaign_id)
+    socketio.emit('settlement_economy_updated',dashboard,to=f'campaign:{campaign_id}')
+    return dashboard
+
+
+@app.route('/api/economy/<int:campaign_id>',methods=['GET'])
+def get_economy(campaign_id):
+    bootstrap_settlement_economy(campaign_id)
+    return jsonify(economy_dashboard(campaign_id)),200
+
+
+@app.route('/api/economy/<int:campaign_id>/simulate',methods=['POST'])
+def simulate_economy(campaign_id):
+    days=max(1,min(40,int((request.json or {}).get('days',1))))
+    return jsonify(run_economy(campaign_id,days)),200
+
+
+@app.route('/api/economy/<int:campaign_id>/commodities/<commodity_key>/purchase',methods=['POST'])
+def purchase_market_commodity(campaign_id,commodity_key):
+    market=CommodityMarket.query.filter_by(campaign_id=campaign_id,commodity_key=commodity_key).first()
+    if not market: return jsonify({'message':'Commodity not found'}),404
+    quantity=max(1,float((request.json or {}).get('quantity',1)))
+    purchased=min(quantity,market.stock);market.stock-=purchased
+    market.current_price_cp=commodity_price(market.base_price_cp,market.stock,market.target_stock,market.elasticity)
+    db.session.commit()
+    dashboard=economy_dashboard(campaign_id)
+    socketio.emit('settlement_economy_updated',dashboard,to=f'campaign:{campaign_id}')
+    return jsonify({'purchased':purchased,'total_cost_cp':round(purchased*market.current_price_cp),'market':market.to_dict(),'dashboard':dashboard}),200
+
+
+@app.route('/api/economy/<int:campaign_id>/agents/link-npc/<int:npc_id>',methods=['POST'])
+def link_npc_to_economy(campaign_id,npc_id):
+    npc=NPC.query.filter_by(id=npc_id,campaign_id=campaign_id).first()
+    if not npc: return jsonify({'message':'NPC not found'}),404
+    existing=SettlementEconomicAgent.query.filter_by(npc_id=npc_id).first()
+    if existing: return jsonify(existing.to_dict()),200
+    data=request.json or {};agent=SettlementEconomicAgent(campaign_id=campaign_id,npc_id=npc.id,name=npc.name,
+        strength=npc.strength,dexterity=npc.dexterity,constitution=npc.constitution,intelligence=npc.intelligence,wisdom=npc.wisdom,charisma=npc.charisma,
+        economic_autonomy=bool(data.get('economic_autonomy',False)),story_locked=bool(data.get('story_locked',True)),simulation_generated=False,
+        social_class=data.get('social_class','commoner'),occupation_key=data.get('occupation_key'),noble_family_id=data.get('noble_family_id'),wealth_cp=max(0,int(data.get('wealth_cp',0))))
+    if agent.social_class=='noble': agent.occupation_key=None
+    db.session.add(agent);db.session.commit()
+    return jsonify(agent.to_dict()),201
+
+
+@app.route('/api/economy/<int:campaign_id>/agents/<int:agent_id>',methods=['PATCH'])
+def update_economic_agent(campaign_id,agent_id):
+    agent=SettlementEconomicAgent.query.filter_by(id=agent_id,campaign_id=campaign_id).first()
+    if not agent: return jsonify({'message':'Economic agent not found'}),404
+    data=request.json or {}
+    for field in ('economic_autonomy','story_locked','occupation_key','employer_business_id','noble_family_id','social_class','wealth_cp'):
+        if field in data: setattr(agent,field,data[field])
+    if agent.social_class=='noble': agent.occupation_key=None;agent.employer_business_id=None
+    db.session.commit();return jsonify(agent.to_dict()),200
+
+
+@app.route('/api/economy/<int:campaign_id>/workforce/rebalance',methods=['POST'])
+def rebalance_campaign_workforce(campaign_id):
+    bootstrap_settlement_economy(campaign_id);state=SettlementEconomyState.query.filter_by(campaign_id=campaign_id).first();markets=CommodityMarket.query.filter_by(campaign_id=campaign_id).all()
+    result=run_workforce_rebalance(campaign_id,state,markets);db.session.commit();dashboard=economy_dashboard(campaign_id)
+    socketio.emit('settlement_economy_updated',dashboard,to=f'campaign:{campaign_id}')
+    return jsonify({'result':result,'dashboard':dashboard}),200
+
+
 #GET    /api/calendar/<campaign_id>'
 @app.route('/api/calendar/<int:campaign_id>', methods=['GET'])
 def get_calendar(campaign_id):
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
 
     if not calendar:
-        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+        return jsonify({
+            "configured": False,
+            "message": f"No calendar found for campaign {campaign_id}",
+        }), 200
 
     return jsonify(calendar.to_dict()), 200
+
+
+CALENDAR_FORMAT_SOURCES = {
+    'gregorian': {
+        'name': 'Gregorian Calendar',
+        'filename': 'Gregorian.json',
+        'system': 'universal',
+        'setting': 'Real World',
+    },
+    'harptos': {
+        'name': 'Calendar of Harptos',
+        'filename': 'Harptos.json',
+        'system': 'D&D 5e',
+        'setting': 'Forgotten Realms',
+    },
+}
+
+
+def ensure_calendar_format(format_slug):
+    source = CALENDAR_FORMAT_SOURCES.get(format_slug)
+    if not source:
+        return None
+    element = GameElement.query.filter_by(
+        element_type='calendar_format',
+        name=source['name'],
+    ).first()
+    if element:
+        return element
+    calendar_path = Path(app.root_path) / source['filename']
+    with calendar_path.open('r', encoding='utf-8') as calendar_file:
+        format_data = json.load(calendar_file)
+    element = GameElement(
+        system=source['system'],
+        element_type='calendar_format',
+        module=None,
+        setting=source['setting'],
+        name=source['name'],
+        data=format_data,
+    )
+    db.session.add(element)
+    db.session.flush()
+    return element
+
+
+@app.route('/api/calendar-formats', methods=['GET'])
+@jwt_required()
+def get_calendar_formats():
+    formats = []
+    for slug, source in CALENDAR_FORMAT_SOURCES.items():
+        element = GameElement.query.filter_by(
+            element_type='calendar_format',
+            name=source['name'],
+        ).first()
+        display_name = (element.data or {}).get('display_name') if element else source['name']
+        formats.append({
+            'slug': slug,
+            'name': source['name'],
+            'display_name': display_name or source['name'],
+            'system': source['system'],
+        })
+    return jsonify({'formats': formats}), 200
+
+
+@app.route('/api/calendar/<int:campaign_id>', methods=['POST'])
+@jwt_required()
+def create_campaign_calendar(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may set up its calendar'}), 403
+    existing = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if existing:
+        return jsonify(existing.to_dict()), 200
+
+    data = request.get_json(silent=True) or {}
+    format_slug = str(data.get('format_slug') or 'gregorian').strip().lower()
+    format_element = ensure_calendar_format(format_slug)
+    if not format_element:
+        return jsonify({'message': 'Unsupported calendar format'}), 400
+
+    try:
+        current_year = int(data.get('year', 1))
+        current_month_index = int(data.get('month_index', 0))
+        current_day = int(data.get('day', 1))
+    except (TypeError, ValueError):
+        return jsonify({'message': 'Year, month, and day must be whole numbers'}), 400
+
+    months = (format_element.data or {}).get('months', [])
+    if not months or current_month_index < 0 or current_month_index >= len(months):
+        return jsonify({'message': 'The selected month is not valid for this calendar'}), 400
+    max_day = int(months[current_month_index].get('length', 0))
+    if current_day < 1 or current_day > max_day:
+        return jsonify({'message': f'Day must be between 1 and {max_day}'}), 400
+
+    calendar = Calendar(
+        name=str(data.get('name') or f'{campaign.name} Calendar').strip()[:100],
+        description=str(data.get('description') or f'Calendar for {campaign.name}').strip(),
+        campaign_id=campaign.id,
+        format_id=format_element.id,
+        format_slug=format_slug,
+        current_year=current_year,
+        current_month_index=current_month_index,
+        current_day=current_day,
+        current_hour=0,
+        current_minute=0,
+        epoch_year=1,
+        epoch_month_index=0,
+        epoch_day=1,
+    )
+    db.session.add(calendar)
+    db.session.commit()
+    emit_calendar_updated(campaign_id, {'kind': 'calendar_created'})
+    return jsonify(calendar.to_dict()), 201
 
 #POST   /api/calendar/<campaign_id>/date/set
 @app.route('/api/calendar/<int:campaign_id>/date/set', methods=['POST'])
@@ -4007,6 +6337,8 @@ def set_calendar_date(campaign_id):
     calendar.current_minute = minute
 
     db.session.commit()
+
+    emit_settlement_simulation_updated(campaign_id)
 
     return jsonify(calendar.to_dict()), 200
 
@@ -4054,6 +6386,8 @@ def advance_calendar_date(campaign_id):
             }
         }
     )
+
+    emit_settlement_simulation_updated(campaign_id)
 
     return jsonify(calendar.to_dict()), 200
 
@@ -4529,7 +6863,7 @@ def connected():
                     disconnect()
                     return
 
-            user = User.query.filter_by(username=username).first()
+            user = User.query.filter(func.lower(User.username) == username.lower()).first()
             app.logger.info("CONNECT- username: %s", username)
             app.logger.info("CONNECT- user: %s", user)
             if not user:
@@ -4574,7 +6908,12 @@ def handle_join_room(data):
 
     app.logger.debug('JOIN ROOM- User connected: %s', username)
 
-    user = User.query.filter_by(username=username).first()
+    if not isinstance(username, str) or not username.strip():
+        app.logger.error('JOIN ROOM- Missing username')
+        disconnect()
+        return
+
+    user = User.query.filter(func.lower(User.username) == username.lower()).first()
     if not user:
         app.logger.error("JOIN ROOM- User not found: %s", username)
         disconnect()
@@ -4612,6 +6951,72 @@ def handle_join_room(data):
         )
 
         emit_active_users(campaign_id, to_sid=False)
+
+
+@socketio.on('settlement_player_command')
+@socket_db_session
+def handle_settlement_player_command(data):
+    """Relay transient, DM-controlled map presentation state to campaign viewers."""
+    try:
+        identity = decode_token(request.args.get('token') or '')['sub']
+    except Exception:
+        emit('settlement_player_command_error', {'message': 'The map presentation session is not authenticated.'})
+        return
+    user = User.query.filter(func.lower(User.username) == str(identity).lower()).first()
+    try:
+        campaign_id = int((data or {}).get('campaign_id'))
+        settlement_id = int((data or {}).get('settlement_id'))
+    except (TypeError, ValueError):
+        emit('settlement_player_command_error', {'message': 'A campaign and settlement are required.'})
+        return
+
+    campaign = Campaign.query.get(campaign_id)
+    if not user or not campaign or user.id not in {campaign.owner_id, campaign.dm_id}:
+        emit('settlement_player_command_error', {'message': 'Only the campaign DM can control Player View.'})
+        return
+    if not WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign_id).first():
+        emit('settlement_player_command_error', {'message': 'That settlement is not part of this campaign.'})
+        return
+
+    action = (data or {}).get('action')
+    command = {'campaign_id': campaign_id, 'settlement_id': settlement_id, 'action': action}
+
+    def vector(value):
+        if not isinstance(value, (list, tuple)) or len(value) != 3:
+            return None
+        try:
+            result = [float(component) for component in value]
+        except (TypeError, ValueError):
+            return None
+        return result if all(abs(component) <= 10_000_000 for component in result) else None
+
+    if action == 'camera':
+        camera = (data or {}).get('camera') or {}
+        position, target = vector(camera.get('position')), vector(camera.get('target'))
+        if position is None or target is None:
+            return
+        command['camera'] = {'position': position, 'target': target}
+    elif action == 'focus':
+        point = (data or {}).get('point') or {}
+        try:
+            x, y = float(point.get('x')), float(point.get('y'))
+            elevation = float(point.get('elevation') or 0)
+        except (TypeError, ValueError):
+            return
+        if any(abs(value) > 10_000_000 for value in (x, y, elevation)):
+            return
+        command['point'] = {'x': x, 'y': y, 'elevation': elevation}
+    elif action == 'label':
+        building_id = str((data or {}).get('building_id') or '')[:120]
+        if not building_id:
+            return
+        command.update({'building_id': building_id, 'visible': bool((data or {}).get('visible'))})
+    elif action == 'labels_all':
+        command['visible'] = bool((data or {}).get('visible'))
+    else:
+        return
+
+    socketio.emit('settlement_player_command', command, to=f'campaign:{campaign_id}')
 
 
 @socketio.on('leave_room')
@@ -4916,21 +7321,25 @@ def handle_spell_transfer(messageObj, recipient_users, sender):
 
 
 ## Initiative Tracking
+def initiative_campaign_room():
+    """Return the campaign room for the authenticated socket connection."""
+    campaign_id = request.args.get('campaignID')
+    return f"campaign:{campaign_id}" if campaign_id else None
+
+
 @socketio.on('Roll for initiative!')
 @socket_db_session
 def roll_initiative():
-    # Include authentication or other logic here
-
-    # Emit the "Roll for initiative!" event to all connected clients
-    emit('Roll for initiative!')
+    room = initiative_campaign_room()
+    emit('Roll for initiative!', to=room) if room else emit('Roll for initiative!')
 
 @socketio.on('initiative roll')
 @socket_db_session
 def handle_initiative_roll(data):
-    # Include validation or other logic here
-
-    # Emit the initiative roll to the DM (or all clients, depending on your design)
-    emit('initiative roll', data)
+    if not isinstance(data, dict) or not data.get('characterName'):
+        return
+    room = initiative_campaign_room()
+    emit('initiative roll', data, to=room) if room else emit('initiative roll', data)
 
 @socketio.on('update turn')
 @socket_db_session
@@ -4941,19 +7350,20 @@ def handle_update_turn(data):
     #     'next': 'Next Character Name'
     # }
 
-    # Broadcast the current and next turn information to all clients
-    emit('turn update', data)
+    room = initiative_campaign_room()
+    emit('turn update', data, to=room) if room else emit('turn update', data)
 
 @socketio.on('combatants')
 @socket_db_session
 def handle_combatants(data):
-    # Broadcast the current and next turn information to all clients
-    emit('combatants', data)
+    room = initiative_campaign_room()
+    emit('combatants', data, to=room) if room else emit('combatants', data)
 
 @socketio.on('end of combat')
 @socket_db_session
 def end_combat():
-    emit('end of combat')
+    room = initiative_campaign_room()
+    emit('end of combat', to=room) if room else emit('end of combat')
 
 
 @socketio.on('heartbeat')
@@ -4987,7 +7397,10 @@ def handle_user_disconnected(data):
 def handle_disconnect():
     """event listener when client disconnects to the server"""
     app.logger.debug("DISCONNECT- request.sid: %s", request.sid)
-    app.logger.debug("DISCONNECT- request.args: %s", request.args)
+    safe_args = request.args.to_dict()
+    if safe_args.get('token'):
+        safe_args['token'] = '[redacted]'
+    app.logger.debug("DISCONNECT- request.args: %s", safe_args)
 
     user = User.query.filter_by(sid=request.sid).first()
     if user:

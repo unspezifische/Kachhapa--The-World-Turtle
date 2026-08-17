@@ -36,3 +36,8 @@
 .login-container button:hover {
   background-color: #0056b3;
 }
+
+.login-container button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}

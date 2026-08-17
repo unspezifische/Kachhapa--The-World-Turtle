@@ -1,6 +1,8 @@
+name: kachhapa
+
 services:
   postgres:
-    image: postgres:16
+    image: postgres:17
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
@@ -56,6 +58,10 @@ services:
       FLASK_DEBUG: "1"
       DATABASE_URL: postgresql://admin:admin@postgres:5432/db
       RABBIT_URL: amqp://guest:guest@rabbitmq:5672//
+      FAERUN_ATLAS_TILE_URL: ${FAERUN_ATLAS_TILE_URL:-}
+      FAERUN_ATLAS_TILE_ZOOM: ${FAERUN_ATLAS_TILE_ZOOM:-2}
+      FAERUN_ATLAS_IMAGE_URL: ${FAERUN_ATLAS_IMAGE_URL:-}
+      FAERUN_ATLAS_ATTRIBUTION: ${FAERUN_ATLAS_ATTRIBUTION:-}
     networks:
       - Kachhapa-network
 
@@ -74,8 +80,11 @@ services:
 
 volumes:
   postgres_data:
+    name: kachhapa_postgres_data
   myapp_socket:
+    name: kachhapa_myapp_socket
   rabbitmq_data:
+    name: kachhapa_rabbitmq_data
 
 networks:
   Kachhapa-network:

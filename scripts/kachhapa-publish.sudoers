@@ -1,0 +1,1 @@
+ijohnson ALL=(root) NOPASSWD: /usr/local/sbin/kachhapa-deploy-root check, /usr/local/sbin/kachhapa-deploy-root restart kachhapa-backend, /usr/local/sbin/kachhapa-deploy-root restart mtg-backend, /usr/local/sbin/kachhapa-deploy-root mtg-db, /usr/local/sbin/kachhapa-deploy-root nginx

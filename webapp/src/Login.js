@@ -6,15 +6,33 @@ import axios from 'axios'; // Import axios
 
 import './Login.css';
 
-function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsername }) {
+function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsername, resetCampaignSelection, expireSession }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const navigate = useNavigate();
 
+  function requestedRedirect() {
+    const value = new URLSearchParams(window.location.search).get('redirect');
+    if (!value) return null;
+    try {
+      const target = new URL(value, window.location.origin);
+      if (target.origin !== window.location.origin || !target.pathname.startsWith('/')) return null;
+      return `${target.pathname}${target.search}${target.hash}`;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function finishAuthentication(fallback = null) {
+    const target = requestedRedirect() || fallback;
+    if (target) navigate(target, { replace: true });
+  }
+
   function authenticateUserWithToken(token) {
-    console.log("Authenticating with token:", token);
+    console.log("Authenticating stored session");
     setIsLoading(true); // Set loading to true when starting authentication
     axios.post('/api/verify', { token: token })
       .then(response => {
@@ -43,26 +61,22 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
           console.log("Redirect URL:", redirectUrl);
 
           if (redirectUrl) {
-            // Decode the redirect URL
-            const decodedRedirectUrl = decodeURIComponent(redirectUrl);
-            console.log("Decoded Redirect URL:", decodedRedirectUrl);
-
-            // Redirect to the intended URL using window.location.assign
-            try {
-              window.location.assign(decodedRedirectUrl);
-            } catch (error) {
-              console.warn("window.location.assign failed", error);
-              // Fallback to window.location.href if window.location.assign fails
-              window.location.href = decodedRedirectUrl;
-            }
+            finishAuthentication();
           }
         } else {
+          expireSession?.();
           setIsLoading(false); // Set loading to false if the token was invalid
         }
       })
       .catch(error => {
         console.error(error);
-        localStorage.removeItem('token'); // Remove invalid token
+        if (expireSession) expireSession();
+        else {
+          localStorage.removeItem('token');
+          setToken('');
+          setIsLoggedIn(false);
+          resetCampaignSelection?.();
+        }
         if (error.response && error.response.status === 401) {
           console.log("** Unauthorized request- bad token **");
         }
@@ -73,15 +87,36 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
   // Authenticate
   useEffect(() => {
     const token = localStorage.getItem('token');
-  
+
     if (token) {
       authenticateUserWithToken(token);
+      return;
     }
+
+    // localStorage is origin-scoped. Recover the shared HttpOnly session when
+    // arriving from maps.*, tools.*, mtg.*, or the primary hostname.
+    setIsLoading(true);
+    axios.get('/api/session', { withCredentials: true })
+      .then(({ data }) => {
+        if (!data?.success || !data.access_token) return;
+        localStorage.setItem('token', data.access_token);
+        setToken(data.access_token);
+        setUserID(data.id);
+        setAppUsername(data.username);
+        setIsLoggedIn(true);
+        finishAuthentication();
+      })
+      .catch(error => {
+        if (error.response?.status !== 401) console.error('Unable to restore shared session:', error);
+      })
+      .finally(() => setIsLoading(false));
   }, []);
 
 
   const handleSubmit = (event) => {
     event.preventDefault();
+    setError('');
+    setIsSubmitting(true);
 
     axios.post('/api/login', {
       username,
@@ -90,22 +125,32 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
     .then(response => {
       console.log("Response from login:", response);
       console.log("LOGIN-", response.data);
+      const redirectTarget = requestedRedirect();
+      const redirectCampaign = redirectTarget ? new URL(redirectTarget, window.location.origin).searchParams.get('campaignID') : null;
+      if (!redirectCampaign) resetCampaignSelection?.();
       setToken(response.data.access_token);
-      console.log("Setting Token:", response.data.access_token);
       localStorage.setItem('token', response.data.access_token);
       setUserID(response.data.userID);
       console.log("Setting USERID:", response.data.userID);
-      setAppUsername(username);
+      setAppUsername(response.data.username || username.toLowerCase());
       console.log("Setting Username:", username);
       
       setIsLoggedIn(true);
-      navigate("/accountProfile");
-      console.log("Navigating to accountProfile");
+      finishAuthentication('/accountProfile');
+      console.log("Navigating to requested entry point or accountProfile");
     })
       .catch(error => {
-        setError(error.response.data.message);
+        const serverMessage = error.response?.data?.message || error.response?.data?.error;
+        if (serverMessage) {
+          setError(serverMessage);
+        } else if (!error.response) {
+          setError('Unable to connect to the server backend. Check that it is running and try again.');
+        } else {
+          setError(`The server could not complete the login request (HTTP ${error.response.status}).`);
+        }
         console.log('Error logging in-', error);
-    });
+      })
+      .finally(() => setIsSubmitting(false));
   };
 
   return (
@@ -124,7 +169,9 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <button type="submit">Login</button>
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Connecting…' : 'Login'}
+        </button>
       </form>
       {error && <p className="error-message">{error}</p>}
       <Link to="/register">Register</Link>

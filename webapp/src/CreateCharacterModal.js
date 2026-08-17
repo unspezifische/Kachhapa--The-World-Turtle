@@ -2,10 +2,25 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Form } from 'react-bootstrap';
 // import { Modal } from 'react-bootstrap';
-import { Modal } from '@mui/material';
-import { Stepper, Step, StepButton, Button, FormControl, InputLabel, Select } from '@mui/material';
-import { Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
+import { Stepper, Step, StepButton, Button } from '@mui/material';
+import { Dialog, DialogContent, DialogActions } from '@mui/material';
 import { AppBar, Toolbar, IconButton, Typography, Box } from '@mui/material';
+import {
+    ABILITIES,
+    POINT_COSTS,
+    abilityDraftIsComplete,
+    initialAbilityDrafts,
+    pointBuyOptions,
+    pointBuyRemaining,
+    rollAbilityScore,
+    standardArrayOptions,
+} from './characterBuilderAbilities';
+import {
+    backgroundEquipment,
+    normalizeStartingEquipment,
+    selectedEquipmentList,
+} from './characterBuilderEquipment';
+import './CreateCharacterModal.css';
 
 import CloseIcon from '@mui/icons-material/Close';
 
@@ -32,38 +47,89 @@ const skillAbilities = {
 
 const alignments = ['Any Alignment', 'Lawful Good', 'Neutral Good', 'Chaotic Good', 'Lawful Neutral', 'Neutral', 'Chaotic Neutral', 'Lawful Evil', 'Neutral Evil', 'Chaotic Evil'];
 
+const humanizeLabel = (value) => String(value || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const isNumberedCollection = (value) => value && typeof value === 'object' &&
+    !Array.isArray(value) && Object.keys(value).length > 0 &&
+    Object.keys(value).every((key) => /^\d+$/.test(key));
+
+const DetailValue = ({ value }) => {
+    if (value === null || value === undefined || value === '') return <span>—</span>;
+    if (typeof value === 'boolean') return <span>{value ? 'Yes' : 'No'}</span>;
+    if (Array.isArray(value)) {
+        if (value.length === 0) return <span>None</span>;
+        return <ul className="character-builder-list">{value.map((item, index) => <li key={index}><DetailValue value={item} /></li>)}</ul>;
+    }
+    if (isNumberedCollection(value)) {
+        return (
+            <ul className="character-builder-list">
+                {Object.values(value).map((item, index) => <li key={index}><DetailValue value={item} /></li>)}
+            </ul>
+        );
+    }
+    if (typeof value === 'object') {
+        return (
+            <div className="character-builder-detail-grid">
+                {Object.entries(value).map(([key, nested]) => (
+                    <section className="character-builder-detail-card" key={key}>
+                        <h4>{humanizeLabel(key)}</h4>
+                        <DetailValue value={nested} />
+                    </section>
+                ))}
+            </div>
+        );
+    }
+    return <span>{String(value)}</span>;
+};
+
+const SelectionDetails = ({ title, details, loading }) => {
+    if (loading) return <p role="status">Loading {title.toLowerCase()} details…</p>;
+    if (!details) return null;
+    const entries = Object.entries(details);
+    const description = entries.find(([key]) => /^description$/i.test(key))?.[1];
+    const displayEntries = entries.filter(([key]) => {
+        const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+        return !['name', 'description', 'starter_equipment', 'starting_equipment', 'starting_equipment_options'].includes(normalized);
+    });
+    return (
+        <section aria-label={`${title} details`} className="character-builder-selection-details">
+            <h3>{title} details</h3>
+            {description && <p className="character-builder-description">{description}</p>}
+            <DetailValue value={Object.fromEntries(displayEntries)} />
+        </section>
+    );
+};
+
 const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     const [activeStep, setActiveStep] = useState(0);
-    const [steps, setSteps] = useState(['Race', 'Class', 'Abilities', 'Description', 'Equipment', 'Summary']);  // Eventually, get this info from the database based on the System
+    const steps = ['Race', 'Class', 'Abilities', 'Description', 'Equipment', 'Summary'];
     const [completedSteps, setStepCompleted] = useState([false, false, false, false, false, false]);
-    const [completed, setCompleted] = useState(false);
 
     const handleClose = () => {
         setShow(false);
     };
-
-    useEffect(() => {
-        setCompleted(completedSteps.every(step => step));
-    }, [completedSteps]);
 
     // Declare a new state variable to store the character data
     const [character, setCharacter] = useState({
         Name: null,
         system: 'D&D 5e',
         Class: null,
-        Level: null,
+        Level: 1,
         Background: null,
         Race: null,
         Alignment: null,
         ExperiencePoints: 0,
 
         abilityScores: {
-            Strength: 0,
-            Dexterity: 0,
-            Constitution: 0,
-            Intelligence: 0,
-            Wisdom: 0,
-            Charisma: 0,
+            strength: '',
+            dexterity: '',
+            constitution: '',
+            intelligence: '',
+            wisdom: '',
+            charisma: '',
         },
         proficiencyBonus: 2,  // Determined by level
         SavingThrows: {
@@ -124,13 +190,18 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     const [selectedRace, setSelectedRace] = useState('');
     const [selectedClass, setSelectedClass] = useState('');
     const [selectedBackground, setSelectedBackground] = useState('');
-    const [attributes, setAttributes] = useState('');  // This will be a list of the selected attributes [str, dex, con, int, wis, cha
-    const [equipement, setEquipment] = useState('');
+    const [selectionDetails, setSelectionDetails] = useState({ race: null, class: null, background: null });
+    const [detailsLoading, setDetailsLoading] = useState({ race: false, class: false, background: false });
 
     const [selectedEquipment, setSelectedEquipment] = useState({});
+    const [stepError, setStepError] = useState('');
+
+    const classEquipmentOptions = normalizeStartingEquipment(selectionDetails.class);
+    const fixedBackgroundEquipment = backgroundEquipment(selectionDetails.background);
 
     // Function to handle equipment selection
     const handleEquipmentSelection = (optionIndex, choice) => {
+        setStepError('');
         setSelectedEquipment(prevState => ({
             ...prevState,
             [optionIndex]: choice,
@@ -141,109 +212,74 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
     const [classes, setClasses] = useState([]);
     const [backgrounds, setBackgrounds] = useState([]);
 
+    const requestConfig = () => {
+        const system = headers?.System || character.system || 'D&D 5e';
+        return { headers: { ...headers, System: system }, params: { system } };
+    };
+
+    const previewSelection = async (kind, name) => {
+        const setters = { race: setSelectedRace, class: setSelectedClass, background: setSelectedBackground };
+        setters[kind](name);
+        setStepError('');
+        if (kind === 'class') setSelectedEquipment({});
+        setSelectionDetails((current) => ({ ...current, [kind]: null }));
+        if (!name) return;
+
+        setDetailsLoading((current) => ({ ...current, [kind]: true }));
+        const endpoint = kind === 'class' ? 'classes' : `${kind}s`;
+        try {
+            const response = await axios.get(`/api/${endpoint}/${encodeURIComponent(name)}`, requestConfig());
+            setSelectionDetails((current) => ({ ...current, [kind]: response.data }));
+        } catch (error) {
+            console.error(`Unable to load ${kind} details`, error);
+            setSelectionDetails((current) => ({ ...current, [kind]: { error: 'Details could not be loaded.' } }));
+        } finally {
+            setDetailsLoading((current) => ({ ...current, [kind]: false }));
+        }
+    };
+
     // A state variable for the selected method of ability score generation
-    const [method, setMethod] = useState('Choose');
+    const [method, setMethod] = useState('');
+    const [abilityDrafts, setAbilityDrafts] = useState(initialAbilityDrafts);
 
     // Handle method changes
     const handleMethodChange = (event) => {
         const newMethod = event.target.value;
         setMethod(newMethod);
-
-        // Reset the values used by the various selection methods
-        setStandardArray([15, 14, 13, 12, 10, 8]);
-        setRemainingPoints(27);
         setCharacter(prevState => ({
             ...prevState,
-            abilityScores: {
-                strength: 0,
-                dexterity: 0,
-                constitution: 0,
-                intelligence: 0,
-                wisdom: 0,
-                charisma: 0
-            }
+            abilityScores: newMethod ? { ...abilityDrafts[newMethod] } : { ...prevState.abilityScores }
         }));
+    };
+
+    const updateAbility = (ability, value) => {
+        const nextScores = { ...abilityDrafts[method], [ability]: value };
+        setAbilityDrafts((drafts) => ({ ...drafts, [method]: nextScores }));
+        setCharacter((current) => ({ ...current, abilityScores: nextScores }));
     };
 
     // Handle ability score changes for manual entry
     const handleAbilityScoreChange = (event) => {
         console.log("Setting Ability Score " + event.target.name + " to " + event.target.value + "  by Dice Roll");
-        const selectedValue = parseInt(event.target.value);
-        setCharacter(prevState => ({
-            ...prevState,
-            abilityScores: {
-                ...prevState.abilityScores,
-                [event.target.name]: selectedValue,
-            }
-        }));
+        const value = event.target.value;
+        updateAbility(event.target.name, value === '' ? '' : Number(value));
     };
-
-    const [standardArray, setStandardArray] = useState([15, 14, 13, 12, 10, 8]);
-    const [selectedStandardValues, setSelectedStandardValues] = useState({
-        strength: '',
-        dexterity: '',
-        constitution: '',
-        intelligence: '',
-        wisdom: '',
-        charisma: ''
-    });
 
     const handleStandardArraySelection = (event) => {
         const { name, value } = event.target;
-        console.log("Setting Ability Score " + name + " to " + value + " by Standard Array");
-        const selectedValue = parseInt(value);
-        const previousValue = character.abilityScores[name];
-
-        // If the ability score had a previous value, add it back to the standard array
-        if (previousValue) {
-            console.log('Adding previous value back to the standard array:', previousValue);
-            setStandardArray(prevArray => [...prevArray, previousValue]);
-        }
-
-        // Update the ability score in the character state
-        setCharacter(prevState => ({
-            ...prevState,
-            abilityScores: {
-                ...prevState.abilityScores,
-                [event.target.name]: selectedValue,
-            }
-        }));
-
-        // Update the selected values state
-        setSelectedStandardValues(prevState => ({
-            ...prevState,
-            [name]: selectedValue
-        }));
-
-        // Remove the selected value from the standard array
-        setStandardArray(prevArray => prevArray.filter(item => item !== selectedValue));
+        updateAbility(name, value === '' ? '' : Number(value));
     };
-
-    useEffect(() => {
-        console.log("selectedStandardValues-", selectedStandardValues);
-    }, [selectedStandardValues]);
-
-    const [remainingPoints, setRemainingPoints] = useState(27);
-    const pointCosts = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9 };
 
     // Add a function to handle point buy selections
     const handlePointBuySelection = (event) => {
         console.log("Setting Ability Score " + event.target.name + " to " + event.target.value + " by Point Buy");
-        const selectedValue = parseInt(event.target.value);
-        const previousValue = character.abilityScores[event.target.name] || 8;
-        const pointsUsed = pointCosts[selectedValue] - pointCosts[previousValue];
-        console.log('Points used:', pointsUsed);
-        if (remainingPoints - pointsUsed >= 0) {
-            const selectedValue = parseInt(event.target.value);
-            setCharacter(prevState => ({
-                ...prevState,
-                abilityScores: {
-                    ...prevState.abilityScores,
-                    [event.target.name]: selectedValue,
-                }
-            }));
-            setRemainingPoints(remainingPoints - pointsUsed);
-        }
+        updateAbility(event.target.name, Number(event.target.value));
+    };
+
+    const rollAllAbilities = () => {
+        const scores = Object.fromEntries(ABILITIES.map((ability) => [ability, rollAbilityScore()]));
+        setAbilityDrafts((drafts) => ({ ...drafts, dice: scores }));
+        setCharacter((current) => ({ ...current, abilityScores: scores }));
     };
 
     // Get Race, Class, and Background data from the server
@@ -277,7 +313,7 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
         };
     
         fetchData();
-    }, []);
+    }, [headers]);
 
     useEffect(() => {
         console.log("Updated Character-", character);
@@ -285,12 +321,19 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
 
     // Save the completed character
     const handleCreateCharacter = () => {
-        // Ensure a default system is always sent
-        const payload = { ...character, system: character.system || 'D&D 5e' };
+        const scores = character.abilityScores;
+        const wealth = character.Wealth || {};
+        const payload = {
+            ...character,
+            character_name: character.Name,
+            campaignID: headers?.CampaignID || headers?.['Campaign-ID'] || null,
+            system: character.system || 'D&D 5e',
+            ...scores,
+            ...wealth,
+        };
         const requestHeaders = { ...headers, System: payload.system };
 
-        // Send the character data to the server
-        axios.put('/api/character', payload, { headers: requestHeaders })
+        axios.post('/api/characters', payload, { headers: requestHeaders })
             .then((response) => {
                 console.log(response);
                 onHide();
@@ -302,29 +345,18 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
 
     // Update the character state when the user types in the form
     const handleInputChange = (event) => {
-        setCharacter({
-            ...character,
+        setStepError('');
+        setCharacter((current) => ({
+            ...current,
             [event.target.name]: event.target.value,
-        });
+        }));
     };
 
 
     // Buttons for controlling the stepper
-    const handleNext = () => {
-        setActiveStep((prevActiveStep) => prevActiveStep + 1);
-    };
-
-    const handleBack = () => {
-        setActiveStep((prevActiveStep) => prevActiveStep - 1);
-    };
-
-    const handleStep = (step) => () => {
-        setActiveStep(step);
-    };
-
     const handleReset = () => {
         setActiveStep(0);
-        setCompleted({});
+        setStepCompleted(steps.map(() => false));
     };
 
     const handleComplete = () => {
@@ -345,21 +377,26 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                 }
                 break;
             case 2: // Attributes step
-                const allScoresNonZero = Object.values(character.abilityScores).every(score => score !== 0);
-                canComplete = allScoresNonZero;
+                canComplete = abilityDraftIsComplete(method, abilityDrafts[method] || {});
                 console.log("Saved Ability Scores-", character.abilityScores);
                 break;
             case 3: // Character details step
-                canComplete = selectedBackground !== '';
+                canComplete = selectedBackground !== '' &&
+                    Boolean(character.Name?.trim()) &&
+                    Boolean(character.Alignment);
                 if (canComplete) {
                     updatedCharacter.Background = selectedBackground;
                 }
                 break;
             case 4: // Equipment step
-                canComplete = equipement !== '';
-                if (canComplete) {
-                    updatedCharacter.Equipment = equipement;
-                }
+                canComplete = classEquipmentOptions.every((option, index) =>
+                    !option.requiresSelection || Boolean(selectedEquipment[index])
+                );
+                updatedCharacter.Equipment = selectedEquipmentList(
+                    classEquipmentOptions,
+                    selectedEquipment,
+                    fixedBackgroundEquipment,
+                );
                 break;
             case 5: // Equipment step
                 canComplete = true;
@@ -369,21 +406,23 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
         }
 
         if (canComplete) {
+            setStepError('');
             setCharacter(updatedCharacter);
             const newCompletedSteps = [...completedSteps];
             newCompletedSteps[activeStep] = true;
             setStepCompleted(newCompletedSteps);
-            handleNext();
+            setActiveStep((current) => Math.min(current + 1, steps.length - 1));
         } else {
-            // Show an error message or some other feedback to the user
-            console.error("Please make a selection before proceeding.");
+            const messages = [
+                'Choose a race before completing this step.',
+                'Choose a class before completing this step.',
+                'Complete all six ability scores before continuing.',
+                'Enter a name, background, and alignment before continuing.',
+                'Choose one item from each required starting-equipment group.',
+            ];
+            setStepError(messages[activeStep] || 'Complete the required fields before continuing.');
         }
     };
-
-    function getModifier(score) {
-        if (!score) return 0;
-        return Math.floor((score - 10) / 2);
-    }
 
     function calculateProficiencyBonus(level) {
         return Math.ceil(level / 4) + 1;
@@ -460,40 +499,27 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                 </AppBar>
                 {/* Race */}
                 {activeStep === 0 && (
-                    <div style={{ height: 'calc(100vh - 250px)' }}>
+                    <div className="character-builder-step">
                         <h2>Race</h2>
                         <Form.Group controlId="characterRace">
                             <Form.Select
                                 aria-label="Race selection"
                                 value={selectedRace}
-                                onChange={(e) => { console.log(e.target.value); setSelectedRace(e.target.value) }}
+                                onChange={(e) => previewSelection('race', e.target.value)}
                             >
-                                <option>--Choose A Race--</option>
+                                <option value="">--Choose A Race--</option>
                                 {races.map((elem, index) => (
                                     <option key={`race-${index}`} value={elem.name}>{elem.name}</option>
                                 ))}
                             </Form.Select>
                         </Form.Group>
                         <div style={{ height: '10px' }}></div>
-                        {selectedRace && (
-                            <div style={{ overflow: 'auto', maxHeight: '63vh' }}>
-                                {Object.entries(races.find(race => race.name === selectedRace)?.data || {}).map(([key, value]) => (
-                                    <p key={key}>
-                                        <strong>{key}:</strong>
-                                        {Array.isArray(value) ? value.join(', ') :
-                                            (typeof value === 'object' && value !== null) ?
-                                                Object.entries(value).map(([subKey, subValue]) => (
-                                                    <span key={subKey}>{`${subKey}: ${subValue}`}</span>
-                                                )) : value}
-                                    </p>
-                                ))}
-                            </div>
-                        )}
+                        <SelectionDetails title={selectedRace} details={selectionDetails.race} loading={detailsLoading.race} />
                     </div>
                 )}
                 {/* Class */}
                 {activeStep === 1 && (
-                    <div style={{ height: 'calc(100vh - 250px)', overflow: 'auto' }}>
+                    <div className="character-builder-step">
                         <h2>Class</h2>
                         <Form.Group controlId="characterClass" style={{ maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
                             <Form>
@@ -502,120 +528,102 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                                     <Form.Select
                                         aria-label="Class selection"
                                         value={selectedClass}
-                                        onChange={(e) => { console.log(e.target.value); setSelectedClass(e.target.value) }}
+                                        onChange={(e) => previewSelection('class', e.target.value)}
                                     >
-                                        <option>--Choose A Class--</option>
+                                        <option value="">--Choose A Class--</option>
                                         {classes.map((elem, index) => (
                                             <option key={`class-${index}`} value={elem.name}>{elem.name}</option>
                                         ))}
                                     </Form.Select>
                                 </Form.Group>
                                 <div style={{ height: '10px' }}></div>
-                                {selectedClass && (
-                                    <div style={{ overflow: 'auto', maxHeight: '63vh' }}>
-                                        {Object.entries(classes.find(cls => cls.name === selectedClass)?.data || {}).map(([key, value]) => (
-                                            <p key={key}>
-                                                <strong>{key}:</strong>
-                                                {Array.isArray(value) ? value.join(', ') :
-                                                    (typeof value === 'object' && value !== null) ?
-                                                        Object.entries(value).map(([subKey, subValue]) => (
-                                                            <span key={subKey}>{`${subKey}: ${subValue}`}</span>
-                                                        )) : value}
-                                            </p>
-                                        ))}
-                                    </div>
-                                )}
+                                <SelectionDetails title={selectedClass} details={selectionDetails.class} loading={detailsLoading.class} />
                             </Form>
                         </Form.Group>
                     </div>
                 )}
                 {/* Attributes */}
                 {activeStep === 2 && (
-                    <div style={{ height: 'calc(100vh - 250px)' }}>
+                    <div className="character-builder-step">
                         <h2>Ability Scores</h2>
                         <Form.Group controlId="generationMethod">
                             <Form.Label>Generation Method</Form.Label>
                             <Form.Control as="select" value={method} onChange={handleMethodChange}>
-                                <option value="Choose">--Choose a Generation Method--</option>
+                                <option value="">--Choose a Generation Method--</option>
                                 <option value="standard">Standard Array</option>
                                 <option value="dice">Dice Roll</option>
                                 <option value="point">Point Buy</option>
                             </Form.Control>
                         </Form.Group>
-                        {method === 'point' && <p>Remaining Points: {remainingPoints}</p>}
-                        {Object.keys(character.abilityScores).map((ability) => (
+                        {method === 'point' && <p><strong>Remaining Points: {pointBuyRemaining(abilityDrafts.point)}</strong></p>}
+                        {method === 'dice' && (
+                            <Button onClick={rollAllAbilities} variant="outlined" sx={{ my: 1 }}>
+                                Roll all (4d6, drop lowest)
+                            </Button>
+                        )}
+                        {ABILITIES.map((ability) => (
                             <Form.Group key={ability} controlId={ability}>
-                                <Form.Label>{ability}</Form.Label>
+                                <Form.Label>{ability[0].toUpperCase() + ability.slice(1)}</Form.Label>
                                 {method === 'dice' && (
-                                    <Form.Control type="number" name={ability} value={character.abilityScores[ability]} onChange={handleAbilityScoreChange} />
+                                    <Form.Control type="number" min="3" max="18" name={ability} value={abilityDrafts.dice[ability]} onChange={handleAbilityScoreChange} />
                                 )}
                                 {method === 'point' && (
-                                    <Form.Control as="select" name={ability} value={character.abilityScores[ability]} onChange={handlePointBuySelection} >
-                                        <option>--Choose--</option>
-                                        {Object.keys(pointCosts).map((item) => (
-                                            <option key={item} value={item}>{item} (Cost: {pointCosts[item]})</option>
+                                    <Form.Control as="select" name={ability} value={abilityDrafts.point[ability]} onChange={handlePointBuySelection}>
+                                        {pointBuyOptions(abilityDrafts.point, ability).map((score) => (
+                                            <option key={score} value={score}>{score} (Cost: {POINT_COSTS[score]})</option>
                                         ))}
                                     </Form.Control>
                                 )}
                                 {method === 'standard' && (
-                                    <Form.Control as="select" name={ability} value={selectedStandardValues[ability]} onChange={handleStandardArraySelection}>
-                                        <option>--Choose--</option>
-                                        {standardArray.map((item) => (
-                                            <option key={item} value={item}>{item}</option>
+                                    <Form.Control as="select" name={ability} value={abilityDrafts.standard[ability]} onChange={handleStandardArraySelection}>
+                                        <option value="">--Choose--</option>
+                                        {standardArrayOptions(abilityDrafts.standard, ability).map((score) => (
+                                            <option key={score} value={score}>{score}</option>
                                         ))}
                                     </Form.Control>
                                 )}
                             </Form.Group>
                         ))}
+                        {method && !abilityDraftIsComplete(method, abilityDrafts[method]) && (
+                            <p className="text-muted">Complete all six scores to finish this step.</p>
+                        )}
                     </div>
                 )}
                 {/* Description */}
                 {activeStep === 3 && (
-                    <div style={{ height: 'calc(100vh - 250px)' }}>
+                    <div className="character-builder-step">
                         <Form.Group controlId="characterName">
                             <Form.Label>Character Name</Form.Label>
-                            <Form.Control type="text" name="Name" value={character.Name} onChange={handleInputChange} required />
+                            <Form.Control type="text" name="Name" value={character.Name || ''} onChange={handleInputChange} required />
+                        </Form.Group>
+                        <Form.Group controlId="characterLevel">
+                            <Form.Label>Starting Level</Form.Label>
+                            <Form.Control type="number" min="1" max="20" name="Level" value={character.Level} onChange={handleInputChange} required />
                         </Form.Group>
                         <Form.Group controlId="characterBackground">
                             <Form.Label>Background</Form.Label>
                             <Form.Control
                                 as="select"
-                                name="background"
-                                value={selectedBackground.name}
-                                onChange={(e) => {
-                                    const selected = backgrounds.find(bg => bg.name === e.target.value);
-                                    setSelectedBackground(selected);
-                                }}
+                                name="Background"
+                                value={selectedBackground}
+                                onChange={(e) => previewSelection('background', e.target.value)}
                                 required
                             >
-                                <option>--Choose--</option>
+                                <option value="">--Choose--</option>
                                 {backgrounds.map((elem, index) => (
                                     <option key={`background-${index}`} value={elem.name}>{elem.name}</option>
                                 ))}
                             </Form.Control>
                         </Form.Group>
                         <div style={{ height: '10px' }}></div> {/* This div will create some space */}
-                        {selectedBackground && (
-                            <div style={{ overflow: 'auto', maxHeight: '50vh' }}>
-                                {Object.entries(backgrounds.find(bg => bg.name === selectedBackground.name)?.data || {}).map(([key, value]) => (
-                                    <p key={key}>
-                                        <strong>{key}:</strong>
-                                        {Array.isArray(value) ? value.join(', ') :
-                                            (typeof value === 'object' && value !== null) ?
-                                                Object.entries(value).map(([subKey, subValue]) => (
-                                                    <span key={subKey}>{`${subKey}: ${subValue}`}</span>
-                                                )) : value}
-                                    </p>
-                                ))}
-                            </div>
-                        )}
+                        <SelectionDetails title={selectedBackground} details={selectionDetails.background} loading={detailsLoading.background} />
                         <Form.Group>
                             <Form.Label>Alignment</Form.Label>
                             <Form.Control
                                 as="select"
-                                value={character.Alignment}
+                                value={character.Alignment || ''}
                                 onChange={handleInputChange}
-                                name="alignment"
+                                name="Alignment"
                             >
                                 <option value="" disabled>Select alignment</option>
                                 {alignments.map(alignment => (
@@ -627,63 +635,102 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                 )}
                 {/* Equipment */}
                 {activeStep === 4 && (
-                    <div style={{ height: 'calc(100vh - 250px)' }}>
-                        <h2>Character Equipment</h2>
-                        {/* Pick Character Equipment */}
-                        {selectedClass && classes.find(cls => cls.name === selectedClass)?.starter_equipment?.options && (
-                            <div>
-                                {classes.find(cls => cls.name === selectedClass).starter_equipment.options.map((option, index) => (
-                                    <div key={index}>
-                                        <p><strong>{option.description}</strong></p>
-                                        {option.requires_selection ? (
-                                            <Form.Group controlId={`equipment-option-${index}`}>
-                                                <Form.Label>Choose one:</Form.Label>
-                                                <Form.Select
-                                                    aria-label={`Equipment option ${index}`}
-                                                    value={selectedEquipment[index] || ''}
-                                                    onChange={(e) => handleEquipmentSelection(index, e.target.value)}
-                                                >
-                                                    <option value="">--Choose--</option>
+                    <div className="character-builder-step">
+                        <h2>Starting Equipment</h2>
+                        <p className="text-muted">Choose the equipment supplied by your class. Fixed class and background items are included automatically.</p>
+                        {selectedClass && classEquipmentOptions.length > 0 && (
+                            <div className="character-builder-equipment-grid">
+                                {classEquipmentOptions.map((option, index) => {
+                                    const complete = !option.requiresSelection || Boolean(selectedEquipment[index]);
+                                    return (
+                                        <section className={`character-builder-equipment-card${complete ? ' is-complete' : ''}`} key={option.id}>
+                                            <p><strong>{option.description}</strong></p>
+                                            {option.requiresSelection ? (
+                                                <Form.Group aria-label={`Equipment option ${index + 1}`}>
                                                     {option.choices.map((choice, choiceIndex) => (
-                                                        <option key={choiceIndex} value={choice}>{choice}</option>
+                                                        <Form.Check
+                                                            type="radio"
+                                                            id={`equipment-option-${index}-${choiceIndex}`}
+                                                            name={`equipment-option-${index}`}
+                                                            key={`${option.id}-${choiceIndex}`}
+                                                            label={choice}
+                                                            value={choice}
+                                                            checked={selectedEquipment[index] === choice}
+                                                            onChange={(event) => handleEquipmentSelection(index, event.target.value)}
+                                                        />
                                                     ))}
-                                                </Form.Select>
-                                            </Form.Group>
-                                        ) : (
-                                            <p>{option.choices.join(', ')}</p>
-                                        )}
-                                    </div>
-                                ))}
+                                                </Form.Group>
+                                            ) : (
+                                                <ul className="character-builder-list">
+                                                    {option.choices.map((choice) => <li key={choice}>{choice}</li>)}
+                                                </ul>
+                                            )}
+                                        </section>
+                                    );
+                                })}
                             </div>
+                        )}
+                        {selectedClass && !detailsLoading.class && classEquipmentOptions.length === 0 && (
+                            <p>No starting-equipment choices are required for this class.</p>
+                        )}
+                        {fixedBackgroundEquipment.length > 0 && (
+                            <section className="character-builder-background-equipment">
+                                <h3>From {selectedBackground}</h3>
+                                <ul className="character-builder-list">
+                                    {fixedBackgroundEquipment.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                                </ul>
+                            </section>
                         )}
                     </div>
                 )}
                 {/* Summary */}
                 {activeStep === 5 && (
-                    <div style={{ height: 'calc(100vh - 250px)' }}>
+                    <div className="character-builder-step">
                         <h2>Character Summary</h2>
-                        <div style={{ overflow: 'auto', maxHeight: '63vh' }}>
-                            {console.log("Review Character-", character)}
-                            {Object.entries(character).map(([key, value]) => (
-                                <p key={key}>
-                                    <strong>{key}:</strong>
-                                    {Array.isArray(value) ? value.join(', ') :
-                                        (typeof value === 'object' && value !== null) ?
-                                            Object.entries(value).map(([subKey, subValue]) => (
-                                                <span key={subKey}>{`${subKey}: ${subValue}`}</span>
-                                            )) : value}
-                                </p>
-                            ))}
+                        <div className="character-builder-summary-identity">
+                            <h3>{character.Name || 'Unnamed character'}</h3>
+                            <p>{character.Race} {character.Class} · Level {character.Level} · {character.Background}</p>
+                            <p>{character.Alignment}</p>
+                        </div>
+                        <div className="character-builder-detail-grid">
+                            <section className="character-builder-detail-card">
+                                <h4>Ability Scores</h4>
+                                <DetailValue value={character.abilityScores} />
+                            </section>
+                            <section className="character-builder-detail-card">
+                                <h4>Starting Equipment</h4>
+                                <DetailValue value={character.Equipment} />
+                            </section>
+                            <section className="character-builder-detail-card">
+                                <h4>Combat</h4>
+                                <DetailValue value={{
+                                    armor_class: character.ArmorClass,
+                                    initiative: character.Initiative,
+                                    speed: character.Speed,
+                                    hit_point_maximum: character.HitPointMax,
+                                    proficiency_bonus: character.proficiencyBonus,
+                                }} />
+                            </section>
+                            <section className="character-builder-detail-card">
+                                <h4>Wealth</h4>
+                                <DetailValue value={character.Wealth} />
+                            </section>
                         </div>
                     </div>
                 )}
+                {stepError && <p className="character-builder-step-error" role="alert">{stepError}</p>}
             </DialogContent>
             <DialogActions>
-                <Stepper activeStep={activeStep} alternativeLabel nonLinear>
+                <Stepper activeStep={activeStep} alternativeLabel nonLinear sx={{ flex: 1 }}>
                     {steps.map((label, index) => (
-                        <Step key={label}>
+                        <Step key={label} completed={completedSteps[index]}>
                             <StepButton onClick={() => setActiveStep(index)} completed={completedSteps[index]}>
-                                {label}
+                                <Typography
+                                    component="span"
+                                    sx={{ textDecoration: completedSteps[index] ? 'line-through' : 'none' }}
+                                >
+                                    {label}
+                                </Typography>
                             </StepButton>
                         </Step>
                     ))}
@@ -694,23 +741,16 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
                             All steps completed - you're finished
                         </Typography>
                         <Box sx={{ display: 'flex', flexDirection: 'row', pt: 2 }}>
-                            <Box sx={{ flex: '1 1 auto' }} />
+                            <Button variant="contained" onClick={handleCreateCharacter}>Create Character</Button>
                             <Button onClick={handleReset}>Reset</Button>
                         </Box>
                     </React.Fragment>
                 ) : (
                     <React.Fragment>
                         <Box sx={{ display: 'flex', flexDirection: 'row', pt: 2 }}>
-                            {activeStep !== steps.length &&
-                                (completedSteps[activeStep] ? (
-                                    <Typography variant="caption" sx={{ display: 'inline-block' }}>
-                                        Step {activeStep + 1} already completed
-                                    </Typography>
-                                ) : (
-                                    <Button onClick={handleComplete}>
-                                        Complete Step
-                                    </Button>
-                                ))}
+                            <Button onClick={handleComplete}>
+                                {completedSteps[activeStep] ? 'Update Step' : 'Complete Step'}
+                            </Button>
                         </Box>
                     </React.Fragment>
                 )}

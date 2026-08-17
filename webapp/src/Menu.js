@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 
 import Box from '@mui/material/Box';
 import Drawer from '@mui/material/Drawer';
@@ -23,6 +24,7 @@ import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';
 import CalendarIcon from '@mui/icons-material/CalendarToday';
 import HikingIcon from '@mui/icons-material/Hiking';
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
+import MapIcon from '@mui/icons-material/Map';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
@@ -33,7 +35,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 const DRAWER_WIDTH = 240;
 const COLLAPSED_WIDTH = 72;
 
-function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, theme, setTheme }) {
+function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, theme, setTheme, primaryOrigin = window.location.origin }) {
   const [isOpen, setIsOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -45,25 +47,46 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
     window.open(url, '_blank');
   }
 
+  function openSettlementSimulator() {
+    const context = new URLSearchParams({
+      campaignID: String(selectedCampaign?.id || ''),
+      campaignName: selectedCampaign?.name || '',
+      accountType: accountType || '',
+      tool: 'atlas',
+    });
+    const simulatorPath = `/settlementManager?${context.toString()}`;
+    const dmWindow = window.open(simulatorPath, 'kachhapa-settlement-dm');
+
+    if (!dmWindow) {
+      navigate(simulatorPath);
+      return;
+    }
+
+    dmWindow.focus();
+    window.setTimeout(() => dmWindow.focus(), 0);
+  }
+
   function openWiki() {
     if (selectedCampaign && selectedCampaign.name) {
       localStorage.setItem('userID', headers['userID']);
       localStorage.setItem('characterName', headers['characterName']);
-
-      const protocol = window.location.protocol;
-      const host = window.location.host;
-      const baseUrl = `${protocol}//${host}/`;
-
-      const destinationPage = encodeURIComponent(selectedCampaign.name) + "/Main Page";
-      const loginUrl = `${baseUrl}login?redirect=/wiki/${encodeURIComponent(destinationPage)}`;
-
-      window.open(loginUrl, '_blank');
+      const campaignSegment = encodeURIComponent(selectedCampaign.name);
+      const pageSegment = encodeURIComponent('Main Page');
+      // The wiki is rendered by Flask, not React Router. Use a real browser
+      // navigation so the SPA wildcard route cannot consume the wiki path.
+      window.open(`${primaryOrigin}/wiki/${campaignSegment}/${pageSegment}`, '_blank');
     }
   }
 
-  function logOut() {
-    localStorage.clear();
-    window.location.reload();
+  async function logOut() {
+    try {
+      await axios.post('/api/logout', {}, { withCredentials: true });
+    } catch (error) {
+      console.warn('Unable to clear shared session cookie:', error);
+    } finally {
+      localStorage.clear();
+      window.location.reload();
+    }
   }
 
   function handleThemeToggle() {
@@ -85,15 +108,18 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
     { key: 'calendar', label: 'Calendar', icon: <CalendarIcon />, onClick: () => navigate('/calendar') },
 
     ...(accountType === 'DM'
-      ? [{ key: 'compendium', label: 'Compendium', icon: <AutoStoriesIcon />, onClick: () => navigateToExternalLink(window.location.origin + '/5etools/') }]
+      ? [
+        { key: 'compendium', label: 'Compendium', icon: <AutoStoriesIcon />, onClick: () => navigateToExternalLink(primaryOrigin + '/5etools/') },
+        { key: 'settlementManager', label: 'Settlement Simulator', icon: <MapIcon />, onClick: openSettlementSimulator },
+      ]
       : []),
 
     { key: 'wiki', label: 'Wiki', icon: <HikingIcon />, onClick: openWiki },
 
     ...(accountType === 'DM'
       ? [
-        { key: 'dashboard', label: 'Flask Dashboard', icon: <DashboardIcon />, onClick: () => navigateToExternalLink(window.location.origin + '/dashboard/') },
-        { key: 'admin', label: 'Flask Admin', icon: <AdminPanelSettingsIcon />, onClick: () => navigateToExternalLink(window.location.origin + '/admin/') },
+        { key: 'dashboard', label: 'Flask Dashboard', icon: <DashboardIcon />, onClick: () => navigateToExternalLink(primaryOrigin + '/dashboard/') },
+        { key: 'admin', label: 'Flask Admin', icon: <AdminPanelSettingsIcon />, onClick: () => navigateToExternalLink(primaryOrigin + '/admin/') },
       ]
       : []),
 

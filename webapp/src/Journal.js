@@ -97,7 +97,7 @@ function Journal({ headers, characterName, campaignID, theme }) {
   const fetchCalendarMeta = async () => {
     try {
       const response = await axios.get(`/api/calendar/${campaignID}`, { headers });
-      setCalendarMeta(response.data);
+      setCalendarMeta(response.data?.configured === false ? null : response.data);
     } catch (error) {
       console.error('Error loading calendar metadata:', error.response?.data || error);
     }

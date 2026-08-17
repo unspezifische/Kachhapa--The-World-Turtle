@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly KACHHAPA_SERVICE="kachhapa-backend"
+readonly MTG_SERVICE="mtg-backend"
+
+restart_service() {
+  local service_name=$1
+  case "$service_name" in
+    "$KACHHAPA_SERVICE"|"$MTG_SERVICE") ;;
+    *)
+      echo "Unsupported service: $service_name" >&2
+      exit 2
+      ;;
+  esac
+
+  systemctl restart "$service_name"
+  systemctl is-active --quiet "$service_name"
+}
+
+configure_mtg_database() {
+  if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='admin'" | grep -q 1; then
+    runuser -u postgres -- psql -c "CREATE USER admin WITH PASSWORD 'admin';"
+  fi
+  if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname='mtg_sandbox'" | grep -q 1; then
+    runuser -u postgres -- createdb -O admin mtg_sandbox
+  fi
+}
+
+install_nginx_config() {
+  local source_file="/home/ijohnson/nginx.conf.new"
+  local candidate="/etc/nginx/nginx.conf.new"
+  local active="/etc/nginx/nginx.conf"
+  local previous="/etc/nginx/nginx.conf.previous"
+
+  test -f "$source_file"
+  install -o root -g root -m 0644 "$source_file" "$candidate"
+  nginx -t -c "$candidate"
+  cp -a "$active" "$previous"
+  mv "$candidate" "$active"
+  rm -f "$source_file"
+  if ! systemctl reload nginx; then
+    cp -a "$previous" "$active"
+    systemctl reload nginx
+    echo "Nginx reload failed; the previous configuration was restored." >&2
+    exit 1
+  fi
+}
+
+case "${1:-}" in
+  check)
+    [[ $# -eq 1 ]]
+    ;;
+  restart)
+    [[ $# -eq 2 ]] || { echo "Usage: $0 restart NAME" >&2; exit 2; }
+    restart_service "$2"
+    ;;
+  mtg-db)
+    [[ $# -eq 1 ]]
+    configure_mtg_database
+    ;;
+  nginx)
+    [[ $# -eq 1 ]]
+    install_nginx_config
+    ;;
+  *)
+    echo "Unsupported deployment operation." >&2
+    exit 2
+    ;;
+esac

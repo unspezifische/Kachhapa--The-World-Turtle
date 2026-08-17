@@ -12,4 +12,4 @@ RUN pip install -r requirements.txt --no-cache-dir
 COPY Flask/ .
 
 # Command to run the app with Gunicorn, using gevent with websocket support
-CMD ["gunicorn", "-k", "gevent", "-w", "1", "--bind", "unix:/tmp/myapp.socket", "--reload", "--worker-class", "geventwebsocket.gunicorn.workers.GeventWebSocketWorker", "app:app"]
+CMD ["/bin/sh", "-c", "python bootstrap_database.py && exec gunicorn -w 1 --bind unix:/tmp/myapp.socket --reload --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker app:app"]

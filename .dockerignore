@@ -1,0 +1,8 @@
+.git
+.venv
+venv
+**/__pycache__
+**/*.pyc
+webapp/node_modules
+webapp/build
+database_backup.dump

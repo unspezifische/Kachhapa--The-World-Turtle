@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Container, Row, Col, Button, Modal } from 'react-bootstrap';
+import { Container, Row, Col, Button, Modal, Form } from 'react-bootstrap';
 import axios from 'axios';
 import './Calendar.css';
 
@@ -9,6 +9,18 @@ function Calendar({ headers, campaignID, accountType, socket }) {
   const [viewYear, setViewYear] = useState(null);
   const [viewMonthIndex, setViewMonthIndex] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [calendarMissing, setCalendarMissing] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [calendarFormats, setCalendarFormats] = useState([]);
+  const [setupSaving, setSetupSaving] = useState(false);
+  const [setupError, setSetupError] = useState('');
+  const [calendarSetup, setCalendarSetup] = useState({
+    name: '',
+    format_slug: 'gregorian',
+    year: 1,
+    month: 1,
+    day: 1,
+  });
   const [showDayModal, setShowDayModal] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null);
 
@@ -24,6 +36,11 @@ function Calendar({ headers, campaignID, accountType, socket }) {
 
     const handleCalendarUpdated = async (payload) => {
       if (!payload || payload.campaign_id !== campaignID) return;
+
+      if (payload.kind === 'calendar_created') {
+        await fetchCalendarMeta();
+        return;
+      }
 
       let shouldRefreshMeta = false;
       let shouldRefreshMonth = false;
@@ -119,19 +136,83 @@ function Calendar({ headers, campaignID, accountType, socket }) {
   const fetchCalendarMeta = async () => {
     try {
       setLoading(true);
+      setLoadError('');
       const response = await axios.get(`/api/calendar/${campaignID}`, { headers });
       const data = response.data;
 
+      if (data?.configured === false) {
+        setCalendarMeta(null);
+        setMonthView(null);
+        setCalendarMissing(true);
+        if (accountType?.toLowerCase() === 'dm') {
+          await fetchCalendarFormats();
+        }
+        return;
+      }
+
       setCalendarMeta(data);
+      setCalendarMissing(false);
 
       if (data?.current_date) {
         setViewYear(data.current_date.year);
         setViewMonthIndex(data.current_date.month_index);
       }
     } catch (error) {
-      console.error('Error fetching calendar metadata:', error);
+      if (error.response?.status === 404) {
+        setCalendarMeta(null);
+        setMonthView(null);
+        setCalendarMissing(true);
+        if (accountType?.toLowerCase() === 'dm') {
+          await fetchCalendarFormats();
+        }
+      } else {
+        console.error('Error fetching calendar metadata:', error);
+        setLoadError(error.response?.data?.message || 'The calendar could not be loaded.');
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCalendarFormats = async () => {
+    try {
+      const response = await axios.get('/api/calendar-formats', { headers });
+      const formats = response.data.formats || [];
+      setCalendarFormats(formats);
+      if (formats.length && !formats.some((format) => format.slug === calendarSetup.format_slug)) {
+        setCalendarSetup((current) => ({ ...current, format_slug: formats[0].slug }));
+      }
+    } catch (error) {
+      console.error('Error fetching calendar formats:', error);
+      setSetupError(error.response?.data?.message || 'Calendar formats could not be loaded.');
+    }
+  };
+
+  const handleCreateCalendar = async (event) => {
+    event.preventDefault();
+    setSetupSaving(true);
+    setSetupError('');
+    try {
+      const response = await axios.post(
+        `/api/calendar/${campaignID}`,
+        {
+          name: calendarSetup.name,
+          format_slug: calendarSetup.format_slug,
+          year: Number(calendarSetup.year),
+          month_index: Number(calendarSetup.month) - 1,
+          day: Number(calendarSetup.day),
+        },
+        { headers }
+      );
+      const data = response.data;
+      setCalendarMeta(data);
+      setCalendarMissing(false);
+      setViewYear(data.current_date.year);
+      setViewMonthIndex(data.current_date.month_index);
+    } catch (error) {
+      setSetupError(error.response?.data?.message || 'The calendar could not be created.');
+    } finally {
+      setSetupSaving(false);
     }
   };
 
@@ -246,9 +327,88 @@ function Calendar({ headers, campaignID, accountType, socket }) {
       : monthView.month.name;
   }, [monthView]);
 
-  const isDM = accountType === 'DM';
+  const isDM = accountType?.toLowerCase() === 'dm';
 
-  if (loading || !calendarMeta || !monthView) {
+  if (loading) {
+    return (
+      <Container className="calendar-page">
+        <div className="calendar-loading">Loading calendar...</div>
+      </Container>
+    );
+  }
+
+  if (calendarMissing) {
+    return (
+      <Container fluid className="calendar-page">
+        <div className="calendar-empty-state">
+          <div className="calendar-empty-icon" aria-hidden="true">◫</div>
+          {isDM ? (
+            <>
+              <h1>Set up this campaign's calendar</h1>
+              <p>Choose a calendar system and starting date. You can begin adding events as soon as it is created.</p>
+              <Form className="calendar-setup-form" onSubmit={handleCreateCalendar}>
+                <Form.Group>
+                  <Form.Label htmlFor="calendar-setup-name">Calendar name</Form.Label>
+                  <Form.Control
+                    id="calendar-setup-name"
+                    value={calendarSetup.name}
+                    placeholder="Campaign calendar"
+                    maxLength={100}
+                    onChange={(event) => setCalendarSetup((current) => ({ ...current, name: event.target.value }))}
+                  />
+                </Form.Group>
+                <Form.Group>
+                  <Form.Label htmlFor="calendar-setup-format">Calendar system</Form.Label>
+                  <Form.Select
+                    id="calendar-setup-format"
+                    value={calendarSetup.format_slug}
+                    onChange={(event) => setCalendarSetup((current) => ({ ...current, format_slug: event.target.value }))}
+                  >
+                    {calendarFormats.map((format) => (
+                      <option value={format.slug} key={format.slug}>{format.display_name}</option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
+                <div className="calendar-setup-date">
+                  <Form.Group>
+                    <Form.Label htmlFor="calendar-setup-year">Starting year</Form.Label>
+                    <Form.Control id="calendar-setup-year" type="number" required value={calendarSetup.year} onChange={(event) => setCalendarSetup((current) => ({ ...current, year: event.target.value }))} />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label htmlFor="calendar-setup-month">Month</Form.Label>
+                    <Form.Control id="calendar-setup-month" type="number" required min="1" max="12" value={calendarSetup.month} onChange={(event) => setCalendarSetup((current) => ({ ...current, month: event.target.value }))} />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label htmlFor="calendar-setup-day">Day</Form.Label>
+                    <Form.Control id="calendar-setup-day" type="number" required min="1" max="31" value={calendarSetup.day} onChange={(event) => setCalendarSetup((current) => ({ ...current, day: event.target.value }))} />
+                  </Form.Group>
+                </div>
+                {setupError ? <div className="calendar-setup-error" role="alert">{setupError}</div> : null}
+                <Button type="submit" disabled={setupSaving || calendarFormats.length === 0}>
+                  {setupSaving ? 'Creating Calendar…' : 'Create Calendar'}
+                </Button>
+              </Form>
+            </>
+          ) : (
+            <>
+              <h1>Calendar unavailable</h1>
+              <p>The DM hasn't set up a calendar for this campaign yet.</p>
+            </>
+          )}
+        </div>
+      </Container>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Container className="calendar-page">
+        <div className="calendar-error" role="alert">{loadError}</div>
+      </Container>
+    );
+  }
+
+  if (!calendarMeta || !monthView) {
     return (
       <Container className="calendar-page">
         <div className="calendar-loading">Loading calendar...</div>

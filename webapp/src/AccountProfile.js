@@ -6,7 +6,7 @@ import campaignIcon from './campaign.webp';
 
 import CreateCharacterModal from './CreateCharacterModal';
 
-const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setCharacterName }) => {
+const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setCharacterName, dmLandingPath = '/dmTools', primaryOrigin = window.location.origin }) => {
   const navigate = useNavigate();
 
   const [campaigns, setCampaigns] = useState([]);
@@ -87,7 +87,7 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
         })
       setAccountType('DM');
       setCharacterName('DM');
-      navigate('/dmTools');
+      navigate(dmLandingPath);
     } 
     else if (campaign.owner_id === headers.userID) {
       axios.get('/api/characters', { headers })
@@ -96,7 +96,7 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
         })
       setAccountType('DM');
       setCharacterName('Admin');
-      navigate('/dmTools');
+      navigate(dmLandingPath);
     } else {
       setAccountType('Player');
       axios.get('/api/characters', { headers })
@@ -113,13 +113,12 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
             // setCharacterID(affiliatedCharacters[0].id);
             navigate('/characterSheet');
           } else {
-            // If no such characters exist, proceed with the existing logic to handle unaffiliated characters
-            setUnaffiliatedCharacters = response.data.characters.filter(character => !character.campaignID && character.system === campaign.system);
-            if (unaffiliatedCharacters.length > 0) {
-              handleSelectCharacter(unaffiliatedCharacters);
-            } else {
-              handleCreateCharacter();
-            }
+            // Memberships may exist before the player has made a character.
+            // Keep any reusable characters available for a later association
+            // workflow, but open character creation now instead of crashing on
+            // an attempted assignment to the React state setter.
+            setUnaffiliatedCharacters(response.data.filter(character => !character.campaignID && character.system === campaign.system));
+            handleCreateCharacter();
           }
         })
         .catch(error => {
@@ -149,7 +148,7 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
         })
       setAccountType('DM');
       setCharacterName('DM');
-      navigate('/dmTools');
+      navigate(dmLandingPath);
     }
     else if (campaign.owner_id === headers.userID) {
       axios.get('/api/characters', { headers })
@@ -158,7 +157,7 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
         })
       setAccountType('DM');
       setCharacterName('Admin');
-      navigate('/dmTools');
+      navigate(dmLandingPath);
     } else {
       setAccountType('Player');
       axios.get('/api/characters', { headers })
@@ -174,13 +173,8 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
             setCharacterName(affiliatedCharacters[0].name);
             navigate('/characterSheet');
           } else {
-            // If no such characters exist, proceed with the existing logic to handle unaffiliated characters
-            setUnaffiliatedCharacters = response.data.characters.filter(character => !character.campaignID && character.system === campaign.system);
-            if (unaffiliatedCharacters.length > 0) {
-              handleSelectCharacter(unaffiliatedCharacters);
-            } else {
-              handleCreateCharacter();
-            }
+            setUnaffiliatedCharacters(response.data.filter(character => !character.campaignID && character.system === campaign.system));
+            handleCreateCharacter();
           }
         })
         .catch(error => {
@@ -194,7 +188,7 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
     console.log("Stored header in local storage");
 
     // Construct the destination URL without encoding
-    var destinationURL = 'http://raspberrypi.local/' + encodeURIComponent(campaign.name) + "/Main Page";
+    var destinationURL = primaryOrigin + '/' + encodeURIComponent(campaign.name) + "/Main Page";
     var destinationPage = encodeURIComponent(campaign.name) + "/Main Page";
     console.log("Destination URL: " + destinationURL);
     console.log("Destination Page: " + destinationPage);
@@ -204,7 +198,7 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
     console.log("Encoded URL: " + encodedDestination);
 
     // Include the encoded destination URL as a query parameter in the login URL
-    var loginUrl = 'http://raspberrypi.local/login?redirect=/wiki/' + encodedDestination;
+    var loginUrl = primaryOrigin + '/login?redirect=/wiki/' + encodedDestination;
     console.log("URL with Redirect: " + loginUrl);
 
     // Open the login URL in a new window
@@ -215,7 +209,12 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
     name: '',
     system: 'D&D',
     module: '',
-    description: ''
+    description: '',
+    calendar_enabled: true,
+    calendar_format: 'harptos',
+    calendar_year: 1,
+    calendar_month: 1,
+    calendar_day: 1,
   });
 
   const [newCharacter, setNewCharacter] = useState({
@@ -227,7 +226,7 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
   const handleInputChange = (event) => {
     setNewCampaign({
       ...newCampaign,
-      [event.target.name]: event.target.value
+      [event.target.name]: event.target.type === 'checkbox' ? event.target.checked : event.target.value
     });
   };
 
@@ -296,7 +295,16 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
               <Accordion.Body>
                 {campaigns.map((campaign) => (
                   <Col sm={4} key={campaign.id}>
-                    <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={() => handleCampaignSelection(campaign)}>
+                    <Card
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open campaign ${campaign.name}`}
+                      style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}
+                      onClick={() => handleCampaignSelection(campaign)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') handleCampaignSelection(campaign);
+                      }}
+                    >
                       <Row>
                         <Col xs={4}>
                           <Card.Img variant="top" src={campaign.icon || campaignIcon} />
@@ -466,6 +474,57 @@ const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setChara
               <Form.Label>Description</Form.Label>
               <Form.Control as="textarea" name="description" value={newCampaign.description} onChange={handleInputChange} />
             </Form.Group>
+            <fieldset className="mt-3 border rounded p-3">
+              <legend className="fs-6 mb-2">Campaign Calendar</legend>
+              {newCampaign.module ? (
+                <Form.Text className="d-block mb-2">
+                  This module includes a calendar. Its calendar and starting year will be configured with the campaign.
+                </Form.Text>
+              ) : (
+                <>
+                  <Form.Check
+                    className="mb-3"
+                    type="switch"
+                    id="campaignCalendarEnabled"
+                    name="calendar_enabled"
+                    label="Set up a calendar now"
+                    checked={newCampaign.calendar_enabled}
+                    onChange={handleInputChange}
+                  />
+                  {newCampaign.calendar_enabled && (
+                    <>
+                      <Form.Group controlId="campaignCalendarFormat" className="mb-2">
+                        <Form.Label>Calendar System</Form.Label>
+                        <Form.Select name="calendar_format" value={newCampaign.calendar_format} onChange={handleInputChange}>
+                          <option value="harptos">Calendar of Harptos</option>
+                          <option value="gregorian">Gregorian Calendar</option>
+                        </Form.Select>
+                      </Form.Group>
+                      <Row>
+                        <Col sm={6}>
+                          <Form.Group controlId="campaignCalendarYear">
+                            <Form.Label>Starting Year</Form.Label>
+                            <Form.Control type="number" name="calendar_year" value={newCampaign.calendar_year} onChange={handleInputChange} required />
+                          </Form.Group>
+                        </Col>
+                        <Col sm={3}>
+                          <Form.Group controlId="campaignCalendarMonth">
+                            <Form.Label>Month</Form.Label>
+                            <Form.Control type="number" min="1" max="12" name="calendar_month" value={newCampaign.calendar_month} onChange={handleInputChange} required />
+                          </Form.Group>
+                        </Col>
+                        <Col sm={3}>
+                          <Form.Group controlId="campaignCalendarDay">
+                            <Form.Label>Day</Form.Label>
+                            <Form.Control type="number" min="1" max="31" name="calendar_day" value={newCampaign.calendar_day} onChange={handleInputChange} required />
+                          </Form.Group>
+                        </Col>
+                      </Row>
+                    </>
+                  )}
+                </>
+              )}
+            </fieldset>
             <Button variant="primary" type="submit">Create Campaign</Button>
           </Form>
         </Modal.Body>

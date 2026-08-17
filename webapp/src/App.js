@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import { BrowserRouter as Router, Route, Routes, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import { Container, Row, Col, Alert, Button, Spinner, Modal } from 'react-bootstrap';
 import axios from 'axios';
@@ -10,6 +10,9 @@ import Register from './Register';
 
 import Menu from './Menu';
 import DMTools from './DMTools';
+import SettlementManager from './SettlementManager';
+import SettlementPlayerView from './SettlementPlayerView';
+import WorldAtlas from './WorldAtlas';
 import CharacterSheet from './CharacterSheet';
 import InventoryView from './InventoryView';
 import Journal from './Journal';
@@ -18,13 +21,98 @@ import Calendar from './Calendar';
 import AccountProfile from './AccountProfile';
 import Chat from './Chat';
 import ChatIcon from '@mui/icons-material/Chat';
+import { DMSoundPlayerBar, DMSoundPlayerProvider } from './DMSoundPlayer';
 
 import './App.css';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import { IconButton, Badge } from '@mui/material';
 
+const EMPTY_CAMPAIGN = { id: null, name: null, dmId: null, ownerId: null };
+
+function entrySearchParams() {
+  const direct = new URLSearchParams(window.location.search);
+  if (direct.get('campaignID') || !direct.get('redirect')) return direct;
+  try {
+    const target = new URL(direct.get('redirect'), window.location.origin);
+    return target.origin === window.location.origin ? target.searchParams : direct;
+  } catch (_error) {
+    return direct;
+  }
+}
+
+function loginEntryPath() {
+  if (window.location.pathname === '/login') return '/login';
+  const target = `${window.location.pathname}${window.location.search}`;
+  return `/login?redirect=${encodeURIComponent(target)}`;
+}
+
+function isSettlementPath(pathname) {
+  return pathname === '/settlementManager' || pathname === '/maps/player' || pathname === '/worldAtlas';
+}
+
+function CampaignLayout({ menuProps, children }) {
+  const location = useLocation();
+  const isMapPage = isSettlementPath(location.pathname);
+  const hideMenu = isMapPage || location.pathname === '/accountProfile';
+
+  return (
+    <div className={`app-layout${isMapPage ? ' map-page-layout' : ''}`}>
+      {!hideMenu && (
+        <aside className="menu-column">
+          <Menu {...menuProps} />
+        </aside>
+      )}
+      <main className="content-column">{children}</main>
+    </div>
+  );
+}
+
+function HideOnSettlementRoutes({ children }) {
+  const location = useLocation();
+  return isSettlementPath(location.pathname) || location.pathname === '/accountProfile' ? null : children;
+}
+
+function SoundPlayerCornerBar({ workspaceActive, onOpen }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const fullPlayerVisible = workspaceActive && location.pathname === '/dmTools';
+
+  return (
+    <DMSoundPlayerBar
+      quickFxConfigurable={fullPlayerVisible}
+      onExpand={() => {
+        onOpen();
+        navigate('/dmTools');
+      }}
+    />
+  );
+}
+
+function loadStoredCampaign() {
+  const params = entrySearchParams();
+  const sharedCampaignId = Number(params.get('campaignID'));
+  if (Number.isInteger(sharedCampaignId) && sharedCampaignId > 0) {
+    return { ...EMPTY_CAMPAIGN, id:sharedCampaignId, name:params.get('campaignName') || 'Campaign' };
+  }
+  if (!localStorage.getItem('token') || !localStorage.getItem('accountType')) {
+    return EMPTY_CAMPAIGN;
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem('selectedCampaign') || 'null');
+    return stored?.id ? { ...EMPTY_CAMPAIGN, ...stored } : EMPTY_CAMPAIGN;
+  } catch (error) {
+    console.warn('Unable to restore the selected campaign:', error);
+    return EMPTY_CAMPAIGN;
+  }
+}
+
 function App() {
   const SOCKET_URL = window.location.origin;
+  const isMapsHost = /^maps\./i.test(window.location.hostname);
+  const primaryHostname = window.location.hostname.replace(/^(?:app|maps|mtg|tools)\./i, '');
+  const primaryOrigin = `${window.location.protocol}//${primaryHostname}${window.location.port ? `:${window.location.port}` : ''}`;
+  const dmLandingPath = isMapsHost ? '/settlementManager' : '/dmTools';
 
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
 
@@ -33,19 +121,21 @@ function App() {
   const [chatUsers, setChatUsers] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [soundWorkspaceActive, setSoundWorkspaceActive] = useState(false);
+  const [soundPlayerOpenRequest, setSoundPlayerOpenRequest] = useState(0);
 
   // User and session states
   const [token, setToken] = useState(localStorage.getItem('token') || '');
   const [username, setUsername] = useState('');
   const [userID, setUserID] = useState(null);
   const [character, setCharacter] = useState(null);
-  const [characterName, setCharacterName] = useState('');
+  const [characterName, setCharacterName] = useState(localStorage.getItem('characterName') || '');
   const [characterID, setCharacterID] = useState(null);
-  const [accountType, setAccountType] = useState('');
+  const [accountType, setAccountType] = useState(localStorage.getItem('accountType') || entrySearchParams().get('accountType') || '');
 
   const [isLoading, setIsLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [selectedCampaign, setSelectedCampaign] = useState({ id: null, name: null, dmId: null, ownerId: null });
+  const [selectedCampaign, setSelectedCampaign] = useState(loadStoredCampaign);
 
   const socketRef = useRef(null);
   const [socketLoading, setSocketLoading] = useState(true);
@@ -58,13 +148,46 @@ function App() {
   const [turnInfo, setTurnInfo] = useState({ current: null, next: null });
   const [combatants, setCombatants] = useState([]);
 
+  const resetCampaignSelection = useCallback(() => {
+    setSelectedCampaign(EMPTY_CAMPAIGN);
+    setAccountType('');
+    setCharacterName('');
+    setCharacterID(null);
+    setCharacter(null);
+    localStorage.removeItem('selectedCampaign');
+    localStorage.removeItem('accountType');
+    localStorage.removeItem('characterName');
+  }, []);
+
+  const expireSession = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('userID');
+    setToken('');
+    setIsLoggedIn(false);
+    setUsername('');
+    setUserID(null);
+    resetCampaignSelection();
+  }, [resetCampaignSelection]);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
 
   useEffect(() => {
-    if (selectedCampaign.id) {
+    if (selectedCampaign?.id && accountType) {
+      localStorage.setItem('selectedCampaign', JSON.stringify(selectedCampaign));
+      localStorage.setItem('accountType', accountType);
+      localStorage.setItem('characterName', characterName || '');
+    } else {
+      localStorage.removeItem('selectedCampaign');
+      localStorage.removeItem('accountType');
+      localStorage.removeItem('characterName');
+    }
+  }, [selectedCampaign, accountType, characterName]);
+
+  useEffect(() => {
+    if (selectedCampaign.id && accountType === 'Player') {
       axios.get(`/api/character`, { headers })
         .then((res) => {
           setCharacter(res.data);
@@ -74,7 +197,7 @@ function App() {
         })
         .catch((err) => console.error(err));
     }
-  }, [selectedCampaign]);
+  }, [selectedCampaign, accountType]);
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token}`,
@@ -99,7 +222,9 @@ function App() {
 
     const socket = io(SOCKET_URL, {
       path: '/socket.io/',
-      transports: ['websocket'],
+      // Start with HTTP polling so the app remains usable behind proxies that
+      // cannot complete a WebSocket upgrade, then upgrade when available.
+      transports: ['polling', 'websocket'],
       query: {
         token,
         campaignID: selectedCampaign.id,
@@ -140,7 +265,7 @@ function App() {
     };
 
     const handleTokenExpired = () => {
-      localStorage.removeItem('token');
+      expireSession();
     };
 
     const handleRequestCampaignID = () => {
@@ -169,7 +294,7 @@ function App() {
 
       setSocketConnected(false);
     };
-  }, [token, selectedCampaign?.id, username]);
+  }, [token, selectedCampaign?.id, username, expireSession]);
 
   useEffect(() => {
     const socket = socketRef.current;
@@ -297,19 +422,18 @@ function App() {
         {isLoggedIn ? (
           selectedCampaign.id ? (
             <Container fluid className="app-shell">
-              <div className="app-layout">
-                <aside className="menu-column">
-                  <Menu
-                    headers={headers}
-                    accountType={accountType}
-                    selectedCampaign={selectedCampaign}
-                    setSelectedCampaign={setSelectedCampaign}
-                    theme={theme}
-                    setTheme={setTheme}
-                  />
-                </aside>
-
-                <main className="content-column">
+              <DMSoundPlayerProvider headers={headers} socket={socketRef.current} enabled={accountType === 'DM'}>
+              <CampaignLayout
+                menuProps={{
+                  headers,
+                  accountType,
+                  selectedCampaign,
+                  setSelectedCampaign,
+                  theme,
+                  setTheme,
+                  primaryOrigin,
+                }}
+              >
                   {inCombat && accountType !== 'DM' && turnInfo.current?.character?.characterName && turnInfo.next?.character?.characterName && (
                     <div className="combat-banner">
                       <strong>Current:</strong> {turnInfo.current.character.characterName} ({turnInfo.current.order}){' '}
@@ -319,20 +443,38 @@ function App() {
                   )}
 
                   <Routes>
-                    <Route path="/" element={<Navigate to="/accountProfile" />} />
+                    <Route path="/" element={<Navigate to={dmLandingPath} />} />
                     <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} setCharacterName={setCharacterName} />} />
-                    <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} />} />
+                    <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} accountType={accountType} onSoundWorkspaceChange={setSoundWorkspaceActive} soundPlayerOpenRequest={soundPlayerOpenRequest} />} />
+                    <Route
+                      path="/settlementManager"
+                      element={
+                        accountType === 'DM'
+                          ? <SettlementManager headers={headers} socket={socketRef.current} mainEnvironmentUrl={`${primaryOrigin}/dmTools`} />
+                          : <Navigate to="/accountProfile" replace />
+                      }
+                    />
+                    <Route path="/maps/player" element={<SettlementPlayerView headers={headers} socket={socketRef.current} />} />
+                    <Route path="/worldAtlas" element={accountType === 'DM' ? <WorldAtlas headers={headers} socket={socketRef.current} mainEnvironmentUrl={`${primaryOrigin}/dmTools`} /> : <Navigate to="/characterSheet" replace />} />
                     <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
                     <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} theme={theme} />} />
                     <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
                     <Route path="/calendar" element={<Calendar headers={headers} socket={socketRef.current} characterName={characterName} username={username} accountType={accountType} campaignID={selectedCampaign.id} />} />
-                    <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} />} />
+                    <Route path="/campaignSettings" element={<Navigate to={accountType === 'DM' ? '/dmTools' : '/characterSheet'} replace />} />
+                    <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} dmLandingPath={dmLandingPath} primaryOrigin={primaryOrigin} />} />
+                    <Route path="*" element={<Navigate to={accountType === 'DM' ? dmLandingPath : '/characterSheet'} replace />} />
                   </Routes>
-                </main>
-              </div>
+              </CampaignLayout>
+
+              {accountType === 'DM' && (
+                <SoundPlayerCornerBar
+                  workspaceActive={soundWorkspaceActive}
+                  onOpen={() => setSoundPlayerOpenRequest((requestNumber) => requestNumber + 1)}
+                />
+              )}
 
               {/* Chat FAB and Modal */}
-              <div className="chat-fab-wrap">
+              <HideOnSettlementRoutes><div className="chat-fab-wrap">
                 <Badge
                   badgeContent={unreadMessages > 99 ? '99+' : unreadMessages}
                   color="error"
@@ -349,7 +491,7 @@ function App() {
                     <ChatIcon />
                   </IconButton>
                 </Badge>
-              </div>
+              </div></HideOnSettlementRoutes>
               
 
               <Modal
@@ -378,21 +520,39 @@ function App() {
                   )}
                 </Modal.Body>
               </Modal>
+              </DMSoundPlayerProvider>
             </Container>
           ) : (
-            <AccountProfile
-              headers={headers}
-              setSelectedCampaign={setSelectedCampaign}
-              setCharacterName={setCharacterName}
-              setAccountType={setAccountType}
-            />
+            <Routes>
+              <Route
+                path="/accountProfile"
+                element={
+                  <AccountProfile
+                    headers={headers}
+                    setSelectedCampaign={setSelectedCampaign}
+                    setCharacterName={setCharacterName}
+                    setAccountType={setAccountType}
+                    dmLandingPath={dmLandingPath}
+                    primaryOrigin={primaryOrigin}
+                  />
+                }
+              />
+              <Route path="*" element={<Navigate to="/accountProfile" replace />} />
+            </Routes>
           )
         ) : (
           <Container fluid>
             <Routes>
-              <Route path="/login" element={<Login setIsLoggedIn={setIsLoggedIn} setToken={setToken} setUserID={setUserID} setIsLoading={setIsLoading} setAppUsername={setUsername} />} />
+              <Route path="/login" element={<Login setIsLoggedIn={setIsLoggedIn} setToken={setToken} setUserID={setUserID} setIsLoading={setIsLoading} setAppUsername={setUsername} resetCampaignSelection={resetCampaignSelection} expireSession={expireSession} />} />
               <Route path="/register" element={<Register setIsLoggedIn={setIsLoggedIn} setToken={setToken} setAppUsername={setUsername} setUserID={setUserID} />} />
-              <Route path="*" element={<Navigate to="/login" />} />
+              <Route
+                path="*"
+                element={
+                  token
+                    ? <Login setIsLoggedIn={setIsLoggedIn} setToken={setToken} setUserID={setUserID} setIsLoading={setIsLoading} setAppUsername={setUsername} resetCampaignSelection={resetCampaignSelection} expireSession={expireSession} />
+                    : <Navigate to={loginEntryPath()} replace />
+                }
+              />
             </Routes>
           </Container>
         )}

@@ -9,6 +9,20 @@ import axios from 'axios';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 
+import Inventory2Icon from '@mui/icons-material/Inventory2';
+import CasinoIcon from '@mui/icons-material/Casino';
+import GroupsIcon from '@mui/icons-material/Groups';
+import BadgeIcon from '@mui/icons-material/Badge';
+import SportsKabaddiIcon from '@mui/icons-material/SportsKabaddi';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import SettingsIcon from '@mui/icons-material/Settings';
+import HistoryIcon from '@mui/icons-material/History';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+
+import './DMTools.css';
+import { DMSoundPlayerWorkspace } from './DMSoundPlayer';
+import CampaignSettings from './CampaignSettings';
+
 const alignments = ['Any Alignment', 'Any Good Alignment', 'Lawful Good', 'Neutral Good', 'Chaotic Good', 'Lawful Neutral', 'Neutral', 'Chaotic Neutral', 'Lawful Evil', 'Neutral Evil', 'Chaotic Evil', 'Any Non-good Alignment'];
 
 const InputFormGroup = ({ label, type, value, onChange, name, placeholder }) => (
@@ -25,17 +39,35 @@ const InputFormGroup = ({ label, type, value, onChange, name, placeholder }) => 
   </Form.Group>
 );
 
-function DMTools({ headers, socket, characterName, accountType }) {
+const catalogScopeLabel = (record, modules) => {
+  const moduleName = modules.find(module => module.module_key === record.module_key)?.module_name || record.module_key;
+  if (record.scope === 'module_preset') return `${moduleName || 'Module'} preset`;
+  if (record.scope === 'system_preset') return `${record.system || 'System'} preset`;
+  return moduleName ? `Campaign · ${moduleName}` : 'Campaign';
+};
+
+function DMTools({ headers, socket, characterName, accountType, onSoundWorkspaceChange, soundPlayerOpenRequest }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (accountType === 'player') {
-      navigate('/profile');
+    if (accountType?.toLowerCase() === 'player') {
+      navigate('/characterSheet');
     }
   }, [accountType, navigate]);
 
   const [lootBoxes, setLootBoxes] = useState([]);
+  const [catalogModules, setCatalogModules] = useState([]);
   const [currentContent, setCurrentContent] = useState('lootBoxes'); // State to control what to display in the second Col
+
+  useEffect(() => {
+    onSoundWorkspaceChange?.(currentContent === 'soundPlayer');
+  }, [currentContent, onSoundWorkspaceChange]);
+
+  useEffect(() => () => onSoundWorkspaceChange?.(false), [onSoundWorkspaceChange]);
+
+  useEffect(() => {
+    if (soundPlayerOpenRequest) setCurrentContent('soundPlayer');
+  }, [soundPlayerOpenRequest]);
 
   const [npcs, setNpcs] = useState([]);
   const [npcModalOpen, setNpcModalOpen] = useState(false);
@@ -86,6 +118,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
       .then((response) => {
         // console.log('DM TOOLS- loot boxes:', response.data.lootBoxes);
         setLootBoxes(response.data.lootBoxes);
+        setCatalogModules(response.data.modules || []);
       })
       .catch((error) => {
         console.error('Failed to fetch loot boxes:', error.response.data);
@@ -100,6 +133,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
   const [lootBoxModalOpen, setLootBoxModalOpen] = useState(false);
   const [lootBoxName, setLootBoxName] = useState('');
+  const [lootBoxModuleKey, setLootBoxModuleKey] = useState('');
   const [items, setItems] = useState([]);
   const [searchText, setSearchText] = useState('');
   const [selectedItems, setSelectedItems] = useState([]);
@@ -114,6 +148,9 @@ function DMTools({ headers, socket, characterName, accountType }) {
   const [viewPlayerInventoryModal, setViewPlayerInventoryModal] = useState(false);
   const [currentTurn, setCurrentTurn] = useState(0);
   const [combatants, setCombatants] = useState([]);
+  const [encounterRound, setEncounterRound] = useState(1);
+  const [encounterStarted, setEncounterStarted] = useState(false);
+  const [encounterSearch, setEncounterSearch] = useState('');
 
   // Loot Box Functions
   const handleShowLootBoxes = () => {
@@ -122,6 +159,10 @@ function DMTools({ headers, socket, characterName, accountType }) {
   };
 
   const handleCreateLootBox = () => {
+    setEditingLootBoxId(null);
+    setLootBoxName('');
+    setLootBoxModuleKey('');
+    setSelectedItems([]);
     axios
       .get('/api/items', { headers: headers })
       .then(response => {
@@ -154,9 +195,11 @@ function DMTools({ headers, socket, characterName, accountType }) {
   };
 
   const handleLootBoxClick = lootBox => {
+    if (lootBox.editable === false) return;
     // fetchPlayers();
     setSelectedItems(lootBox.items);
     setLootBoxName(lootBox.name);
+    setLootBoxModuleKey(lootBox.module_key || '');
     setEditingLootBoxId(lootBox.id); // Remember which loot box we are editing
     setLootBoxModalOpen(true);
   };
@@ -167,11 +210,12 @@ function DMTools({ headers, socket, characterName, accountType }) {
     if (editingLootBoxId === null) {
       // If we are not currently editing a loot box, create a new one
       axios
-        .post('/api/lootboxes', { name: lootBoxName, items: items }, { headers: headers })
+        .post('/api/lootboxes', { name: lootBoxName, items: items, module_key: lootBoxModuleKey || null }, { headers: headers })
         .then(response => {
           console.log(response.data.message);
           setLootBoxModalOpen(false);
           setLootBoxName('');
+          setLootBoxModuleKey('');
           setSelectedItems([]);
           fetchLootBoxes(); // Fetch the updated list of loot boxes
         })
@@ -179,11 +223,12 @@ function DMTools({ headers, socket, characterName, accountType }) {
     } else {
       // If we are editing a loot box, update it
       axios
-        .put(`/api/lootboxes/${editingLootBoxId}`, { name: lootBoxName, items: items }, { headers: headers })
+        .put(`/api/lootboxes/${editingLootBoxId}`, { name: lootBoxName, items: items, module_key: lootBoxModuleKey || null }, { headers: headers })
         .then(response => {
           console.log(response.data.message);
           setLootBoxModalOpen(false);
           setLootBoxName('');
+          setLootBoxModuleKey('');
           setSelectedItems([]);
           setEditingLootBoxId(null); // Clear the editing state
           fetchLootBoxes(); // Fetch the updated list of loot boxes
@@ -195,6 +240,11 @@ function DMTools({ headers, socket, characterName, accountType }) {
   const viewLootBox = (lootBox) => {
     fetchPlayers(); // Get the currently online players cause we're gonna need that in the modal which opens
     console.log("Getting details for loot box:", lootBox)
+    if (Array.isArray(lootBox.items)) {
+      setSelectedLootBox(lootBox);
+      setViewLootBoxModal(true);
+      return;
+    }
     axios.get(`/api/lootboxes/${lootBox.id}`, { headers: headers })
     .then(response => {
       console.log('Opening LootBox:', response.data.items);
@@ -208,20 +258,20 @@ function DMTools({ headers, socket, characterName, accountType }) {
   const editLootBox = () => {
     setLootBoxName(selectedLootBox.name); // Add this line
     setSelectedItems(selectedLootBox.items); // Add this line
+    setLootBoxModuleKey(selectedLootBox.module_key || '');
     setEditingLootBoxId(selectedLootBox.id); // So we can update an existing loot box
     setLootBoxModalOpen(true);
     setViewLootBoxModal(false);
   };
 
   const deleteLootBox = (lootBox) => {
-    // axios.delete(`/api/lootboxes/${lootBox.id}`, { headers: headers })
-    axios.delete(`/api/lootboxes/${lootBox.id}`)
+    axios.delete(`/api/lootboxes/${lootBox.id}`, { headers: headers })
     .then(response => {
       console.log(response.data.message);
-      fetchLootBoxes(); // Fetch the updated list of loot boxes
+      setLootBoxes(current => current.filter(candidate => candidate.id !== lootBox.id));
     })
     .catch(error => console.error('Error deleting loot box:', error))
-    .finally(setViewLootBoxModal(false));
+    .finally(() => setViewLootBoxModal(false));
   }
 
   const issueLootToPlayer = (lootBox) => {
@@ -236,12 +286,6 @@ function DMTools({ headers, socket, characterName, accountType }) {
     })
     .catch(error => console.error('Error issuing loot box:', error))
     .finally(setViewLootBoxModal(false));
-  };
-
-  // Navigate to Maps page
-  const handleShowSettlementManager = () => {
-    // window.location.href = 'http://maps.raspberrypi.local';
-    console.log("Settlement Manager Clicked");
   };
 
   // View Player Inventories
@@ -269,6 +313,9 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
   // Initiative Tracker
   const [newEntry, setNewEntry] = useState({ characterName: '', initiative: '' });  // State for new entry
+  const sortCombatants = (entries) => [...entries].sort(
+    (a, b) => (Number(b.initiative) || -Infinity) - (Number(a.initiative) || -Infinity)
+  );
 
   // Handle input changes for new entry
   const handleNewEntryChange = (field, value) => {
@@ -277,9 +324,19 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
   // Handle submission of new entry
   const handleNewEntrySubmit = () => {
+    const name = newEntry.characterName.trim();
+    if (!name || newEntry.initiative === '') return;
+
     setCombatants(prevCombatants => {
-      return [...prevCombatants, newEntry]
-        .sort((a, b) => b.initiative - a.initiative); // Sort in descending order of initiative
+      return sortCombatants([
+        ...prevCombatants,
+        {
+          id: `custom-${Date.now()}`,
+          characterName: name,
+          initiative: Number(newEntry.initiative),
+          kind: 'custom',
+        },
+      ]);
     });
     // Clear the new entry fields
     setNewEntry({ characterName: '', initiative: '' });
@@ -292,10 +349,23 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
     const handleInitiativeRoll = ({ characterName, roll }) => {
       console.log("characterName - roll:", characterName + "-" + roll);
-      setCombatants((prevCombatants) =>
-        [...prevCombatants, { characterName, initiative: roll }]
-        .sort((a, b) => b.initiative - a.initiative) // Sort in descending order of initiative
-      );
+      setCombatants((prevCombatants) => {
+        const existingIndex = prevCombatants.findIndex(
+          (combatant) => combatant.characterName === characterName
+        );
+        const updated = [...prevCombatants];
+        const rolledCombatant = {
+          ...(existingIndex >= 0 ? updated[existingIndex] : {}),
+          id: existingIndex >= 0 ? updated[existingIndex].id : `player-roll-${characterName}`,
+          characterName,
+          initiative: Number(roll),
+          kind: existingIndex >= 0 ? updated[existingIndex].kind : 'player',
+        };
+
+        if (existingIndex >= 0) updated[existingIndex] = rolledCombatant;
+        else updated.push(rolledCombatant);
+        return sortCombatants(updated);
+      });
     };
 
     socket.on('initiative roll', handleInitiativeRoll);
@@ -310,45 +380,116 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
     socket.emit('combatants', combatants);
     console.log("combatants:", combatants);
-  }, [combatants])
+  }, [combatants, socket])
 
   const handleInitiative = () => {
-    if (socket == null) return;
-
-    // 1. Send message to players that they should roll for initiative
-    // 2. Listen for responses containing results of rolls
-    // 3. Display results in a table. "Next" button in footer.
-    // 4. Options to add missing players and NPCs (for now, just enter name and initiative roll)
-    // fetchPlayers();
     setCurrentContent('initiative');
-    socket.emit("Roll for initiative!")
-
-    // setCombatants(players); // Add players to the list of combatants
+    if (socket) socket.emit("Roll for initiative!");
   };
 
   const handleNextButtonClick = () => {
-  const nextTurn = (currentTurn + 1) % combatants.length;
-  setCurrentTurn(nextTurn);
-  
-  const current = { character: combatants[currentTurn], order: currentTurn + 1 };
-  const next = { character: combatants[nextTurn], order: nextTurn + 1 };
+    if (combatants.length === 0) return;
 
-  socket.emit('update turn', { current, next });
-};
+    const nextTurn = (currentTurn + 1) % combatants.length;
+    if (nextTurn === 0) setEncounterRound((round) => round + 1);
+    setCurrentTurn(nextTurn);
+
+    const current = { character: combatants[nextTurn], order: nextTurn + 1 };
+    const followingIndex = (nextTurn + 1) % combatants.length;
+    const next = { character: combatants[followingIndex], order: followingIndex + 1 };
+
+    if (socket) socket.emit('update turn', { current, next });
+  };
 
   const handleEndOfCombat = () => {
-    if (socket == null) return;
-    
     setCombatants([]); // Reset the combatants
     setCurrentTurn(0); // Reset the current turn
-    setCurrentContent('lootBoxes'); // Or any other content you'd like to display
-    socket.emit('end of combat'); // Notify players
+    setEncounterRound(1);
+    setEncounterStarted(false);
+    if (socket) socket.emit('end of combat'); // Notify players
+  };
+
+  const addEncounterCombatant = (entry) => {
+    setCombatants((current) => {
+      if (current.some((combatant) => combatant.id === entry.id)) return current;
+      return [...current, entry];
+    });
+  };
+
+  const addPlayerToEncounter = (player) => {
+    addEncounterCombatant({
+      id: `player-${player.id ?? player.character_name}`,
+      sourceId: player.id,
+      characterName: player.character_name,
+      initiative: '',
+      kind: 'player',
+    });
+  };
+
+  const addNpcToEncounter = (npc) => {
+    addEncounterCombatant({
+      id: `npc-${npc.id}-${Date.now()}`,
+      sourceId: npc.id,
+      characterName: npc.name,
+      initiative: '',
+      kind: 'npc',
+      ac: npc.ac,
+      hp: npc.hp,
+      dexterity: npc.dexterity,
+    });
+  };
+
+  const removeEncounterCombatant = (combatantId) => {
+    setCombatants((current) => current.filter((combatant) => combatant.id !== combatantId));
+    setCurrentTurn(0);
+  };
+
+  const setEncounterInitiative = (combatantId, value) => {
+    setCombatants((current) => current.map((combatant) => (
+      combatant.id === combatantId
+        ? { ...combatant, initiative: value === '' ? '' : Number(value) }
+        : combatant
+    )));
+  };
+
+  const rollNpcInitiative = (combatantId) => {
+    setCombatants((current) => current.map((combatant) => {
+      if (combatant.id !== combatantId) return combatant;
+      const dexterity = Number(combatant.dexterity) || 10;
+      const modifier = Math.floor((dexterity - 10) / 2);
+      return {
+        ...combatant,
+        initiative: Math.floor(Math.random() * 20) + 1 + modifier,
+      };
+    }));
+  };
+
+  const requestPlayerInitiative = () => {
+    if (socket) socket.emit('Roll for initiative!');
+  };
+
+  const beginEncounter = () => {
+    if (combatants.length === 0) return;
+    const orderedCombatants = sortCombatants(combatants);
+    setCombatants(orderedCombatants);
+    setCurrentTurn(0);
+    setEncounterRound(1);
+    setEncounterStarted(true);
+
+    if (socket) {
+      socket.emit('combatants', orderedCombatants);
+      const nextIndex = orderedCombatants.length > 1 ? 1 : 0;
+      socket.emit('update turn', {
+        current: { character: orderedCombatants[0], order: 1 },
+        next: { character: orderedCombatants[nextIndex], order: nextIndex + 1 },
+      });
+    }
   };
 
 
   // NPC Cards
   const fetchNpcs = (campaignId) => {
-    axios.post('/api/npcs', { campaignId: campaignId }, { headers: headers })
+    axios.get('/api/npcs', { headers: headers })
       .then(response => {
         setNpcs(response.data);
       })
@@ -369,7 +510,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
       [name]: value
     });
   };
-  
+
   // useEffect(() => {
   //   console.log('NPC Data:', npcData);
   // }, [npcData]);
@@ -435,6 +576,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
     name: '',
     description: '',
     diceType: '',
+    moduleKey: '',
     entries: []
   });
   const [randomTableModalOpen, setRandomTableModalOpen] = useState(false);
@@ -500,6 +642,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
             name: '',
             description: '',
             diceType: '',
+            moduleKey: '',
             entries: []
           });
           setIsEditing(false);
@@ -518,6 +661,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
             name: '',
             description: '',
             diceType: '',
+            moduleKey: '',
             entries: []
           });
         })
@@ -558,6 +702,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
       name: selectedTable.name,
       description: selectedTable.description,
       diceType: selectedTable.dice_type,
+      moduleKey: selectedTable.module_key || '',
       entries: selectedTable.table_entries
     });
     setIsEditing(true);
@@ -600,222 +745,764 @@ function DMTools({ headers, socket, characterName, accountType }) {
     setCurrentContent('Transaction History');
   };
 
+  const TOOL_GROUPS = [
+    {
+      title: 'Create',
+      items: [
+        {
+          id: 'lootBoxes',
+          label: 'Loot Boxes',
+          description: 'Create, inspect, edit, and assign saved loot packages.',
+          icon: <Inventory2Icon fontSize="small" />,
+          actionLabel: 'Create Loot Box',
+          action: handleCreateLootBox,
+        },
+        {
+          id: 'npcCards',
+          label: 'NPC Library',
+          description: 'Create and manage saved NPC cards for this campaign.',
+          icon: <BadgeIcon fontSize="small" />,
+          actionLabel: 'Create NPC',
+          action: handleCreateNpc,
+        },
+        {
+          id: 'encounterBuilder',
+          label: 'Encounter Builder',
+          description: 'Build a roster, collect initiative, and run combat turn by turn.',
+          icon: <SportsKabaddiIcon fontSize="small" />,
+          actionLabel: encounterStarted ? 'Next Turn' : 'Begin Encounter',
+          action: encounterStarted ? handleNextButtonClick : beginEncounter,
+        },
+      ],
+    },
+    {
+      title: 'Manage',
+      items: [
+        {
+          id: 'soundPlayer',
+          label: 'Music Player',
+          description: 'Mix looping ambience and music with independent one-shot sound effects.',
+          icon: <MusicNoteIcon fontSize="small" />,
+        },
+        {
+          id: 'campaignSettings',
+          label: 'Campaign Settings',
+          description: 'Install campaign modules and reconcile shared world settings.',
+          icon: <SettingsIcon fontSize="small" />,
+        },
+        {
+          id: 'playerInventories',
+          label: 'Player Inventories',
+          description: 'Inspect player inventories without changing them directly.',
+          icon: <GroupsIcon fontSize="small" />,
+          actionLabel: 'Refresh Players',
+          action: fetchPlayers,
+        },
+        {
+          id: 'transactionHistory',
+          label: 'Transaction History',
+          description: 'Review item transfers and table-side activity.',
+          icon: <HistoryIcon fontSize="small" />,
+          actionLabel: 'Refresh History',
+          action: fetchItemTransfers,
+        },
+      ],
+    },
+    {
+      title: 'Roll / Randomize',
+      items: [
+        {
+          id: 'randomTables',
+          label: 'Random Tables',
+          description: 'Create and roll on random event and result tables.',
+          icon: <CasinoIcon fontSize="small" />,
+          actionLabel: 'Add Roll Table',
+          action: openCreateTableModal,
+        },
+        {
+          id: 'initiative',
+          label: 'Initiative',
+          description: 'Collect initiative rolls and track turn order.',
+          icon: <SportsKabaddiIcon fontSize="small" />,
+          actionLabel: 'Roll for Initiative',
+          action: handleInitiative,
+        },
+      ],
+    },
+  ];
+
+  const toolLookup = Object.fromEntries(
+    TOOL_GROUPS.flatMap((group) => group.items.map((tool) => [tool.id, tool]))
+  );
+
+  const activeTool = toolLookup[currentContent] || null;
+
+  const selectTool = (toolId) => {
+    switch (toolId) {
+      case 'lootBoxes':
+        handleShowLootBoxes();
+        break;
+      case 'playerInventories':
+        handleShowPlayerInventories();
+        break;
+      case 'soundPlayer':
+        setCurrentContent('soundPlayer');
+        break;
+      case 'campaignSettings':
+        setCurrentContent('campaignSettings');
+        break;
+      case 'initiative':
+        handleInitiative();
+        break;
+      case 'npcCards':
+        handleShowNPCCards();
+        break;
+      case 'randomTables':
+        handleShowRandomTables();
+        break;
+      case 'transactionHistory':
+        handleShowTransactionHistory();
+        break;
+      case 'encounterBuilder':
+        setCurrentContent('encounterBuilder');
+        handleShowBuildEncounter();
+        break;
+      default:
+        setCurrentContent('home');
+        break;
+    }
+  };
+
+  const renderHomeDashboard = () => (
+    <div className="dmtools-dashboard">
+      <div className="dmtools-dashboard-grid">
+        <button className="dmtools-dashboard-card" onClick={handleCreateLootBox}>
+          <div className="dmtools-dashboard-card-icon"><Inventory2Icon /></div>
+          <div className="dmtools-dashboard-card-title">Create Loot Box</div>
+          <div className="dmtools-dashboard-card-text">
+            Build a loot package and assign it to a player later.
+          </div>
+        </button>
+
+        <button className="dmtools-dashboard-card" onClick={handleCreateNpc}>
+          <div className="dmtools-dashboard-card-icon"><BadgeIcon /></div>
+          <div className="dmtools-dashboard-card-title">Create NPC</div>
+          <div className="dmtools-dashboard-card-text">
+            Build a reusable NPC card and save it to the campaign.
+          </div>
+        </button>
+
+        <button className="dmtools-dashboard-card" onClick={handleInitiative}>
+          <div className="dmtools-dashboard-card-icon"><SportsKabaddiIcon /></div>
+          <div className="dmtools-dashboard-card-title">Start Initiative</div>
+          <div className="dmtools-dashboard-card-text">
+            Prompt players to roll and begin turn tracking.
+          </div>
+        </button>
+
+        <button className="dmtools-dashboard-card" onClick={openCreateTableModal}>
+          <div className="dmtools-dashboard-card-icon"><CasinoIcon /></div>
+          <div className="dmtools-dashboard-card-title">Add Roll Table</div>
+          <div className="dmtools-dashboard-card-text">
+            Create a random table for events, traits, or encounters.
+          </div>
+        </button>
+
+        <button className="dmtools-dashboard-card" onClick={() => setCurrentContent('soundPlayer')}>
+          <div className="dmtools-dashboard-card-icon"><MusicNoteIcon /></div>
+          <div className="dmtools-dashboard-card-title">Open Music Player</div>
+          <div className="dmtools-dashboard-card-text">
+            Layer background ambience with table-ready sound effects.
+          </div>
+        </button>
+      </div>
+
+      <div className="dmtools-overview-grid">
+        <div className="dmtools-overview-panel">
+          <div className="dmtools-overview-title">Recent Assets</div>
+          <div className="dmtools-overview-list">
+            <div className="dmtools-overview-item">
+              <span>Loot Boxes</span>
+              <strong>{lootBoxes.length}</strong>
+            </div>
+            <div className="dmtools-overview-item">
+              <span>NPC Cards</span>
+              <strong>{npcs.length}</strong>
+            </div>
+            <div className="dmtools-overview-item">
+              <span>Random Tables</span>
+              <strong>{randomTables.length}</strong>
+            </div>
+            <div className="dmtools-overview-item">
+              <span>Visible Players</span>
+              <strong>{players.length}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="dmtools-overview-panel">
+          <div className="dmtools-overview-title">Quick Start</div>
+          <div className="dmtools-overview-copy">
+            Select a tool from the rail to open its workspace. Each tool loads into the
+            main panel, where you can create, review, and manage campaign assets.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderLootBoxes = () => (
+    <>
+      <div className="dmtools-section-actions">
+        <Button onClick={handleCreateLootBox}>Create Loot Box</Button>
+      </div>
+
+      <div className="dmtools-table-shell">
+        <Table striped bordered hover className="dmtools-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Scope</th>
+              <th style={{ width: '180px' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lootBoxes.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="dmtools-empty-cell">
+                  No loot boxes yet.
+                </td>
+              </tr>
+            ) : (
+              lootBoxes.map((lootBox, i) => (
+                <tr key={i}>
+                  <td>{lootBox.name}</td>
+                  <td><span className={`catalog-scope ${lootBox.is_preset?'preset':''}`}>{catalogScopeLabel(lootBox,catalogModules)}</span></td>
+                  <td>
+                    <div className="dmtools-inline-actions">
+                      <Button size="sm" variant="primary" onClick={() => viewLootBox(lootBox)}>
+                        Examine
+                      </Button>
+                      {lootBox.editable!==false&&<Button size="sm" variant="outline-light" onClick={() => handleLootBoxClick(lootBox)}>Edit</Button>}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </Table>
+      </div>
+    </>
+  );
+
+  const renderPlayerInventories = () => (
+    <div className="dmtools-table-shell">
+      <Table striped bordered className="dmtools-table">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th style={{ width: '180px' }}>View</th>
+          </tr>
+        </thead>
+        <tbody>
+          {players.filter(player => player.id !== null).length === 0 ? (
+            <tr>
+              <td colSpan={2} className="dmtools-empty-cell">No players found.</td>
+            </tr>
+          ) : (
+            players.filter(player => player.id !== null).map((player, i) => (
+              <tr key={i}>
+                <td>{player.character_name}</td>
+                <td>
+                  <Button variant="primary" size="sm" onClick={() => viewPlayerInventory(player)}>
+                    Examine
+                  </Button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </Table>
+    </div>
+  );
+
+  const renderInitiative = () => (
+    <>
+      <div className="dmtools-section-actions">
+        <Button onClick={handleNextButtonClick} disabled={combatants.length === 0}>
+          Next Turn
+        </Button>
+        <Button variant="danger" onClick={handleEndOfCombat}>
+          End Combat
+        </Button>
+      </div>
+
+      <div className="dmtools-table-shell">
+        <Table bordered className="dmtools-table">
+          <thead>
+            <tr>
+              <th style={{ width: '180px' }}>Initiative</th>
+              <th>Character</th>
+            </tr>
+          </thead>
+          <tbody>
+            {combatants.map((player, i) => (
+              <tr key={i} className={i === currentTurn ? 'table-warning' : ''}>
+                <td>{player.initiative}</td>
+                <td>{player.characterName}</td>
+              </tr>
+            ))}
+            <tr>
+              <td>
+                <Form.Control
+                  type="number"
+                  value={newEntry.initiative}
+                  onChange={e => handleNewEntryChange('initiative', e.target.value)}
+                />
+              </td>
+              <td>
+                <div className="dmtools-inline-actions">
+                  <Form.Control
+                    type="text"
+                    value={newEntry.characterName}
+                    onChange={e => handleNewEntryChange('characterName', e.target.value)}
+                  />
+                  <Button onClick={handleNewEntrySubmit}>Add</Button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </Table>
+      </div>
+    </>
+  );
+
+  const renderNpcCards = () => (
+    <>
+      <div className="dmtools-section-actions">
+        <Button onClick={handleCreateNpc}>Create NPC</Button>
+      </div>
+
+      <div className="dmtools-table-shell">
+        <Table striped bordered hover className="dmtools-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>CR</th>
+              <th>AC</th>
+              <th>HP</th>
+              <th style={{ width: '180px' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {npcs.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="dmtools-empty-cell">No NPCs saved yet.</td>
+              </tr>
+            ) : (
+              npcs.map((npc, i) => (
+                <tr key={i}>
+                  <td>{npc.name}</td>
+                  <td>{npc.challenge}</td>
+                  <td>{npc.ac}</td>
+                  <td>{npc.hp}</td>
+                  <td>
+                    <Button variant="primary" size="sm" onClick={() => handleNpcClick(npc)}>
+                      View Actions
+                    </Button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </Table>
+      </div>
+    </>
+  );
+
+  const renderRandomTables = () => (
+    <>
+      <div className="dmtools-section-actions">
+        <Button onClick={openCreateTableModal}>Add a Roll Table</Button>
+      </div>
+
+      <div className="dmtools-table-shell">
+        <Table striped bordered hover className="dmtools-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Scope</th>
+              <th style={{ width: '180px' }}>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {randomTables.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="dmtools-empty-cell">No roll tables created yet.</td>
+              </tr>
+            ) : (
+              randomTables.map((table, i) => (
+                <tr key={i}>
+                  <td>{table.name}</td>
+                  <td><span className={`catalog-scope ${table.is_preset?'preset':''}`}>{catalogScopeLabel(table,catalogModules)}</span></td>
+                  <td>
+                    <Button variant="primary" size="sm" onClick={() => handleTableSelect(table)}>
+                      Select
+                    </Button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </Table>
+      </div>
+    </>
+  );
+
+  const renderTransactionHistory = () => (
+    <div className="dmtools-table-shell">
+      <Table striped bordered hover className="dmtools-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Sender</th>
+            <th>Recipients</th>
+            <th>Item</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {itemTransfers.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="dmtools-empty-cell">No transactions found.</td>
+            </tr>
+          ) : (
+            itemTransfers.map((transfer, i) => (
+              <tr key={i}>
+                <td>{new Date(transfer.timestamp).toLocaleString()}</td>
+                <td>{transfer.sender_id}</td>
+                <td>{transfer.recipient_ids.join(', ')}</td>
+                <td>{transfer.item_id}</td>
+                <td>{transfer.message_text}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </Table>
+    </div>
+  );
+
+  const renderEncounterBuilder = () => {
+    const normalizedSearch = encounterSearch.trim().toLowerCase();
+    const availablePlayers = players.filter((player) => (
+      player.id !== null &&
+      player.character_name &&
+      player.character_name.toLowerCase().includes(normalizedSearch) &&
+      !combatants.some((combatant) => combatant.id === `player-${player.id ?? player.character_name}`)
+    ));
+    const availableNpcs = npcs.filter((npc) => (
+      npc.name?.toLowerCase().includes(normalizedSearch)
+    ));
+    const readyCount = combatants.filter((combatant) => combatant.initiative !== '').length;
+
+    return (
+      <div className="encounter-builder">
+        <section className="encounter-status" aria-label="Encounter status">
+          <div>
+            <span className="encounter-kicker">{encounterStarted ? `Round ${encounterRound}` : 'Encounter setup'}</span>
+            <h3>
+              {encounterStarted && combatants[currentTurn]
+                ? `${combatants[currentTurn].characterName}'s turn`
+                : `${combatants.length} combatant${combatants.length === 1 ? '' : 's'} ready`}
+            </h3>
+            <p>
+              {encounterStarted
+                ? `Up next: ${combatants[(currentTurn + 1) % combatants.length]?.characterName || '—'}`
+                : `${readyCount} of ${combatants.length} initiative rolls entered.`}
+            </p>
+          </div>
+          <div className="encounter-status-actions">
+            {!encounterStarted ? (
+              <>
+                <Button variant="outline-primary" onClick={requestPlayerInitiative}>
+                  Ask Players to Roll
+                </Button>
+                <Button onClick={beginEncounter} disabled={combatants.length === 0}>
+                  Begin Encounter
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button onClick={handleNextButtonClick}>Next Turn</Button>
+                <Button variant="outline-danger" onClick={handleEndOfCombat}>End Encounter</Button>
+              </>
+            )}
+          </div>
+        </section>
+
+        <div className="encounter-layout">
+          <aside className="encounter-library">
+            <div className="encounter-panel-heading">
+              <div>
+                <span className="encounter-kicker">Campaign roster</span>
+                <h3>Add combatants</h3>
+              </div>
+            </div>
+            <Form.Control
+              type="search"
+              aria-label="Search campaign roster"
+              placeholder="Search players and NPCs"
+              value={encounterSearch}
+              onChange={(event) => setEncounterSearch(event.target.value)}
+            />
+
+            <div className="encounter-library-group">
+              <h4>Players</h4>
+              {availablePlayers.length === 0 ? (
+                <p className="encounter-empty">No matching players to add.</p>
+              ) : availablePlayers.map((player) => (
+                <button
+                  type="button"
+                  className="encounter-library-item"
+                  key={player.id ?? player.character_name}
+                  onClick={() => addPlayerToEncounter(player)}
+                >
+                  <span>
+                    <strong>{player.character_name}</strong>
+                    <small>Player character</small>
+                  </span>
+                  <span aria-hidden="true">＋</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="encounter-library-group">
+              <h4>Saved NPCs</h4>
+              {availableNpcs.length === 0 ? (
+                <p className="encounter-empty">No matching saved NPCs.</p>
+              ) : availableNpcs.map((npc) => (
+                <button
+                  type="button"
+                  className="encounter-library-item"
+                  key={npc.id}
+                  onClick={() => addNpcToEncounter(npc)}
+                >
+                  <span>
+                    <strong>{npc.name}</strong>
+                    <small>CR {npc.challenge || '—'} · AC {npc.ac || '—'} · HP {npc.hp || '—'}</small>
+                  </span>
+                  <span aria-hidden="true">＋</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="encounter-order">
+            <div className="encounter-panel-heading">
+              <div>
+                <span className="encounter-kicker">Initiative order</span>
+                <h3>Turn tracker</h3>
+              </div>
+              <span className="encounter-count">{combatants.length}</span>
+            </div>
+
+            {combatants.length === 0 ? (
+              <div className="encounter-order-empty">
+                <SportsKabaddiIcon />
+                <strong>Your encounter is empty</strong>
+                <span>Add campaign players or saved NPCs from the roster.</span>
+              </div>
+            ) : (
+              <div className="encounter-combatants">
+                {combatants.map((combatant, index) => (
+                  <div
+                    className={`encounter-combatant ${encounterStarted && index === currentTurn ? 'is-active' : ''}`}
+                    key={combatant.id}
+                  >
+                    <span className="encounter-position">{index + 1}</span>
+                    <div className="encounter-combatant-copy">
+                      <strong>{combatant.characterName}</strong>
+                      <small>
+                        {combatant.kind === 'npc'
+                          ? `NPC${combatant.ac ? ` · AC ${combatant.ac}` : ''}${combatant.hp ? ` · HP ${combatant.hp}` : ''}`
+                          : combatant.kind === 'player' ? 'Player character' : 'Custom combatant'}
+                      </small>
+                    </div>
+                    <Form.Control
+                      className="encounter-initiative-input"
+                      type="number"
+                      aria-label={`${combatant.characterName} initiative`}
+                      placeholder="Init."
+                      value={combatant.initiative}
+                      disabled={encounterStarted}
+                      onChange={(event) => setEncounterInitiative(combatant.id, event.target.value)}
+                    />
+                    {combatant.kind === 'npc' && !encounterStarted ? (
+                      <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        onClick={() => rollNpcInitiative(combatant.id)}
+                      >
+                        Roll
+                      </Button>
+                    ) : null}
+                    {!encounterStarted ? (
+                      <Button
+                        size="sm"
+                        variant="link"
+                        className="encounter-remove"
+                        aria-label={`Remove ${combatant.characterName}`}
+                        onClick={() => removeEncounterCombatant(combatant.id)}
+                      >
+                        Remove
+                      </Button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!encounterStarted ? (
+              <div className="encounter-custom-entry">
+                <Form.Control
+                  type="text"
+                  aria-label="Custom combatant name"
+                  placeholder="Add another combatant"
+                  value={newEntry.characterName}
+                  onChange={(event) => handleNewEntryChange('characterName', event.target.value)}
+                />
+                <Form.Control
+                  type="number"
+                  aria-label="Custom combatant initiative"
+                  placeholder="Init."
+                  value={newEntry.initiative}
+                  onChange={(event) => handleNewEntryChange('initiative', event.target.value)}
+                />
+                <Button variant="outline-primary" onClick={handleNewEntrySubmit}>Add</Button>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      </div>
+    );
+  };
+
+  const renderWorkspaceBody = () => {
+    switch (currentContent) {
+      case 'home':
+        return renderHomeDashboard();
+      case 'lootBoxes':
+        return renderLootBoxes();
+      case 'playerInventories':
+        return renderPlayerInventories();
+      case 'initiative':
+        return renderInitiative();
+      case 'npcCards':
+        return renderNpcCards();
+      case 'randomTables':
+      case 'Random Tables':
+        return renderRandomTables();
+      case 'transactionHistory':
+      case 'Transaction History':
+        return renderTransactionHistory();
+      case 'encounterBuilder':
+        return renderEncounterBuilder();
+      case 'soundPlayer':
+        return <DMSoundPlayerWorkspace />;
+      case 'campaignSettings':
+        return <CampaignSettings headers={headers} campaignID={headers?.campaignID || headers?.CampaignID} embedded />;
+      default:
+        return renderHomeDashboard();
+    }
+  };
+
+  const workspaceTitle = activeTool?.label || 'DM Tools Home';
+  const workspaceDescription =
+    activeTool?.description ||
+    'Choose a tool from the rail to open its workspace, or start from one of the quick actions below.';
+  const workspaceActionLabel = activeTool?.actionLabel || null;
+  const workspaceAction = activeTool?.action || null;
 
 
   // TODO: Future Expansion
   const handleShowBuildEncounter = () => {
-    console.log("Show Build Encounter")
+    fetchPlayers();
+    fetchNpcs(headers?.CampaignID || headers?.campaignID);
+    setCurrentContent('encounterBuilder');
   };
 
-  
   return (
     <>
-      <Container>
-        <Row>
-          <Col>
+      <div className="dmtools-page">
+        <aside className="dmtools-rail">
+          <div className="dmtools-rail-header">
             <h1>DM Tools</h1>
-            <div class="btn-group-vertical">
-              <Button onClick={handleShowSettlementManager}>Settlement Manager</Button>
-              <Button onClick={handleShowLootBoxes}>Loot Boxes</Button>
-              <Button onClick={handleShowRandomTables}>Tables to Roll On</Button>
-              <Button onClick={handleShowPlayerInventories}>View player inventories</Button>
-              <Button onClick={handleShowNPCCards}>NPC cards</Button>
-              <Button onClick={handleInitiative}>Roll for Initiative</Button>
-              {/* Other DM tools */}
-              <Button onClick={handleShowBuildEncounter}>Build Encounter</Button>
-              <Button onClick={handleShowTransactionHistory}>Transaction History</Button>
-            </div>
-          </Col>
-          <Col>
-            {currentContent === 'lootBoxes' && (
-              <>
-                <h2>Loot Boxes</h2>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Button onClick={handleCreateLootBox}>Create Loot Box</Button>
-                </div>
-                <Table striped bordered hover>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Edit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lootBoxes.map((lootBox, i) => (
-                      <tr key={i}>
-                        <td>{lootBox.name}</td>
-                        <td>
-                          <Button variant="primary" onClick={() => viewLootBox(lootBox)}>
-                            Examine
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </>
-            )}
-            {currentContent === 'playerInventories' && (
-              <>
-                <h2>Player Inventories</h2>
-                <Table striped bordered>
-                  <thead>
-                    <tr>
-                      <th>Player</th>
-                      <th>View</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {players.filter(player => player.id !== null).map((player, i) => (
-                      <tr key={i}>
-                        <td>{player.character_name}</td>
-                        <td>
-                          <Button variant="primary" onClick={() => viewPlayerInventory(player)}>
-                            Examine
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </>
-            )}
-            {currentContent === 'initiative' && (
-              <>
-                <h2>Initiative</h2>
-                <Table bordered
-                >
-                  <thead>
-                    <tr>
-                      <th>Initiative</th>
-                      <th>Character</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {combatants.map((player, i) => (
-                      <tr key={i} className={i === currentTurn ? 'table-warning' : ''}>
-                        <td>{player.initiative}</td>
-                        <td>{player.characterName}</td>
-                      </tr>
-                    ))}
-                    {/* New Entry Row */}
-                    <tr>
-                      <td>
-                        <input
-                          type="number"
-                          value={newEntry.initiative}
-                          onChange={e => handleNewEntryChange('initiative', e.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="text"
-                          value={newEntry.characterName}
-                          onChange={e => handleNewEntryChange('characterName', e.target.value)}
-                        />
-                        <Button onClick={handleNewEntrySubmit}>Add</Button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </Table>
-                <Button onClick={handleNextButtonClick}>Next</Button>
-                <Button variant="danger" onClick={handleEndOfCombat}>End of Combat</Button> {/* End of Combat button */}
+            <p>GM workbench</p>
+          </div>
 
-              </>
-            )}
-            {currentContent === 'npcCards' && (
-              <>
-                <h2>NPC Cards</h2>
-                <Button onClick={handleCreateNpc}>Create NPC</Button>
-                <Table striped bordered hover>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>CR</th>
-                      <th>AC</th>
-                      <th>HP</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {npcs.map((npc, i) => (
-                      <tr key={i} onClick={() => handleNpcClick(npc)}>
-                        <td>{npc.name}</td>
-                        <td>{npc.challenge}</td>
-                        <td>{npc.ac}</td>
-                        <td>{npc.hp}</td>
-                        <td>
-                          <Button variant="primary" onClick={() => handleNpcClick(npc)}>
-                            View Actions
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </>
-            )}
-            {currentContent === 'Random Tables' && (
-              <>
-                <h2>Random Roll Tables</h2>
-                <Button onClick={openCreateTableModal}>Add a Roll Table</Button>
-                <Table striped bordered hover>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Details</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {randomTables.map((table, i) => (
-                      <tr key={i} onClick={() => handleTableSelect(table)}>
-                        <td>{table.name}</td>
-                        <td>
-                          <Button variant="primary" onClick={() => handleTableSelect(table)}>
-                            Select
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </>
-            )}
-            {currentContent === 'Transaction History' && (
-              <>
-                <h2>Transaction History</h2>
-                <Table striped bordered hover>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Sender</th>
-                      <th>Recipients</th>
-                      <th>Item</th>
-                      <th>Message</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {itemTransfers.map((transfer, i) => (
-                      <tr key={i}>
-                        <td>{new Date(transfer.timestamp).toLocaleString()}</td>
-                        <td>{transfer.sender_id}</td>
-                        <td>{transfer.recipient_ids.join(', ')}</td>
-                        <td>{transfer.item_id}</td>
-                        <td>{transfer.message_text}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </>
-            )}
-          </Col>
-        </Row>
-      </Container>
+          <div className="dmtools-rail-nav">
+            <button
+              type="button"
+              className={`dmtools-rail-home ${currentContent === 'home' ? 'is-active' : ''}`}
+              onClick={() => setCurrentContent('home')}
+            >
+              <span>Home</span>
+              <ChevronRightIcon fontSize="small" />
+            </button>
+
+            {TOOL_GROUPS.map((group) => (
+              <div className="dmtools-rail-group" key={group.title}>
+                <div className="dmtools-rail-group-title">{group.title}</div>
+
+                {group.items.map((tool) => {
+                  const isActive =
+                    currentContent === tool.id ||
+                    (tool.id === 'randomTables' && currentContent === 'Random Tables') ||
+                    (tool.id === 'transactionHistory' && currentContent === 'Transaction History');
+
+                  return (
+                    <button
+                      key={tool.id}
+                      type="button"
+                      className={`dmtools-rail-item ${isActive ? 'is-active' : ''}`}
+                      onClick={() => selectTool(tool.id)}
+                    >
+                      <span className="dmtools-rail-item-icon">{tool.icon}</span>
+                      <span className="dmtools-rail-item-text">
+                        <span className="dmtools-rail-item-label">{tool.label}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <section className="dmtools-workspace">
+          <div className="dmtools-workspace-header">
+            <div className="dmtools-workspace-heading">
+              <h2>{workspaceTitle}</h2>
+              <p>{workspaceDescription}</p>
+            </div>
+
+            {workspaceActionLabel && workspaceAction ? (
+              <div className="dmtools-workspace-actions">
+                <Button onClick={workspaceAction}>{workspaceActionLabel}</Button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="dmtools-workspace-body">
+            {renderWorkspaceBody()}
+          </div>
+        </section>
+      </div>
 
       {/* Create Loot Box Modal */}
       <Modal show={lootBoxModalOpen} onHide={() => setLootBoxModalOpen(false)} centered fullscreen>
         <Modal.Header closeButton>
-          <Modal.Title>Create Loot Box</Modal.Title>
+          <Modal.Title>{editingLootBoxId === null ? 'Create Loot Box' : 'Edit Loot Box'}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           <Row>
@@ -855,6 +1542,14 @@ function DMTools({ headers, socket, characterName, accountType }) {
                   onChange={e => setLootBoxName(e.target.value)}
                 />
               </label>
+              <Form.Group className="mt-3">
+                <Form.Label>Catalog scope</Form.Label>
+                <Form.Select value={lootBoxModuleKey} onChange={event=>setLootBoxModuleKey(event.target.value)}>
+                  <option value="">Entire campaign</option>
+                  {catalogModules.map(module=><option key={module.module_key} value={module.module_key}>{module.module_name}</option>)}
+                </Form.Select>
+                <Form.Text>Optionally associate this loot box with an installed module.</Form.Text>
+              </Form.Group>
               <Table striped bordered hover>
                 <thead>
                   <tr>
@@ -898,14 +1593,14 @@ function DMTools({ headers, socket, characterName, accountType }) {
               <Col>
                 {selectedLootBox?.name}
               </Col>
-              <Col>
+              {selectedLootBox?.editable!==false&&<Col>
                 <Button variant="primary" onClick={editLootBox}>
-                  <EditIcon />
+                  <EditIcon /> Edit
                 </Button>
                 <Button variant="danger" onClick={() => deleteLootBox(selectedLootBox)}>
-                  <DeleteIcon />
+                  <DeleteIcon /> Delete
                 </Button>
-              </Col>
+              </Col>}
             </Row>
           </Modal.Title>
         </Modal.Header>
@@ -928,8 +1623,8 @@ function DMTools({ headers, socket, characterName, accountType }) {
           </Table>
         </Modal.Body>
         <Modal.Footer>
-          <Form.Control as="select" onChange={e => setSelectedPlayer(JSON.parse(e.target.value))}>
-            <option value="" disabled selected>Select a player</option>
+          <Form.Control as="select" value={selectedPlayer ? JSON.stringify(selectedPlayer) : ''} onChange={e => setSelectedPlayer(JSON.parse(e.target.value))}>
+            <option value="" disabled>Select a player</option>
             {players.map((player, index) => (
               <option key={index} value={JSON.stringify(player)}>{player.character_name}</option>
             ))}
@@ -942,31 +1637,31 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
       {/* View Player Inventory Modal */}
       <Modal show={viewPlayerInventoryModal} onHide={() => setViewPlayerInventoryModal(false)} centered>
-      <Modal.Header closeButton>
-        <Modal.Title>
-          <Row>
-            {selectedPlayer?.character_name}
-          </Row>
-        </Modal.Title>
-      </Modal.Header>
-      <Modal.Body>
-        <Table striped bordered hover>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Quantity</th>
-            </tr>
-          </thead>
-          <tbody>
-            {inventory?.map((item, i) => (
-              <tr key={i}>
-                <td>{item.name}</td>
-                <td>{item.quantity}</td>
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <Row>
+              {selectedPlayer?.character_name}
+            </Row>
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Table striped bordered hover>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Quantity</th>
               </tr>
-            ))}
-          </tbody>
-        </Table>
-      </Modal.Body>
+            </thead>
+            <tbody>
+              {inventory?.map((item, i) => (
+                <tr key={i}>
+                  <td>{item.name}</td>
+                  <td>{item.quantity}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </Modal.Body>
       </Modal>
 
       {/* Create NPC Modal */}
@@ -976,21 +1671,10 @@ function DMTools({ headers, socket, characterName, accountType }) {
         </Modal.Header>
         <Modal.Body>
           <Form>
-            <InputFormGroup
-              label="Name"
-              type="text"
-              value={npcData.name}
-              onChange={handleInputChange}
-              name="name"
-            />
+            <InputFormGroup label="Name" type="text" value={npcData.name} onChange={handleInputChange} name="name" />
             <Form.Group>
               <Form.Label>Size</Form.Label>
-              <Form.Control
-                as="select"
-                value={npcData.size}
-                onChange={handleInputChange}
-                name="size"
-              >
+              <Form.Control as="select" value={npcData.size} onChange={handleInputChange} name="size">
                 <option value="Tiny">Tiny</option>
                 <option value="Small">Small</option>
                 <option value="Medium">Medium</option>
@@ -999,167 +1683,36 @@ function DMTools({ headers, socket, characterName, accountType }) {
                 <option value="Gargantuan">Gargantuan</option>
               </Form.Control>
             </Form.Group>
-            <InputFormGroup
-              label="Creature Type"
-              type="text"
-              value={npcData.creatureType}
-              onChange={handleInputChange}
-              name="creatureType"
-            />
-            <InputFormGroup
-              label="Creature Subtype"
-              type="text"
-              value={npcData.creatureSubtype}
-              onChange={handleInputChange}
-              name="creatureSubtype"
-            />
+            <InputFormGroup label="Creature Type" type="text" value={npcData.creatureType} onChange={handleInputChange} name="creatureType" />
+            <InputFormGroup label="Creature Subtype" type="text" value={npcData.creatureSubtype} onChange={handleInputChange} name="creatureSubtype" />
             <Form.Group>
               <Form.Label>Alignment</Form.Label>
-              <Form.Control
-                as="select"
-                value={npcData.alignment}
-                onChange={handleInputChange}
-                name="alignment"
-              >
+              <Form.Control as="select" value={npcData.alignment} onChange={handleInputChange} name="alignment">
                 <option value="" disabled>Select alignment</option>
                 {alignments.map(alignment => (
                   <option key={alignment} value={alignment}>{alignment}</option>
                 ))}
               </Form.Control>
             </Form.Group>
-            <InputFormGroup
-              label="AC"
-              type="number"
-              value={npcData.ac}
-              onChange={handleInputChange}
-              name="ac"
-            />
-            <InputFormGroup
-              label="HP"
-              type="number"
-              value={npcData.hp}
-              onChange={handleInputChange}
-              name="hp"
-            />
-            <InputFormGroup
-              label="Speed"
-              type="number"
-              value={npcData.speed}
-              onChange={handleInputChange}
-              name="speed"
-            />
-            <InputFormGroup
-              label="Strength"
-              type="number"
-              value={npcData.strength}
-              onChange={handleInputChange}
-              name="strength"
-            />
-            <InputFormGroup
-              label="Dexterity"
-              type="number"
-              value={npcData.dexterity}
-              onChange={handleInputChange}
-              name="dexterity"
-            />
-            <InputFormGroup
-              label="Constitution"
-              type="number"
-              value={npcData.constitution}
-              onChange={handleInputChange}
-              name="constitution"
-            />
-            <InputFormGroup
-              label="Intelligence"
-              type="number"
-              value={npcData.intelligence}
-              onChange={handleInputChange}
-              name="intelligence"
-            />
-            <InputFormGroup
-              label="Wisdom"
-              type="number"
-              value={npcData.wisdom}
-              onChange={handleInputChange}
-              name="wisdom"
-            />
-            <InputFormGroup
-              label="Charisma"
-              type="number"
-              value={npcData.charisma}
-              onChange={handleInputChange}
-              name="charisma"
-            />
-            <InputFormGroup
-              label="Saving Throws"
-              type="text"
-              value={npcData.saving_throws}
-              onChange={handleInputChange}
-              name="saving_throws"
-            />
-            <InputFormGroup
-              label="Skills"
-              type="text"
-              value={npcData.skills}
-              onChange={handleInputChange}
-              name="skills"
-            />
-            <InputFormGroup
-              label="Immunities"
-              type="text"
-              value={npcData.immunities}
-              onChange={handleInputChange}
-              name="immunities"
-            />
-            <InputFormGroup
-              label="Resistance"
-              type="text"
-              value={npcData.resistance}
-              onChange={handleInputChange}
-              name="resistance"
-            />
-            <InputFormGroup
-              label="Senses"
-              type="text"
-              value={npcData.senses}
-              onChange={handleInputChange}
-              name="senses"
-            />
-            <InputFormGroup
-              label="Languages"
-              type="text"
-              value={npcData.languages}
-              onChange={handleInputChange}
-              name="languages"
-            />
-            <InputFormGroup
-              label="Challenge"
-              type="text"
-              value={npcData.challenge}
-              onChange={handleInputChange}
-              name="challenge"
-            />
-            <InputFormGroup
-              label="Traits"
-              type="textarea"
-              value={npcData.traits}
-              onChange={handleInputChange}
-              name="traits"
-            />
-            <InputFormGroup
-              label="Actions"
-              type="textarea"
-              value={npcData.actions}
-              onChange={handleInputChange}
-              name="actions"
-            />
-            <InputFormGroup
-              label="Description"
-              type="textarea"
-              value={npcData.description}
-              onChange={handleInputChange}
-              name="description"
-            />
+            <InputFormGroup label="AC" type="number" value={npcData.ac} onChange={handleInputChange} name="ac" />
+            <InputFormGroup label="HP" type="number" value={npcData.hp} onChange={handleInputChange} name="hp" />
+            <InputFormGroup label="Speed" type="number" value={npcData.speed} onChange={handleInputChange} name="speed" />
+            <InputFormGroup label="Strength" type="number" value={npcData.strength} onChange={handleInputChange} name="strength" />
+            <InputFormGroup label="Dexterity" type="number" value={npcData.dexterity} onChange={handleInputChange} name="dexterity" />
+            <InputFormGroup label="Constitution" type="number" value={npcData.constitution} onChange={handleInputChange} name="constitution" />
+            <InputFormGroup label="Intelligence" type="number" value={npcData.intelligence} onChange={handleInputChange} name="intelligence" />
+            <InputFormGroup label="Wisdom" type="number" value={npcData.wisdom} onChange={handleInputChange} name="wisdom" />
+            <InputFormGroup label="Charisma" type="number" value={npcData.charisma} onChange={handleInputChange} name="charisma" />
+            <InputFormGroup label="Saving Throws" type="text" value={npcData.saving_throws} onChange={handleInputChange} name="saving_throws" />
+            <InputFormGroup label="Skills" type="text" value={npcData.skills} onChange={handleInputChange} name="skills" />
+            <InputFormGroup label="Immunities" type="text" value={npcData.immunities} onChange={handleInputChange} name="immunities" />
+            <InputFormGroup label="Resistance" type="text" value={npcData.resistance} onChange={handleInputChange} name="resistance" />
+            <InputFormGroup label="Senses" type="text" value={npcData.senses} onChange={handleInputChange} name="senses" />
+            <InputFormGroup label="Languages" type="text" value={npcData.languages} onChange={handleInputChange} name="languages" />
+            <InputFormGroup label="Challenge" type="text" value={npcData.challenge} onChange={handleInputChange} name="challenge" />
+            <InputFormGroup label="Traits" type="textarea" value={npcData.traits} onChange={handleInputChange} name="traits" />
+            <InputFormGroup label="Actions" type="textarea" value={npcData.actions} onChange={handleInputChange} name="actions" />
+            <InputFormGroup label="Description" type="textarea" value={npcData.description} onChange={handleInputChange} name="description" />
           </Form>
         </Modal.Body>
         <Modal.Footer>
@@ -1167,7 +1720,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
         </Modal.Footer>
       </Modal>
 
-      {/* View NPC Actions Modal */ }
+      {/* View NPC Actions Modal */}
       {selectedNpc && (
         <Modal show={true} onHide={() => setSelectedNpc(null)} centered>
           <Modal.Header closeButton>
@@ -1182,13 +1735,11 @@ function DMTools({ headers, socket, characterName, accountType }) {
               <Col><p><strong>Speed:</strong> {selectedNpc.speed} ft.</p></Col>
             </Row>
 
-            {/* Stats in a single line */}
             <p><strong>STR</strong> {selectedNpc.strength}, <strong>DEX</strong> {selectedNpc.dexterity}, <strong>CON</strong> {selectedNpc.constitution},
               <strong>INT</strong> {selectedNpc.intelligence}, <strong>WIS</strong> {selectedNpc.wisdom}, <strong>CHA</strong> {selectedNpc.charisma}</p>
 
             <hr />
 
-            {/* Grouping additional stats */}
             <Row>
               {selectedNpc.saving_throws ? <Col><p><strong>Saving Throws:</strong> {selectedNpc.saving_throws}</p></Col> : <></>}
               <Col><p><strong>Skills:</strong> {selectedNpc.skills}</p></Col>
@@ -1201,21 +1752,18 @@ function DMTools({ headers, socket, characterName, accountType }) {
 
             <hr />
 
-            {/* Traits Section */}
             <p><strong><u>Traits</u></strong></p>
             <p>{selectedNpc.traits}</p>
 
-            {/* Actions Section */}
             <p><strong><u>Actions</u></strong></p>
             <p>{selectedNpc.actions}</p>
 
             <hr />
 
-            {/* Description as Flavor Text */}
             <p><strong>Description:</strong> {selectedNpc.description}</p>
           </Modal.Body>
-        </Modal>)
-      }
+        </Modal>
+      )}
 
       {/* Modal for creating/editing a random table */}
       <Modal show={randomTableModalOpen} onHide={() => setRandomTableModalOpen(false)} centered>
@@ -1224,7 +1772,6 @@ function DMTools({ headers, socket, characterName, accountType }) {
         </Modal.Header>
         <Modal.Body>
           <Form>
-            {/* Name */}
             <InputFormGroup
               label="Table Name"
               type="text"
@@ -1232,8 +1779,6 @@ function DMTools({ headers, socket, characterName, accountType }) {
               value={randomTableData.name}
               onChange={(e) => setRandomTableData(prevData => ({ ...prevData, name: e.target.value }))}
             />
-
-            {/* Description */}
             <InputFormGroup
               label="Description"
               type="textarea"
@@ -1241,8 +1786,6 @@ function DMTools({ headers, socket, characterName, accountType }) {
               value={randomTableData.description}
               onChange={(e) => setRandomTableData(prevData => ({ ...prevData, description: e.target.value }))}
             />
-
-            {/* Dice Type */}
             <InputFormGroup
               label="Dice Type"
               type="text"
@@ -1250,11 +1793,18 @@ function DMTools({ headers, socket, characterName, accountType }) {
               value={randomTableData.diceType}
               onChange={(e) => setRandomTableData(prevData => ({ ...prevData, diceType: e.target.value }))}
             />
+            <Form.Group className="mt-3">
+              <Form.Label>Catalog scope</Form.Label>
+              <Form.Select value={randomTableData.moduleKey||''} onChange={event=>setRandomTableData(value=>({...value,moduleKey:event.target.value}))}>
+                <option value="">Entire campaign</option>
+                {catalogModules.map(module=><option key={module.module_key} value={module.module_key}>{module.module_name}</option>)}
+              </Form.Select>
+              <Form.Text>Optionally associate this roll table with an installed module.</Form.Text>
+            </Form.Group>
 
             <hr />
             <h5>Entries</h5>
 
-            {/* Entry Fields */}
             <Row>
               <Col>
                 <Form.Control
@@ -1280,7 +1830,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
                   onChange={(e) => setEntryResult(e.target.value)}
                   onKeyPress={(e) => {
                     if (e.key === 'Enter') {
-                      e.preventDefault(); // Prevent default behaviour
+                      e.preventDefault();
                       handleAddEntry();
                     }
                   }}
@@ -1291,7 +1841,6 @@ function DMTools({ headers, socket, characterName, accountType }) {
               </Col>
             </Row>
 
-            {/* Display Table Entries */}
             <Table striped bordered hover className="mt-3">
               <thead>
                 <tr>
@@ -1332,7 +1881,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
               <Col>
                 {selectedTable?.name}
               </Col>
-              <Col>
+              {selectedTable?.editable!==false&&<Col>
                 <Button variant="primary" onClick={editRandomTable}>
                   <EditIcon />
                 </Button>
@@ -1341,7 +1890,7 @@ function DMTools({ headers, socket, characterName, accountType }) {
                     <DeleteIcon />
                   </Button>
                 </Col>
-              </Col>
+              </Col>}
             </Row>
           </Modal.Title>
         </Modal.Header>

@@ -52,7 +52,7 @@ describe('DMTools Component', () => {
     );
 
     // Open the create loot box modal
-    fireEvent.click(screen.getByText('Create Loot Box'));
+    fireEvent.click(screen.getAllByText('Create Loot Box')[0]);
 
     // Wait for the items to be fetched and displayed
     await waitFor(() => {
@@ -73,7 +73,7 @@ describe('DMTools Component', () => {
     // Wait for the POST request to be made and the modal to close
     await waitFor(() => {
       expect(mock.history.post.length).toBe(1);
-      expect(screen.queryByText('Create Loot Box')).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('Loot Box Name')).not.toBeInTheDocument();
     });
   });
 
@@ -102,6 +102,9 @@ describe('DMTools Component', () => {
     // Open the view loot box modal
     fireEvent.click(screen.getByText('Examine'));
 
+    // Switch from the read-only preview to the editor.
+    fireEvent.click((await screen.findAllByText('Edit')).at(-1));
+
     // Wait for the modal to open
     await waitFor(() => {
       expect(screen.getByPlaceholderText('Loot Box Name')).toHaveValue('Loot Box 1');
@@ -118,7 +121,7 @@ describe('DMTools Component', () => {
     // Wait for the PUT request to be made and the modal to close
     await waitFor(() => {
       expect(mock.history.put.length).toBe(1);
-      expect(screen.queryByText('Loot Box 1')).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('Loot Box Name')).not.toBeInTheDocument();
     });
   });
 
