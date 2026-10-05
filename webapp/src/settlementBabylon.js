@@ -1,30 +1,55 @@
-import { Color3, Vector3, VertexData } from '@babylonjs/core';
 import {
   createTerrainHeightSampler,
   FEET_PER_SCENE_UNIT,
   roadWidthAt,
-  terrainSurfaceWeights,
   waterDepthAtSeaLevel,
-  terrainHeightAt,
 } from './settlementEditor';
 
-export const TERRAIN_SEGMENTS = 256;
-const REGION_COLORS = { city: '#c79b54', forest: '#326a3f', swamp: '#4f6b59', grassland: '#78a35d', farmland: '#b59a52', pasture: '#91ad6c' };
+import { Vector3, VertexData, NodeMaterial, Texture } from '@babylonjs/core';
+
+/**
+ * Merges two bounding boxes (in Scene Units) to track the total dirty area 
+ * during a sculpting gesture.
+ */
+export function mergeBox(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    minX: Math.min(a.minX, b.minX),
+    maxX: Math.max(a.maxX, b.maxX),
+    minY: Math.min(a.minY, b.minY),
+    maxY: Math.max(a.maxY, b.maxY),
+  };
+}
+
+/**
+ * Rewrites ONLY the Y channel of mapData inside a scene-unit box, 
+ * then triggers a geometry update on the ribbon.
+ */
+export function refreshTerrainRegion(dt, sampler, meta, box) {
+  const { cellSize, mapSubX, mapSubZ, bounds } = meta;
+  const minX = Math.floor(bounds.minX / FEET_PER_SCENE_UNIT / cellSize) * cellSize;
+  const minZ = Math.floor(bounds.minY / FEET_PER_SCENE_UNIT / cellSize) * cellSize;
+  const c0 = Math.max(0, Math.floor((box.minX - minX) / cellSize)), c1 = Math.min(mapSubX - 1, Math.ceil((box.maxX - minX) / cellSize));
+  const r0 = Math.max(0, Math.floor((box.minY - minZ) / cellSize)), r1 = Math.min(mapSubZ - 1, Math.ceil((box.maxY - minZ) / cellSize));
+  const mapData = dt.mapData;
+  for (let r = r0; r <= r1; r++) {
+    const fz = (minZ + r * cellSize) * FEET_PER_SCENE_UNIT;
+    for (let c = c0; c <= c1; c++) {
+      const fx = (minX + c * cellSize) * FEET_PER_SCENE_UNIT;
+      mapData[(r * mapSubX + c) * 3 + 1] = sampler(fx, fz) / FEET_PER_SCENE_UNIT;
+    }
+  }
+  dt.update(true);
+}
+
 
 export const worldToBabylon = (xFeet, yFeet, elevationFeet = 0) => {
-  return new Vector3(
-    xFeet / FEET_PER_SCENE_UNIT,
-    elevationFeet / FEET_PER_SCENE_UNIT,
-    yFeet / FEET_PER_SCENE_UNIT
-  );
+  return new Vector3(xFeet / FEET_PER_SCENE_UNIT, elevationFeet / FEET_PER_SCENE_UNIT, yFeet / FEET_PER_SCENE_UNIT);
 };
 
 export const babylonToWorld = (point) => {
-  return {
-    x: point.x * FEET_PER_SCENE_UNIT,
-    y: point.z * FEET_PER_SCENE_UNIT,
-    elevation: point.y * FEET_PER_SCENE_UNIT,
-  };
+  return { x: point.x * FEET_PER_SCENE_UNIT, y: point.z * FEET_PER_SCENE_UNIT, elevation: point.y * FEET_PER_SCENE_UNIT };
 };
 
 export function pointInsideRegion(x, y, region) {
@@ -37,97 +62,121 @@ export function pointInsideRegion(x, y, region) {
   return inside;
 }
 
-function colorForTerrain(elevation, x, y, terrainMaterial) {
-  const palette = {
-    sand: Color3.FromHexString('#cdbb82'), grass: Color3.FromHexString('#66844e'), dirt: Color3.FromHexString('#80684b'), rock: Color3.FromHexString('#77766f'), snow: Color3.FromHexString('#e8edf0'),
+/**
+ * Classifies every TextureBlock in the graph and enforces the correct
+ * texture address mode:
+ *  - Reference overlays  → CLAMP (glued to one world location, hard stop at edges)
+ *  - Ground materials    → WRAP  (grass/sand/snow/rock tile infinitely)
+ * Safe to call repeatedly (after parse, and after any texture swap).
+ */
+const isReferenceTextureBlock = (name = '') =>
+  name === 'refTexture' || /ref(erence)?[_\s-]?(layer|texture|overlay|image)/i.test(name);
+
+function resolveBlockTexture(block) {
+  // Case A: texture embedded directly on the TextureBlock
+  if (block.texture instanceof Texture) return block.texture;
+  // Case B: texture fed through the 'source' input from an ImageSourceBlock
+  const sourceInput = (block.inputs || []).find(i => i.name === 'source');
+  const provider = sourceInput?.connectedPoint?.ownerBlock;
+  return provider?.texture instanceof Texture ? provider.texture : null;
+}
+
+export function applyTerrainTextureWrapModes(nodeMaterial) {
+  if (!nodeMaterial?.attachedBlocks) return;
+
+  nodeMaterial.attachedBlocks.forEach(block => {
+    if (block.className !== 'TextureBlock') return; // 'TextureBlock' string avoids extra imports
+    const tex = resolveBlockTexture(block);
+    if (!tex) return;
+
+    const mode = isReferenceTextureBlock(block.name)
+      ? Texture.CLAMP_ADDRESSMODE   // glued overlay
+      : Texture.WRAP_ADDRESSMODE;   // tiling ground material
+
+    tex.wrapU = mode;
+    tex.wrapV = mode;
+    tex.wrapR = mode; // keeps 3D/triplanar samplers consistent if you ever enable them
+  });
+}
+
+
+// 1. Fetch and parse the JSON material
+export async function loadTerrainMaterialFromJson(scene, jsonUrl, referenceLayer = null) {
+  const response = await fetch(jsonUrl);
+  const serialized = await response.json();
+  const nodeMaterial = NodeMaterial.Parse(serialized, scene);
+
+  if (referenceLayer && referenceLayer.image_url) {
+    const refTextureBlock = nodeMaterial.getBlockByName("refTexture");
+    if (refTextureBlock) {
+      const tex = new Texture(referenceLayer.image_url, scene, false, false, Texture.TRILINEAR_SAMPLINGMODE);
+      tex.hasAlpha = true;
+      refTextureBlock.texture = tex;
+    } else {
+      console.warn("[Terrain] Could not find a TextureBlock named 'refTexture' in the loaded JSON.");
+    }
+  }
+
+  // Single source of truth for CLAMP vs WRAP across the whole graph
+  applyTerrainTextureWrapModes(nodeMaterial);
+
+  return nodeMaterial;
+}
+
+// 2. Dynamically update the NME Input Blocks based on React state
+export function updateTerrainMaterialInputs(nodeMaterial, terrainSettings, referenceLayer, scene) {
+  if (!nodeMaterial) return;
+
+  // Helper to find and update InputBlocks by name
+  const updateInput = (name, value) => {
+    // FIX: Use getBlockByName instead of getInputBlockByName
+    const block = nodeMaterial.getBlockByName(name);
+    if (block && block.value !== value) {
+      block.value = value;
+    }
   };
-  const weights = terrainSurfaceWeights(elevation, 1, terrainMaterial);
-  let output = new Color3(0, 0, 0);
-  Object.entries(weights).forEach(([surface, weight]) => output.addInPlace(palette[surface].scale(weight)));
 
-  const region = [...(terrainMaterial?.regions || [])].reverse().find(candidate => pointInsideRegion(x, y, candidate));
-  if (region?.region_type === 'city') {
-    output = Color3.Lerp(output, palette.dirt, .82);
-  } else if (region && REGION_COLORS[region.region_type]) {
-    output = Color3.Lerp(output, Color3.FromHexString(REGION_COLORS[region.region_type]), 0.36);
-  }
-  return output;
-}
+  // --- Update Terrain Thresholds ---
+  updateInput("seaLevel", (terrainSettings.sea_level_feet || 0) / FEET_PER_SCENE_UNIT);
+  updateInput("snowLine", (terrainSettings.snow_line_feet || 900) / FEET_PER_SCENE_UNIT);
+  updateInput("snowBlend", (terrainSettings.snow_blend_feet || 500) / FEET_PER_SCENE_UNIT);
+  updateInput("cliffThreshold", terrainSettings.cliff_normal_threshold || 0.86);
 
-// settlementBabylon.js
-export function getReferenceLayerTransform(layer, strokes, heightMap) {
-  const originX = Number(layer.origin_x) || 0;
-  const originY = Number(layer.origin_y) || 0;
-  const widthFeet = Number(layer.width_feet) || 100;
-  const heightFeet = Number(layer.height_feet) || 100;
-  const rotationDeg = Number(layer.rotation_degrees) || 0;
+  // --- Update Reference Layer Projection ---
+  if (referenceLayer && referenceLayer.image_url) {
+    updateInput("refOriginX", (referenceLayer.origin_x || 0) / FEET_PER_SCENE_UNIT);
+    updateInput("refOriginY", (referenceLayer.origin_y || 0) / FEET_PER_SCENE_UNIT);
+    updateInput("refWidth", (referenceLayer.width_feet || 100) / FEET_PER_SCENE_UNIT);
+    updateInput("refHeight", (referenceLayer.height_feet || 100) / FEET_PER_SCENE_UNIT);
+    updateInput("refRotation", -(referenceLayer.rotation_degrees || 0) * Math.PI / 180);
+    updateInput("refOpacity", referenceLayer.opacity ?? 0.7);
 
-  // 1. Find the exact terrain elevation at the center of the reference image
-  const centerElevation = terrainHeightAt(strokes, originX, originY, heightMap);
-
-  // 2. Convert to Babylon Scene Units (Vector3)
-  const position = worldToBabylon(originX, originY, centerElevation + 0.5); // +0.5 ensures it captures the surface
-
-  // 3. Calculate dimensions in Scene Units
-  const size = new Vector3(
-    widthFeet / FEET_PER_SCENE_UNIT,
-    heightFeet / FEET_PER_SCENE_UNIT,
-    50 // The "thickness" of the projection. Must be thick enough to capture hills/valleys
-  );
-
-  // 4. Calculate Rotation (Babylon Y-axis is inverted compared to standard 2D math)
-  const rotationY = -rotationDeg * (Math.PI / 180);
-
-  return { position, normal: Vector3.Up(), size, rotationY };
-}
-
-
-
-// 1. TERRAIN BUILDER (Now hooks directly into brush sculpt strokes)
-export function terrainVertexData(strokes, bounds, heightMap, terrainMaterial = {}) {
-  const sampleHeight = createTerrainHeightSampler(strokes, heightMap);
-  const positions = [], indices = [], uvs = [], colors = [];
-
-  for (let row = 0; row <= TERRAIN_SEGMENTS; row += 1) {
-    const y = bounds.minY + (row / TERRAIN_SEGMENTS) * bounds.height;
-
-    for (let column = 0; column <= TERRAIN_SEGMENTS; column += 1) {
-      const x = bounds.minX + (column / TERRAIN_SEGMENTS) * bounds.width;
-      const elevation = sampleHeight(x, y);
-
-      positions.push(x / FEET_PER_SCENE_UNIT, elevation / FEET_PER_SCENE_UNIT, y / FEET_PER_SCENE_UNIT);
-      uvs.push(column / TERRAIN_SEGMENTS, row / TERRAIN_SEGMENTS);
-
-      const surface = colorForTerrain(elevation, x, y, terrainMaterial);
-      colors.push(surface.r, surface.g, surface.b, 1);
+    // Update the TextureBlock (Only recreate the texture if the URL changed to save GPU memory)
+    const texBlock = nodeMaterial.getBlockByName("refTexture");
+    if (texBlock) {
+      if (!texBlock.texture || texBlock.texture.url !== referenceLayer.image_url) {
+        texBlock.texture = new Texture(referenceLayer.image_url, scene, false, false, Texture.TRILINEAR_SAMPLINGMODE);
+        texBlock.texture.hasAlpha = true;
+        texBlock.texture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        texBlock.texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+      }
     }
+  } else {
+    // If no reference layer is active, force opacity to 0 so it doesn't render garbage
+    updateInput("refOpacity", 0);
   }
-
-  for (let row = 0; row < TERRAIN_SEGMENTS; row += 1) {
-    for (let column = 0; column < TERRAIN_SEGMENTS; column += 1) {
-      const a = row * (TERRAIN_SEGMENTS + 1) + column, b = a + 1, c = a + TERRAIN_SEGMENTS + 1, d = c + 1;
-      indices.push(a, b, c, b, d, c);
-    }
-  }
-
-  const normals = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  const data = new VertexData();
-  data.positions = positions;
-  data.indices = indices;
-  data.uvs = uvs;
-  data.colors = colors;
-  data.normals = normals;
-  return data;
+  applyTerrainTextureWrapModes(nodeMaterial);
 }
+
 
 // Catmull-Rom math translation layer matching Three.js logic
 function catmullRomSpline(p0, p1, p2, p3, t) {
   const t2 = t * t, t3 = t2 * t;
   return new Vector3(
     0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
-    0, 
-    0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3)
+    0,
+    // 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3)
+    0.5 * ((2 * p1.z) + (-p0.z + p2.z) * t + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3)
   );
 }
 
@@ -146,7 +195,8 @@ function getSplinePoint(points, amount) {
 }
 
 // 2. ROADS & STREETS COMPILER (Glued smoothly onto terrain)
-export function roadVertexData(road, strokes, heightMap, bounds, heightSampler = createTerrainHeightSampler(strokes, heightMap)) {
+export function roadVertexData(road, strokes, heightMap, heightSampler) {
+  heightSampler = heightSampler || createTerrainHeightSampler(strokes, heightMap);
   const source = (road.points || []).map(point => new Vector3(point.x / FEET_PER_SCENE_UNIT, 0, point.y / FEET_PER_SCENE_UNIT));
   if (source.length < 2) return new VertexData();
 
@@ -189,8 +239,8 @@ export function roadVertexData(road, strokes, heightMap, bounds, heightSampler =
   return data;
 }
 
-
-export function fortificationVertexData(wall, strokes, heightMap) {
+export function fortificationVertexData(wall, strokes, heightMap, heightSampler) {
+  heightSampler = heightSampler || createTerrainHeightSampler(strokes, heightMap);
   const source = (wall.points || []).map(point => new Vector3(point.x / FEET_PER_SCENE_UNIT, 0, point.y / FEET_PER_SCENE_UNIT));
   if (source.length < 2) return new VertexData();
 
@@ -198,7 +248,6 @@ export function fortificationVertexData(wall, strokes, heightMap) {
   const positions = [], indices = [];
   const halfWidth = (Number(wall.width_feet) || 24) / (2 * FEET_PER_SCENE_UNIT);
   const height = (Number(wall.height_feet) || 35) / FEET_PER_SCENE_UNIT;
-  const heightSampler = createTerrainHeightSampler(strokes, heightMap);
 
   for (let index = 0; index <= samples; index += 1) {
     const amount = index / samples;
@@ -253,47 +302,11 @@ export function fortificationVertexData(wall, strokes, heightMap) {
   return data;
 }
 
-
-// 4. BIOME DISTRICT REGIONS COMPILER
-export function regionVertexData(region, strokes, heightMap) {
-  const points = region.points || [];
-  if (points.length < 3) return new VertexData();
-
-  const minX = Math.min(...points.map(p => p.x)), maxX = Math.max(...points.map(p => p.x));
-  const minY = Math.min(...points.map(p => p.y)), maxY = Math.max(...points.map(p => p.y));
-
-  const span = Math.max(maxX - minX, maxY - minY, 1);
-  const step = Math.max(12, span / 42);
-  const positions = [], indices = [];
-  const heightSampler = createTerrainHeightSampler(strokes, heightMap);
-
-  for (let y = minY; y < maxY; y += step) {
-    for (let x = minX; x < maxX; x += step) {
-      const x2 = Math.min(maxX, x + step), y2 = Math.min(maxY, y + step);
-      if (!pointInsideRegion((x + x2) / 2, (y + y2) / 2, region)) continue;
-
-      const offset = positions.length / 3;
-      [[x, y], [x2, y], [x2, y2], [x, y2]].forEach(([vx, vy]) => {
-        positions.push(vx / FEET_PER_SCENE_UNIT, (heightSampler(vx, vy) + 1.8) / FEET_PER_SCENE_UNIT, vy / FEET_PER_SCENE_UNIT);
-      });
-      indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3);
-    }
-  }
-
-  const normals = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  const data = new VertexData();
-  data.positions = positions;
-  data.indices = indices;
-  data.normals = normals;
-  return data;
-}
-
 // 5. RIVER GENERATOR
-export function riverVertexData(body, strokes, heightMap) {
+export function riverVertexData(body, strokes, heightMap, heightSampler) {
+  heightSampler = heightSampler || createTerrainHeightSampler(strokes, heightMap);
   const sourcePoints = [...(body.points || [])];
   if (sourcePoints.length < 2) return new VertexData();
-  const heightSampler = createTerrainHeightSampler(strokes, heightMap);
   if (heightSampler(sourcePoints[0].x, sourcePoints[0].y) < heightSampler(sourcePoints.at(-1).x, sourcePoints.at(-1).y)) {
     sourcePoints.reverse();
   }
@@ -315,7 +328,7 @@ export function riverVertexData(body, strokes, heightMap) {
       indices.push(offset, offset + 2, offset + 1, offset + 1, offset + 2, offset + 3);
     }
   }
-  
+
   const normals = [];
   VertexData.ComputeNormals(positions, indices, normals);
   const data = new VertexData(); data.positions = positions;
@@ -323,13 +336,13 @@ export function riverVertexData(body, strokes, heightMap) {
   return data;
 }
 
-// 🌊 6. OCEAN PLANE GENERATOR (Added to settlementBabylon.js)
-export function oceanVertexData(bounds, strokes, heightMap, seaLevel) {
+// 6. OCEAN PLANE GENERATOR
+export function oceanVertexData(bounds, strokes, heightMap, seaLevel, heightSampler) {
+  heightSampler = heightSampler || createTerrainHeightSampler(strokes, heightMap);
   const segments = 96;
   const positions = [], indices = [], uvs = [];
   const depths = [], exposures = [];
 
-  const heightSampler = createTerrainHeightSampler(strokes, heightMap);
   const edgeSamples = { west: [], east: [], north: [], south: [] };
 
   // Sample perimeter elevations to calculate wind/wave orientation matching Three.js logic
@@ -415,4 +428,33 @@ export function oceanVertexData(bounds, strokes, heightMap, seaLevel) {
   data.waveDirection = waveDirection;
 
   return data;
+}
+
+/**
+ * Builds a single static map buffer covering the entire settlement bounds.
+ * Cell size is in SCENE UNITS (2 units ≈ 20 ft), which keeps a 16k×23k ft
+ * world at ~840×1170 cells (~11 MB Float32Array) — built once behind the
+ * MapLoading spinner, never rewritten per frame.
+ */
+export function buildWorldMapData(heightSamplerFeet, boundsFeet, cellSize = 2) {
+  const minX = Math.floor(boundsFeet.minX / FEET_PER_SCENE_UNIT / cellSize) * cellSize;
+  const minZ = Math.floor(boundsFeet.minY / FEET_PER_SCENE_UNIT / cellSize) * cellSize;
+  const maxX = Math.ceil(boundsFeet.maxX / FEET_PER_SCENE_UNIT / cellSize) * cellSize;
+  const maxZ = Math.ceil(boundsFeet.maxY / FEET_PER_SCENE_UNIT / cellSize) * cellSize;
+  const mapSubX = Math.round((maxX - minX) / cellSize) + 1;
+  const mapSubZ = Math.round((maxZ - minZ) / cellSize) + 1;
+  const mapData = new Float32Array(mapSubX * mapSubZ * 3);
+  let i = 0;
+  for (let r = 0; r < mapSubZ; r++) {
+    const z = minZ + r * cellSize;
+    const fz = z * FEET_PER_SCENE_UNIT;
+    for (let c = 0; c < mapSubX; c++) {
+      const x = minX + c * cellSize;
+      mapData[i] = x;
+      mapData[i + 1] = heightSamplerFeet(x * FEET_PER_SCENE_UNIT, fz) / FEET_PER_SCENE_UNIT;
+      mapData[i + 2] = z;
+      i += 3;
+    }
+  }
+  return { mapData, mapSubX, mapSubZ };
 }

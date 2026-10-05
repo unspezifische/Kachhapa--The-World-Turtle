@@ -1,23 +1,81 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
-import Tooltip from '@mui/material/Tooltip';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useCallback
+} from 'react';
+
+import {
+  Button,
+  Collapse,
+  IconButton,
+  Tooltip,
+  Slider,
+  Typography,
+  Box,
+  Select,
+  MenuItem,
+  TextField,
+  ToggleButtonGroup,
+  ToggleButton,
+} from '@mui/material';
+
 
 import EditIcon from '@mui/icons-material/Edit';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 
-import HomeWorkIcon from '@mui/icons-material/HomeWork';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 
 import RedoIcon from '@mui/icons-material/Redo';
 import UndoIcon from '@mui/icons-material/Undo';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import PublicIcon from '@mui/icons-material/Public';
 
+
+// Time of Day Icons
+import FastRewindIcon from '@mui/icons-material/FastRewind';
+import FastForwardIcon from '@mui/icons-material/FastForward';
+import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
+import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+
+// Weather Icons
+import WbSunnyIcon from '@mui/icons-material/WbSunny';
+import GrainIcon from '@mui/icons-material/Grain';
+import WaterDropIcon from '@mui/icons-material/WaterDrop';
+import CloudQueueIcon from '@mui/icons-material/CloudQueue';
+import AcUnitIcon from '@mui/icons-material/AcUnit';
+import ThunderstormIcon from '@mui/icons-material/Thunderstorm';
+
+// Icons for Camera Controls
+import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
+import ArrowLeftIcon from '@mui/icons-material/ArrowLeft';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
+import ArrowRightIcon from '@mui/icons-material/ArrowRight';
+
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+
 import BabylonSettlementHost from './BabylonSettlementHost';
-import { bakeStrokeIntoHeightmap, createDefaultHeightmap } from './settlementEditor';
+
+import {
+  terrainHeightAt,
+} from './settlementEditor';
+
+import {
+  bakeStrokesIntoTiles,
+  tileKey,
+  tileIndexAt,
+  TILE_FEET,
+  overwriteHeightmapIntoTiles,
+} from './settlementTiles';
+
+import HeightmapImportTool from './HeightmapImportTool';
+
 import './SettlementPresentation.css';
 import './SettlementToolPanels.css';
 
@@ -25,13 +83,33 @@ const TERRAIN_SIZE_FEET = 1800;
 const DEFAULT_FIRST_PERSON_SETTINGS = { sensitivity: 50, invertX: false, invertY: false, fov: 75, walkSpeed: 8, eyeHeight: 6 };
 const DEFAULT_BRUSH_STRENGTHS = { raise: 8, lower: 8, flatten: 35, smooth: 35 };
 
-function editorBounds(referenceLayers, heightMap) {
-  const layers = [...(referenceLayers || []).filter(layer => layer.image_url), ...(heightMap ? [heightMap] : [])];
-  if (!layers.length) return { minX: -900, maxX: 900, minY: -900, maxY: 900, width: TERRAIN_SIZE_FEET, height: TERRAIN_SIZE_FEET };
-  const minX = Math.min(-900, ...layers.map(layer => (Number(layer.origin_x) || 0) - Number(layer.width_feet) / 2));
-  const maxX = Math.max(900, ...layers.map(layer => (Number(layer.origin_x) || 0) + Number(layer.width_feet) / 2));
-  const minY = Math.min(-900, ...layers.map(layer => (Number(layer.origin_y) || 0) - Number(layer.height_feet) / 2));
-  const maxY = Math.max(900, ...layers.map(layer => (Number(layer.origin_y) || 0) + Number(layer.height_feet) / 2));
+function editorBounds(referenceLayers, tileStore) {
+  const authoredTiles = tileStore ? [...tileStore.values()].filter(t => !t.generated || t.dirty) : [];
+  const imageLayers = (referenceLayers || []).filter(layer => layer.image_url);
+
+  if (!authoredTiles.length && !imageLayers.length) {
+    return { minX: -900, maxX: 900, minY: -900, maxY: 900, width: TERRAIN_SIZE_FEET, height: TERRAIN_SIZE_FEET };
+  }
+
+  // Pad one extra tile of margin beyond the authored extent so DynamicTerrain
+  // has some procedurally-generated frontier to stream into at the edges,
+  // instead of a hard cutoff exactly at the last sculpted tile.
+  const tileMargin = TILE_FEET;
+  const tileXs = authoredTiles.flatMap(t => [t.origin_x - tileMargin, t.origin_x + TILE_FEET + tileMargin]);
+  const tileYs = authoredTiles.flatMap(t => [t.origin_y - tileMargin, t.origin_y + TILE_FEET + tileMargin]);
+  const imageXs = imageLayers.flatMap(layer => [
+    (Number(layer.origin_x) || 0) - Number(layer.width_feet) / 2,
+    (Number(layer.origin_x) || 0) + Number(layer.width_feet) / 2,
+  ]);
+  const imageYs = imageLayers.flatMap(layer => [
+    (Number(layer.origin_y) || 0) - Number(layer.height_feet) / 2,
+    (Number(layer.origin_y) || 0) + Number(layer.height_feet) / 2,
+  ]);
+
+  const minX = Math.min(-900, ...tileXs, ...imageXs);
+  const maxX = Math.max(900, ...tileXs, ...imageXs);
+  const minY = Math.min(-900, ...tileYs, ...imageYs);
+  const maxY = Math.max(900, ...tileYs, ...imageYs);
   return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
 }
 
@@ -41,6 +119,22 @@ function ToolWorkflow({
   assets,
   assetKey,
   setAssetKey,
+  buildMode,
+  setBuildMode,
+  setBuildings,
+  blueprintDraft,
+  setBlueprintDraft,
+
+  pastRef,
+  futureRef,
+
+  bounds,
+  showHeightmapImport,
+  setShowHeightmapImport,
+  heightmapPlacement,
+  setHeightmapPlacement,
+  activeReferenceLayer,
+  commitHeightmapPlacement,
 
   selected,
   setSelected,
@@ -54,11 +148,15 @@ function ToolWorkflow({
   finishRoad,
   roadWidth,
   setRoadWidth,
+
+  wallWidth,
+  setWallWidth,
   wallMode,
   setWallMode,
   wallDraft,
   setWallDraft,
   finishWall,
+
   regionMode,
   setRegionMode,
   regionDraft,
@@ -87,6 +185,7 @@ function ToolWorkflow({
   const [localMin, setLocalMin] = useState(viewCommand?.time?.minute ?? 0);
 
   const [roadSearch, setRoadSearch] = useState('');
+  const [wallSearch, setWallSearch] = useState('');
 
   // Sync inputs dynamically if time advances smoothly via active server simulation clocks
   useEffect(() => {
@@ -97,70 +196,73 @@ function ToolWorkflow({
     }
   }, [viewCommand]);
 
-
-  if (activeTool === 'inspect' && inspectSelection) {
+  // Inside your activeTool === 'inspect' condition block:
+  if (activeTool === 'inspect') {
     return (
       <aside className="editor-menu inspect-menu-panel">
-        <span>INSPECTOR OVERVIEW</span>
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+          INSPECTOR OVERVIEW
+        </Typography>
 
         {inspectSelection ? (
-          <div className="road-metadata">
-            <small className="control-label-eyebrow" style={{ color: '#7ce6ff', letterSpacing: '1px' }}>
+          <Box className="road-metadata" sx={{ display: 'flex', flexDirection: 'column' }}>
+            <Typography variant="caption" sx={{ color: '#7ce6ff', fontWeight: 'bold', letterSpacing: '1px', mb: 0.5, fontSize: '10px' }}>
               FEATURE SELECTION
-            </small>
+            </Typography>
 
-            <h3 style={{ margin: '4px 0 2px 0', fontSize: '1.2rem', color: '#fff' }}>
+            <Typography variant="h6" sx={{ fontSize: '1.2rem', color: '#fff', fontWeight: 700, lineHeight: 1.2, mb: 0.5 }}>
               {inspectSelection.name || 'Unnamed Landmark'}
-            </h3>
+            </Typography>
 
-            <span className="settlement-map-loading-status" style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: '#ffe08a' }}>
+            <Typography variant="caption" sx={{ display: 'inline-block', fontSize: '11px', textTransform: 'uppercase', color: '#ffe08a', mb: 1.5 }}>
               Type: {inspectSelection.kind || 'Point of Interest'}
-            </span>
+            </Typography>
 
-            <p style={{ margin: '12px 0', fontSize: '0.9rem', lineHeight: '1.4', color: '#cbd5e1' }}>
+            <Typography variant="body2" sx={{ fontSize: '0.9rem', lineHeight: 1.4, color: '#cbd5e1', mb: 1.5 }}>
               {inspectSelection.public_description || inspectSelection.description || 'No additional architectural records or historical summary notes are unrolled for this quadrant selection.'}
-            </p>
+            </Typography>
 
             {inspectSelection.points && (
-              <small style={{ display: 'block', color: '#94a3b8', fontSize: '0.75rem' }}>
+              <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '11px' }}>
                 Structural Nodes: {inspectSelection.points.length} coordinates mapped
-              </small>
+              </Typography>
             )}
 
-            <button
-              type="button"
-              className="danger-action"
-              style={{ marginTop: '16px', width: '100%' }}
+            <Button
+              variant="contained"
+              color="error"
+              fullWidth
               onClick={() => setInspectSelection(null)}
+              sx={{ mt: 2, textTransform: 'none', fontWeight: 'bold' }}
             >
               Clear Selection
-            </button>
-          </div>
+            </Button>
+          </Box>
         ) : (
-          <div className="chart-empty" style={{ padding: '24px 8px', textAlign: 'center', color: '#94a3b8' }}>
-            <VisibilityIcon style={{ fontSize: '2rem', marginBottom: '8px', color: '#47423a' }} />
-            <p style={{ margin: 0, fontSize: '0.9rem' }}>Click directly on a mapped building, street line, or point of interest marker to display its contextual database entries.</p>
-          </div>
+          <Box
+            className="chart-empty"
+            sx={{
+              padding: '24px 8px',
+              textAlign: 'center',
+              color: '#94a3b8',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 1
+            }}
+          >
+            <VisibilityIcon sx={{ fontSize: '2rem', color: '#47423a' }} />
+            <Typography variant="body2" sx={{ fontSize: '0.9rem', lineHeight: 1.3 }}>
+              Click directly on a mapped building, street line, or point of interest marker to display its contextual database entries.
+            </Typography>
+          </Box>
         )}
       </aside>
     );
   }
 
 
-  if (activeTool === 'build') return <aside className="editor-menu asset-menu">
-    <span>BUILDING ASSETS</span>
-      {assets.map(asset =>
-        <button type="button" key={asset.key} className={assetKey === asset.key ? 'active' : ''} onClick={() => setAssetKey(asset.key)}>
-          <HomeWorkIcon/>
-          <span>
-            <strong>{asset.name}</strong>
-            <small>{asset.width_feet} x {asset.depth_feet} ft</small>
-          </span>
-        </button>)
-      }
-      <small>Click terrain to place the selected building.</small>
-    </aside>;
-
+  // Inside your activeTool === 'road' condition block:
   if (activeTool === 'road') {
     const selectedRoad = state.roads?.find(r => r.id === state.selectedRoadId);
     const filteredRoads = state.roads?.filter(r => !roadSearch || (r.name || '').toLowerCase().includes(roadSearch.toLowerCase())) || [];
@@ -168,242 +270,641 @@ function ToolWorkflow({
 
     return (
       <aside className="editor-menu road-menu secondary-editor-menu">
-        <span>STREETS &amp; HIGHWAYS</span>
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+          STREETS &amp; HIGHWAYS
+        </Typography>
 
-        <div className="road-mode-tabs">
-          <button type="button" className={roadMode === 'select' ? 'active' : ''} onClick={() => setRoadMode('select')}>
-            <VisibilityIcon fontSize="small" style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Select
-          </button>
-          <button type="button" className={roadMode === 'refine' ? 'active' : ''} disabled={!selectedRoad} onClick={() => setRoadMode('refine')}>
-            <EditIcon fontSize="small" style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Refine
-          </button>
-          <button type="button" className={roadMode === 'move-spline' ? 'active' : ''} disabled={!selectedRoad} onClick={() => setRoadMode('move-spline')}>
-            <OpenInNewIcon fontSize="small" style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Move Spline
-          </button>
-          <button type="button" className={roadMode === 'draw-new' ? 'active' : ''} onClick={() => { setRoadDraft([]); setRoadMode('draw-new'); }}>
-            <AddIcon fontSize="small" style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Draw
-          </button>
-        </div>
+        {/* Mode selectors ribbon using standard ToggleButtonGroup */}
+        <ToggleButtonGroup
+          value={roadMode}
+          exclusive
+          fullWidth
+          size="small"
+          onChange={(e, nextMode) => {
+            if (nextMode !== null) {
+              if (nextMode === 'draw-new') setRoadDraft([]);
+              setRoadMode(nextMode);
+            }
+          }}
+          sx={{
+            mb: 2,
+            backgroundColor: '#10231f',
+            '& .MuiToggleButton-root': {
+              color: '#94a3b8',
+              borderColor: '#47423a',
+              textTransform: 'none',
+              fontSize: '11px',
+              gap: '4px',
+              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+            }
+          }}
+        >
+          <ToggleButton value="select"><VisibilityIcon fontSize="small" /> Select</ToggleButton>
+          <ToggleButton value="refine" disabled={!selectedRoad}><EditIcon fontSize="small" /> Refine</ToggleButton>
+          <ToggleButton value="move-spline" disabled={!selectedRoad}><OpenInNewIcon fontSize="small" /> Move</ToggleButton>
+          <ToggleButton value="draw-new"><AddIcon fontSize="small" /> Draw</ToggleButton>
+        </ToggleButtonGroup>
 
-        <label>
-          New Width <strong>{roadWidth} ft</strong>
-          <input type="range" min="4" max="120" step="2" value={roadWidth} onChange={event => setRoadWidth(Number(event.target.value))} />
-        </label>
+        {/* New Width Slider Control Input packaging */}
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            <span>New Width</span>
+            <strong>{roadWidth} ft</strong>
+          </Typography>
+          <Slider
+            min={4}
+            max={120}
+            step={2}
+            value={roadWidth}
+            onChange={event => setRoadWidth(Number(event.target.value))}
+            sx={{ color: '#bd9149' }}
+          />
+        </Box>
 
-        <div className="road-actions">
-          <button type="button" disabled={!roadDraft.length} onClick={() => setRoadDraft(p => p.slice(0, -1))}>
+        {/* Real-time draft spline builder buttons using CSS Grid on Box */}
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
+          <Button variant="outlined" size="small" disabled={!roadDraft.length} onClick={() => setRoadDraft(p => p.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a' }}>
             Undo Point
-          </button>
-          <button type="button" disabled={roadDraft.length < 2} onClick={finishRoad}>
+          </Button>
+          <Button variant="contained" size="small" disabled={roadDraft.length < 2} onClick={finishRoad} sx={{ backgroundColor: '#bd9149', color: '#17211c' }}>
             Finish Road
-          </button>
-        </div>
+          </Button>
+        </Box>
 
-        <input
+        <TextField
           type="search"
           placeholder="Filter existing roads..."
+          size="small"
+          fullWidth
           value={roadSearch}
           onChange={e => setRoadSearch(e.target.value)}
-          style={{ margin: '8px 0', width: '100%' }}
+          sx={{ mb: 1.5, input: { color: '#fff', fontSize: '11px' } }}
         />
 
-        <div className="street-list">
+        {/* Existing Streets Scrollable Stack List wrapper */}
+        <Box className="street-list" sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', mb: selectedRoad ? 2 : 0 }}>
           {filteredRoads.map(r => (
-            <div key={r.id} className={r.id === state.selectedRoadId ? 'active' : ''}>
-              <button type="button" onClick={() => { state.setSelectedRoadId(r.id); state.setSelectedRoadPointIndex(null); }}>
-                <strong>{r.name || 'Unnamed street'}</strong>
-                <small>{r.points?.length || 0} pts</small>
-              </button>
-            </div>
+            <Button
+              key={r.id}
+              fullWidth
+              onClick={() => { state.setSelectedRoadId(r.id); state.setSelectedRoadPointIndex(null); }}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                textTransform: 'none',
+                padding: '6px 10px',
+                backgroundColor: r.id === state.selectedRoadId ? '#1e3a34' : '#10231f',
+                border: '1px solid',
+                borderColor: r.id === state.selectedRoadId ? '#ffe08a' : '#47423a',
+                borderRadius: '4px',
+                color: '#fff',
+                textAlign: 'left',
+                '&:hover': { backgroundColor: '#16322c' }
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{r.name || 'Unnamed street'}</Typography>
+              <Typography variant="caption" sx={{ color: '#94a3b8' }}>{r.points?.length || 0} nodes mapped</Typography>
+            </Button>
           ))}
-        </div>
+        </Box>
 
+        {/* Contextual Selected Road Metadata Sub-Panel Form */}
         {selectedRoad && (
-          <div className="road-metadata">
-            <label>
-              Rename Road
-              <input
-                value={selectedRoad.name || ''}
-                onChange={e => state.setRoads(v => v.map(old => old.id === selectedRoad.id ? { ...old, name: e.target.value } : old))}
-              />
-            </label>
+          <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <TextField
+              label="Rename Road"
+              size="small"
+              fullWidth
+              value={selectedRoad.name || ''}
+              onChange={e => state.setRoads(v => v.map(old => old.id === selectedRoad.id ? { ...old, name: e.target.value } : old))}
+            />
 
-            <div className="road-point-picker">
+            {/* Node Point Spline Matrix Selection Array layout */}
+            <Box className="road-point-picker" sx={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxHeight: '80px', overflowY: 'auto' }}>
               {selectedRoad.points.map((p, idx) => (
-                <button
-                  type="button"
+                <Button
                   key={idx}
-                  className={state.selectedRoadPointIndex === idx ? 'active' : ''}
+                  size="small"
                   onClick={() => state.setSelectedRoadPointIndex(idx)}
+                  sx={{
+                    minWidth: '28px',
+                    height: '28px',
+                    padding: 0,
+                    backgroundColor: state.selectedRoadPointIndex === idx ? '#ffe08a' : '#23352d',
+                    color: state.selectedRoadPointIndex === idx ? '#17211c' : '#d5ddd7',
+                    '&:hover': { backgroundColor: '#a87e3e' }
+                  }}
                 >
                   {idx + 1}
-                </button>
+                </Button>
               ))}
-            </div>
+            </Box>
 
+            {/* Node Coordinates editor Row inputs */}
             {selectedPoint && (
-              <div className="reference-dimensions">
-                <label>
-                  X
-                  <input
-                    type="number"
-                    value={Math.round(selectedPoint.x)}
-                    onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
-                      ...r,
-                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
-                    } : r))} />
-                </label>
-                <label>
-                  Y
-                  <input
-                    type="number"
-                    value={Math.round(selectedPoint.y)}
-                    onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
-                      ...r,
-                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
-                    } : r))} />
-                </label>
-              </div>
+              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                <TextField
+                  label="Coordinate X"
+                  type="number"
+                  size="small"
+                  value={Math.round(selectedPoint.x)}
+                  onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
+                    ...r,
+                    points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
+                  } : r))}
+                />
+                <TextField
+                  label="Coordinate Y"
+                  type="number"
+                  size="small"
+                  value={Math.round(selectedPoint.y)}
+                  onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
+                    ...r,
+                    points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
+                  } : r))}
+                />
+              </Box>
             )}
 
-            <button type="button" className="danger-action" onClick={() => { state.setRoads(v => v.filter(old => old.id !== selectedRoad.id)); state.setSelectedRoadId(null); }}>
-              <DeleteIcon fontSize="small" style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Delete Road
-            </button>
-          </div>
+            <Button
+              variant="contained"
+              color="error"
+              fullWidth
+              startIcon={<DeleteIcon />}
+              onClick={() => { state.setRoads(v => v.filter(old => old.id !== selectedRoad.id)); state.setSelectedRoadId(null); }}
+            >
+              Delete Road Segment
+            </Button>
+          </Box>
         )}
       </aside>
     );
   }
 
-  
-  // Replace the terrain condition inside ToolWorkflow with this version:
+
+  // Inside your activeTool === 'terrain' condition block:
   if (activeTool === 'terrain') {
     return (
       <aside className="editor-menu terrain-menu">
-        <span>TERRAIN SCULPT</span>
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+          TERRAIN SCULPT
+        </Typography>
 
-        <div className="terrain-history-actions" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-          <button
-            type="button"
-            className="history-btn"
-            disabled={!state.handleUndo || state.pastRef?.current?.length === 0} // Note: You may need to expose pastRef to state, or just disable based on a simple check
+        {/* History Actions using standard CSS Grid on a Box container */}
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<UndoIcon />}
+            disabled={!state.handleUndo || state.pastRef?.current?.length === 0}
             onClick={state.handleUndo}
-            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+            sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
           >
-            <UndoIcon fontSize="small" /> Undo
-          </button>
-          <button
-            type="button"
-            className="history-btn"
+            Undo
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            endIcon={<RedoIcon />}
             disabled={!state.handleRedo || state.futureRef?.current?.length === 0}
             onClick={state.handleRedo}
-            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+            sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
           >
-            Redo <RedoIcon fontSize="small" />
-          </button>
-        </div>
+            Redo
+          </Button>
+        </Box>
 
-        {/* Segmented Mode Picker */}
-        <div className="segmented terrain-brush-modes">
-          {['raise', 'lower', 'flatten', 'smooth'].map(mode => (
-            <button
-              type="button"
-              key={mode}
-              className={terrainMode === mode ? 'active' : ''}
-              onClick={() => setTerrainMode(mode)}
-            >
-              {mode.toUpperCase()}
-            </button>
-          ))}
-        </div>
+        {/* Segmented Brush Mode Ribbon */}
+        <ToggleButtonGroup
+          value={terrainMode}
+          exclusive
+          fullWidth
+          size="small"
+          onChange={(e, nextMode) => { if (nextMode !== null) setTerrainMode(nextMode); }}
+          sx={{
+            mb: 2.5,
+            backgroundColor: '#10231f',
+            '& .MuiToggleButton-root': {
+              color: '#94a3b8',
+              borderColor: '#47423a',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+            }
+          }}
+        >
+          <ToggleButton value="raise">RAISE</ToggleButton>
+          <ToggleButton value="lower">LOWER</ToggleButton>
+          <ToggleButton value="flatten">FLATTEN</ToggleButton>
+          <ToggleButton value="smooth">SMOOTH</ToggleButton>
+        </ToggleButtonGroup>
 
-        {/* Brush Radius Grid with Sliders + Manual Inputs */}
-        <div className="form-fields-row" style={{ flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div style={{ display: 'flex', justifyContent: 'between', alignItems: 'center', width: '100%' }}>
-              <span>Brush Radius (ft)</span>
-              <input
+        {/* Sliders + Coaligned Manual Text Fields Row */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+          {/* Brush Radius Controls */}
+          <Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+              <Typography variant="caption" sx={{ color: '#aab4ad' }}>Brush Radius (ft)</Typography>
+              <TextField
                 type="number"
-                min="30"
-                max="1200"
+                size="small"
                 value={brushRadius}
+                inputProps={{ min: 30, max: 1200 }}
                 onChange={event => setBrushRadius(Math.max(30, Math.min(1200, Number(event.target.value) || 30)))}
-                style={{ width: '70px', padding: '2px 4px', textAlign: 'right', background: '#10231f', color: '#fff', border: '1px solid #47423a', borderRadius: '4px' }}
+                sx={{
+                  width: '75px',
+                  '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: '#fff', fontSize: '12px' }
+                }}
               />
-            </div>
-            <input
-              type="range"
-              min="30"
-              max="1200"
-              step="10"
+            </Box>
+            <Slider
+              min={30}
+              max={1200}
+              step={10}
               value={brushRadius}
-              onChange={event => setBrushRadius(Number(event.target.value))}
+              onChange={(e, val) => setBrushRadius(Number(val))}
+              sx={{ color: '#bd9149', py: 1 }}
             />
-          </label>
+          </Box>
 
-          {/* Brush Strength Grid with Sliders + Manual Inputs */}
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div style={{ display: 'flex', justifyContent: 'between', alignItems: 'center', width: '100%' }}>
-              <span>Brush Strength {['flatten', 'smooth'].includes(terrainMode) ? '(%)' : '(ft)'}</span>
-              <input
+          {/* Brush Strength Controls */}
+          <Box>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+              <Typography variant="caption" sx={{ color: '#aab4ad' }}>
+                Brush Strength {['flatten', 'smooth'].includes(terrainMode) ? '(%)' : '(ft)'}
+              </Typography>
+              <TextField
                 type="number"
-                min="1"
-                max="100"
+                size="small"
                 value={brushStrength}
+                inputProps={{ min: 1, max: 100 }}
                 onChange={event => setBrushStrength(Math.max(1, Math.min(100, Number(event.target.value) || 1)))}
-                style={{ width: '70px', padding: '2px 4px', textAlign: 'right', background: '#10231f', color: '#fff', border: '1px solid #47423a', borderRadius: '4px' }}
+                sx={{
+                  width: '75px',
+                  '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: '#fff', fontSize: '12px' }
+                }}
               />
-            </div>
-            <input
-              type="range"
-              min="1"
-              max="100"
+            </Box>
+            <Slider
+              min={1}
+              max={100}
               value={brushStrength}
-              onChange={event => setBrushStrength(Number(event.target.value))}
+              onChange={(e, val) => setBrushStrength(Number(val))}
+              sx={{ color: '#bd9149', py: 1 }}
             />
-          </label>
-        </div>
+          </Box>
+        </Box>
 
-        <small style={{ marginTop: '12px', display: 'block', color: '#94a3b8', fontSize: '0.8rem', lineHeight: '1.4' }}>
+        {/* Dynamic Descriptor Caption Helper */}
+        <Typography variant="caption" sx={{ mt: 2, display: 'block', color: '#94a3b8', lineHeight: '1.45' }}>
           {terrainMode === 'flatten' ? 'The first point clicked anchors the elevation target for the rest of that continuous drag stroke.' :
             terrainMode === 'smooth' ? 'Blends and averages terrain height vectors dynamically beneath the active brush footprint.' :
               'Left-click and drag across the landscape grid to deform vertices. The brush circle scales automatically.'}
-        </small>
+        </Typography>
+        <Button
+          variant="outlined"
+          size="small"
+          fullWidth
+          startIcon={<UploadFileIcon />}
+          onClick={() => setShowHeightmapImport(true)}
+          sx={{ mt: 1, borderColor: '#526258', color: '#cbbd9d', textTransform: 'none', fontSize: '11px' }}
+        >
+          Import Heightmap Image
+        </Button>
+
+        {showHeightmapImport && (
+          <HeightmapImportTool
+            bounds={bounds}
+            placement={heightmapPlacement}
+            onPlacementChange={setHeightmapPlacement}
+            referenceLayer={activeReferenceLayer}
+            onCommit={commitHeightmapPlacement}
+            onClose={() => {
+              setHeightmapPlacement(null);
+              setShowHeightmapImport(false);
+            }}
+          />
+        )}
       </aside>
     );
   }
 
-  
-  const drawing = activeTool === 'road' ? { title: 'SPLINE ROAD', mode: roadMode, setMode: setRoadMode, draft: roadDraft, setDraft: setRoadDraft, finish: finishRoad, minimum: 2 } : activeTool === 'fortification' ? { title: 'FORTIFICATION SPLINE', mode: wallMode, setMode: setWallMode, draft: wallDraft, setDraft: setWallDraft, finish: finishWall, minimum: 2 } : activeTool === 'region' ? { title: 'REGIONS & BIOMES', mode: regionMode, setMode: setRegionMode, draft: regionDraft, setDraft: setRegionDraft, finish: finishRegion, minimum: 3 } : null;
-  
-  if (drawing) return <aside className="editor-menu road-menu">
-    <span>{drawing.title}</span>
-    <div className="road-mode-tabs">
-      <button type="button" className={drawing.mode === 'select' ? 'active' : ''} onClick={() => drawing.setMode('select')}>Select</button>
-      <button type="button" className={drawing.mode === 'draw-new' ? 'active' : ''} onClick={() => { drawing.setDraft([]); drawing.setMode('draw-new'); }}>Draw</button>
-  </div>
-  
-  {activeTool === 'road' && <label>Width <strong>{roadWidth} ft</strong>
-  <input type="range" min="4" max="400" step="2" value={roadWidth} onChange={event => setRoadWidth(Number(event.target.value))}/></label>}
-  <div className="road-actions">
-    <button type="button" disabled={!drawing.draft.length} onClick={() => drawing.setDraft(points => points.slice(0, -1))}>Undo point</button>
-    <button type="button" disabled={drawing.draft.length < drawing.minimum} onClick={drawing.finish}>Finish</button>
-  </div>
-  </aside>;
 
-  if (activeTool === 'water') return <aside className="editor-menu water-menu">
-    <span>WATER BODY</span>
-    <label>Type<select value={waterType} onChange={event => { setWaterType(event.target.value); setWaterDraft([]); }}>
-      <option value="river">River</option>
-      <option value="lake">Lake</option>
-      <option value="ocean">Ocean</option>
-      </select>
-    </label>
-    <div className="road-actions">
-      <button type="button" disabled={!waterDraft.length} onClick={() => setWaterDraft(points => points.slice(0, -1))}>Undo point</button>
-      <button type="button" disabled={waterType !== 'ocean' && waterDraft.length < (waterType === 'river' ? 2 : 3)} onClick={finishWater}>Finish water</button>
-    </div>
-    </aside>;
+  // Provide tools for Forticiations panel
+  if (activeTool === 'fortification') {
+    const selectedWall = state.walls?.find(r => r.id === state.selectedWallId);
+    const filteredWalls = state.walls?.filter(r => !wallSearch || (r.name || '').toLowerCase().includes(wallSearch.toLowerCase())) || [];
+    const selectedPoint = selectedWall?.points?.[state.selectedWallPointIndex];
+
+    return (
+      <aside className="editor-menu road-menu secondary-editor-menu">
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+          FORTIFICATIONS
+        </Typography>
+
+        {/* Tab Selectors using the sleek MUI ToggleButtonGroup ribbon layout */}
+        <ToggleButtonGroup
+          value={wallMode}
+          exclusive
+          fullWidth
+          size="small"
+          onChange={(e, nextMode) => {
+            if (nextMode !== null) {
+              if (nextMode === 'draw-new') setWallDraft([]);
+              setWallMode(nextMode);
+            }
+          }}
+          sx={{
+            mb: 2,
+            backgroundColor: '#10231f',
+            '& .MuiToggleButton-root': {
+              color: '#94a3b8',
+              borderColor: '#47423a',
+              textTransform: 'none',
+              fontSize: '11px',
+              gap: '4px',
+              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+            }
+          }}
+        >
+          <ToggleButton value="select"><VisibilityIcon fontSize="small" /> Select</ToggleButton>
+          <ToggleButton value="refine" disabled={!selectedWall}><EditIcon fontSize="small" /> Refine</ToggleButton>
+          <ToggleButton value="move-spline" disabled={!selectedWall}><OpenInNewIcon fontSize="small" /> Move</ToggleButton>
+          <ToggleButton value="draw-new"><AddIcon fontSize="small" /> Draw</ToggleButton>
+        </ToggleButtonGroup>
+
+        {/* Slider Ribbon Controls */}
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            <span>New Width</span>
+            <strong>{wallWidth} ft</strong>
+          </Typography>
+          <Slider
+            min={4}
+            max={120}
+            step={2}
+            value={wallWidth}
+            onChange={event => setWallWidth(Number(event.target.value))}
+            sx={{ color: '#bd9149' }}
+          />
+        </Box>
+
+        {/* Action Buttons using modern Box instead of deprecated Grid */}
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
+          <Button variant="outlined" size="small" disabled={!wallDraft.length} onClick={() => setWallDraft(p => p.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a' }}>
+            Undo Point
+          </Button>
+          <Button variant="contained" size="small" disabled={wallDraft.length < 2} onClick={finishWall} sx={{ backgroundColor: '#bd9149', color: '#17211c' }}>
+            Finish Wall
+          </Button>
+        </Box>
+
+        <TextField
+          type="search"
+          placeholder="Filter existing walls..."
+          size="small"
+          fullWidth
+          value={wallSearch}
+          onChange={e => setWallSearch(e.target.value)}
+          sx={{ mb: 1.5, input: { color: '#fff', fontSize: '11px' } }}
+        />
+
+        {/* Existing Spline Items List Group */}
+        <Box className="street-list" sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', mb: selectedWall ? 2 : 0 }}>
+          {filteredWalls.map(r => (
+            <Button
+              key={r.id}
+              fullWidth
+              onClick={() => { state.setSelectedWallId(r.id); state.setSelectedWallPointIndex(null); }}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                textTransform: 'none',
+                padding: '6px 10px',
+                backgroundColor: r.id === state.selectedWallId ? '#1e3a34' : '#10231f',
+                border: '1px solid',
+                borderColor: r.id === state.selectedWallId ? '#ffe08a' : '#47423a',
+                borderRadius: '4px',
+                color: '#fff',
+                textAlign: 'left',
+                '&:hover': { backgroundColor: '#16322c' }
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{r.name || 'Unnamed wall'}</Typography>
+              <Typography variant="caption" sx={{ color: '#94a3b8' }}>{r.points?.length || 0} nodes mapped</Typography>
+            </Button>
+          ))}
+        </Box>
+
+        {/* Selected Node Parameters Editor Metadata Box */}
+        {selectedWall && (
+          <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <TextField
+              label="Rename Wall"
+              size="small"
+              fullWidth
+              value={selectedWall.name || ''}
+              onChange={e => state.setWalls(v => v.map(old => old.id === selectedWall.id ? { ...old, name: e.target.value } : old))}
+            />
+
+            {/* Node Index Picker Layout Map */}
+            <Box className="road-point-picker" sx={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxHeigh: '80px', overflowY: 'auto' }}>
+              {selectedWall.points.map((p, idx) => (
+                <Button
+                  key={idx}
+                  size="small"
+                  onClick={() => state.setSelectedWallPointIndex(idx)}
+                  sx={{
+                    minWidth: '28px',
+                    height: '28px',
+                    padding: 0,
+                    backgroundColor: state.selectedWallPointIndex === idx ? '#ffe08a' : '#23352d',
+                    color: state.selectedWallPointIndex === idx ? '#17211c' : '#d5ddd7',
+                    '&:hover': { backgroundColor: '#a87e3e' }
+                  }}
+                >
+                  {idx + 1}
+                </Button>
+              ))}
+            </Box>
+
+            {/* Point Coordinate Transforms Row (Box Grid replacing legacy layouts) */}
+            {selectedPoint && (
+              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                <TextField
+                  label="Coordinate X"
+                  type="number"
+                  size="small"
+                  value={Math.round(selectedPoint.x)}
+                  onChange={e => state.setWalls(v => v.map(w => w.id === selectedWall.id ? {
+                    ...w,
+                    points: w.points.map((pt, pi) => pi === state.selectedWallPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
+                  } : w))}
+                />
+                <TextField
+                  label="Coordinate Y"
+                  type="number"
+                  size="small"
+                  value={Math.round(selectedPoint.y)}
+                  onChange={e => state.setWalls(v => v.map(w => w.id === selectedWall.id ? {
+                    ...w,
+                    points: w.points.map((pt, pi) => pi === state.selectedWallPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
+                  } : w))}
+                />
+              </Box>
+            )}
+
+            <Button
+              variant="contained"
+              color="error"
+              fullWidth
+              startIcon={<DeleteIcon />}
+              onClick={() => { state.setWalls(v => v.filter(old => old.id !== selectedWall.id)); state.setSelectedRoadId(null); }}
+            >
+              Delete Wall Track
+            </Button>
+          </Box>
+        )}
+      </aside>
+    );
+  }
+
+
+
+  const drawing = activeTool === 'road' ? {
+    title: 'SPLINE ROAD',
+    mode: roadMode,
+    setMode: setRoadMode,
+    draft: roadDraft,
+    setDraft: setRoadDraft,
+    finish: finishRoad, minimum: 2
+  } : activeTool === 'fortification' ? {
+    title: 'FORTIFICATION SPLINE',
+    mode: wallMode,
+    setMode: setWallMode,
+    draft: wallDraft,
+    setDraft: setWallDraft,
+    finish: finishWall,
+    minimum: 2
+  } : activeTool === 'region' ? {
+    title: 'REGIONS & BIOMES',
+    mode: regionMode,
+    setMode: setRegionMode,
+    draft: regionDraft,
+    setDraft: setRegionDraft,
+    finish: finishRegion,
+    minimum: 3
+  } : null;
+
+  // 1. Upgraded Unified Drawing Panel Fallback Template
+  if (drawing) {
+    return (
+      <aside className="editor-menu road-menu">
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+          {drawing.title}
+        </Typography>
+
+        <ToggleButtonGroup
+          value={drawing.mode}
+          exclusive
+          fullWidth
+          size="small"
+          onChange={(e, nextMode) => {
+            if (nextMode !== null) {
+              if (nextMode === 'draw-new') drawing.setDraft([]);
+              drawing.setMode(nextMode);
+            }
+          }}
+          sx={{
+            mb: 2,
+            backgroundColor: '#10231f',
+            '& .MuiToggleButton-root': {
+              color: '#94a3b8',
+              borderColor: '#47423a',
+              textTransform: 'none',
+              fontSize: '11px',
+              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+            }
+          }}
+        >
+          <ToggleButton value="select">Select</ToggleButton>
+          <ToggleButton value="draw-new">Draw</ToggleButton>
+        </ToggleButtonGroup>
+
+        {activeTool === 'road' && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <span>Width</span>
+              <strong>{roadWidth} ft</strong>
+            </Typography>
+            <Slider
+              min={4}
+              max={400}
+              step={2}
+              value={roadWidth}
+              onChange={event => setRoadWidth(Number(event.target.value))}
+              sx={{ color: '#bd9149', py: 0.5 }}
+            />
+          </Box>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+          <Button variant="outlined" size="small" disabled={!drawing.draft.length} onClick={() => drawing.setDraft(points => points.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+            Undo point
+          </Button>
+          <Button variant="contained" size="small" disabled={drawing.draft.length < drawing.minimum} onClick={drawing.finish} sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold' }}>
+            Finish
+          </Button>
+        </Box>
+      </aside>
+    );
+  }
+
+  // 2. Upgraded Water Body Panel Configuration
+  if (activeTool === 'water') {
+    return (
+      <aside className="editor-menu water-menu">
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+          WATER BODY
+        </Typography>
+
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>
+            Type
+          </Typography>
+          <Select
+            size="small"
+            fullWidth
+            value={waterType}
+            onChange={event => { setWaterType(event.target.value); setWaterDraft([]); }}
+            sx={{
+              backgroundColor: '#23352d',
+              color: '#d5ddd7',
+              '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' },
+              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' }
+            }}
+          >
+            <MenuItem value="river">River</MenuItem>
+            <MenuItem value="lake">Lake</MenuItem>
+            <MenuItem value="ocean">Ocean</MenuItem>
+          </Select>
+        </Box>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+          <Button variant="outlined" size="small" disabled={!waterDraft.length} onClick={() => setWaterDraft(points => points.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+            Undo point
+          </Button>
+          <Button variant="contained" size="small" disabled={waterType !== 'ocean' && waterDraft.length < (waterType === 'river' ? 2 : 3)} onClick={finishWater} sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold' }}>
+            Finish water
+          </Button>
+        </Box>
+      </aside>
+    );
+  }
+
+
   if (activeTool === 'timeOfDay') {
     const handleShift = (minutes) => {
       window.dispatchEvent(new CustomEvent('settlement-time-advance-request', {
@@ -424,26 +925,96 @@ function ToolWorkflow({
 
     return (
       <aside className="editor-menu time-of-day-menu">
-        <span>TIME OF DAY TRACKING</span>
+        <Typography variant="subtitle2" sx={{ color: '#ecd89f', fontWeight: 800, mb: 1.5, letterSpacing: '.06em' }}>
+          TIME OF DAY TRACKING
+        </Typography>
 
-        <div className="time-adjustment-grid">
-          <button type="button" onClick={() => handleShift(-1440)}>◀ Day</button>
-          <button type="button" onClick={() => handleShift(-720)}>◀ 12h</button>
-          <button type="button" onClick={() => handleShift(-60)}>◀ Hour</button>
+        {/* Grid Matrix layout replacing custom floats or flex tables */}
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            columnGap: 1,
+            rowGap: 1.5, // spacing={1} plus the old mt: 0.5 on the second row
+            mb: 2,
+          }}
+        >
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-1440)} startIcon={<CalendarTodayIcon sx={{ fontSize: 12 }} />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+            Day
+          </Button>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-720)} startIcon={<FastRewindIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+            12h
+          </Button>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-60)} startIcon={<NavigateBeforeIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+            Hour
+          </Button>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(60)} endIcon={<NavigateNextIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+            Hour
+          </Button>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(720)} endIcon={<FastForwardIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+            12h
+          </Button>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(1440)} endIcon={<CalendarTodayIcon sx={{ fontSize: 12 }} />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+            Day
+          </Button>
+        </Box>
 
-          <button type="button" onClick={() => handleShift(60)}>Hour ▶</button>
-          <button type="button" onClick={() => handleShift(720)}>12h ▶</button>
-          <button type="button" onClick={() => handleShift(1440)}>Day ▶</button>
-        </div>
+        {/* Manual Timeline Overrides */}
+        <Box
+          component="form"
+          onSubmit={handleAbsoluteSubmit}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1.5,
+            borderTop: '1px solid #33443b',
+            pt: 1.5
+          }}
+        >
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <TextField
+              label="Day"
+              type="number"
+              size="small"
+              inputProps={{ min: 1 }}
+              value={localDay}
+              onChange={e => setLocalDay(e.target.value)}
+              sx={{ flex: 1 }}
+            />
+            <TextField
+              label="Hour"
+              type="number"
+              size="small"
+              inputProps={{ min: 0, max: 23 }}
+              value={localHour}
+              onChange={e => setLocalHour(e.target.value)}
+              sx={{ flex: 1 }}
+            />
+            <TextField
+              label="Min"
+              type="number"
+              size="small"
+              inputProps={{ min: 0, max: 59 }}
+              value={localMin}
+              onChange={e => setLocalMin(e.target.value)}
+              sx={{ flex: 1 }}
+            />
+          </Box>
 
-        <form className="manual-time-override-form" onSubmit={handleAbsoluteSubmit}>
-          <div className="override-inputs-row">
-            <label>Day<input type="number" min="1" value={localDay} onChange={e => setLocalDay(e.target.value)} /></label>
-            <label>Hour<input type="number" min="0" max="23" value={localHour} onChange={e => setLocalHour(e.target.value)} /></label>
-            <label>Min<input type="number" min="0" max="59" value={localMin} onChange={e => setLocalMin(e.target.value)} /></label>
-          </div>
-          <button type="submit" className="apply-time-button">Apply Manual Override</button>
-        </form>
+          <Button
+            type="submit"
+            variant="contained"
+            fullWidth
+            sx={{
+              backgroundColor: '#bd9149',
+              color: '#17211c',
+              fontWeight: 'bold',
+              '&:hover': { backgroundColor: '#d4a75b' }
+            }}
+          >
+            Apply Manual Override
+          </Button>
+        </Box>
       </aside>
     );
   }
@@ -451,23 +1022,61 @@ function ToolWorkflow({
 
   if (activeTool === 'atmosphere' && atmosphereSettings) {
     return (
-      <aside className="editor-menu secondary-tool-panel atmosphere-menu">
-        <span>ATMOSPHERE PLUGINS</span>
-        <label>
-          Sun Light Glare
-          <input type="range" min="0.5" max="5.0" step="0.1" value={atmosphereSettings.sunIntensity} onChange={e => setAtmosphereSettings(prev => ({ ...prev, sunIntensity: Number(e.target.value) }))} />
-        </label>
-        <label>
-          Moon Base Glow
-          <input type="range" min="0.0" max="1.0" step="0.05" value={atmosphereSettings.moonIntensity} onChange={e => setAtmosphereSettings(prev => ({ ...prev, moonIntensity: Number(e.target.value) }))} />
-        </label>
-        <label>
-          Rayleigh Scattering
-          <input type="range" min="0.2" max="3.0" step="0.1" value={atmosphereSettings.scatteringScale} onChange={e => setAtmosphereSettings(prev => ({ ...prev, scatteringScale: Number(e.target.value) }))} />
-        </label>
+      <aside className="editor-menu atmosphere-menu">
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 2, letterSpacing: '.13em' }}>
+          ATMOSPHERE PLUGINS
+        </Typography>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Box>
+            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+              <span>Sun Light Glare</span>
+              <strong>{atmosphereSettings.sunIntensity.toFixed(1)}x</strong>
+            </Typography>
+            <Slider
+              min={0.5}
+              max={5.0}
+              step={0.1}
+              value={atmosphereSettings.sunIntensity}
+              onChange={e => setAtmosphereSettings(prev => ({ ...prev, sunIntensity: Number(e.target.value) }))}
+              sx={{ color: '#bd9149' }}
+            />
+          </Box>
+
+          <Box>
+            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+              <span>Moon Base Glow</span>
+              <strong>{Math.round(atmosphereSettings.moonIntensity * 100)}%</strong>
+            </Typography>
+            <Slider
+              min={0.0}
+              max={1.0}
+              step={0.05}
+              value={atmosphereSettings.moonIntensity}
+              onChange={e => setAtmosphereSettings(prev => ({ ...prev, moonIntensity: Number(e.target.value) }))}
+              sx={{ color: '#bd9149' }}
+            />
+          </Box>
+
+          <Box>
+            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+              <span>Rayleigh Scattering</span>
+              <strong>{atmosphereSettings.scatteringScale.toFixed(1)}</strong>
+            </Typography>
+            <Slider
+              min={0.2}
+              max={3.0}
+              step={0.1}
+              value={atmosphereSettings.scatteringScale}
+              onChange={e => setAtmosphereSettings(prev => ({ ...prev, scatteringScale: Number(e.target.value) }))}
+              sx={{ color: '#bd9149' }}
+            />
+          </Box>
+        </Box>
       </aside>
     );
   }
+
 
   if (activeTool === 'weather' && weatherSettings) {
     const handlePresetChange = (e) => {
@@ -492,39 +1101,113 @@ function ToolWorkflow({
     };
 
     return (
-      <aside className="editor-menu secondary-tool-panel weather-menu">
-        <span>WEATHER SYSTEM MATRIX</span>
-        <label>
-          Condition Selection
-          <select value={weatherSettings.activeWeather} onChange={handlePresetChange}>
-            <option value="clear">☀️ Clear Skies</option>
-            <option value="light-drizzle">🌦️ Light Drizzle</option>
-            <option value="pouring-rain">🌧️ Pouring Rain</option>
-            <option value="foggy">🌫️ Thick Fog</option>
-            <option value="snowing">❄️ Snowing</option>
-            <option value="thunderstorm">⛈️ Thunderstorm</option>
-          </select>
-        </label>
+      <aside className="editor-menu weather-menu">
+        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 2, letterSpacing: '.13em' }}>
+          WEATHER SYSTEM MATRIX
+        </Typography>
 
-        <label>
-          Cloud Density <strong>{Math.round((weatherSettings.cloudCover ?? 0) * 100)}%</strong>
-          <input type="range" min="0.0" max="1.0" step="0.05" value={weatherSettings.cloudCover ?? 0} onChange={e => setWeatherSettings(prev => ({ ...prev, cloudCover: Number(e.target.value) }))} />
-        </label>
+        <Box>
+          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>
+            Condition Selection
+          </Typography>
+          <Select
+            size="small"
+            fullWidth
+            value={weatherSettings.activeWeather}
+            onChange={handlePresetChange}
+            sx={{
+              backgroundColor: '#23352d',
+              color: '#d5ddd7',
+              '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' },
+              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' },
+              '& .MuiSelect-select': { display: 'flex', alignItems: 'center', gap: '8px' } // Aligns selected value icon + text
+            }}
+          >
+            <MenuItem value="clear" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <WbSunnyIcon fontSize="small" sx={{ color: '#ffca28' }} /> Clear Skies
+            </MenuItem>
+            <MenuItem value="light-drizzle" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <GrainIcon fontSize="small" sx={{ color: '#90caf9' }} /> Light Drizzle
+            </MenuItem>
+            <MenuItem value="pouring-rain" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <WaterDropIcon fontSize="small" sx={{ color: '#42a5f5' }} /> Pouring Rain
+            </MenuItem>
+            <MenuItem value="foggy" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CloudQueueIcon fontSize="small" sx={{ color: '#94a3b8' }} /> Thick Fog
+            </MenuItem>
+            <MenuItem value="snowing" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AcUnitIcon fontSize="small" sx={{ color: '#e2e8f0' }} /> Snowing
+            </MenuItem>
+            <MenuItem value="thunderstorm" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ThunderstormIcon fontSize="small" sx={{ color: '#b0bec5' }} /> Thunderstorm
+            </MenuItem>
+          </Select>
+        </Box>
 
-        <label>
-          Fog Density Target
-          <input type="range" min="0.001" max="0.06" step="0.001" value={weatherSettings.fogDensity} onChange={e => setWeatherSettings(prev => ({ ...prev, fogDensity: Number(e.target.value) }))} />
-        </label>
 
-        <label className="audio-mixer-volume-row">
-          Environment Volume <strong>{Math.round((weatherSettings.masterVolume ?? 0.5) * 100)}%</strong>
-          <input type="range" min="0.0" max="1.0" step="0.05" value={weatherSettings.masterVolume ?? 0.5} onChange={e => setWeatherSettings(prev => ({ ...prev, masterVolume: Number(e.target.value) }))} />
-        </label>
+        <Box>
+          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Cloud Density</span>
+            <strong>{Math.round((weatherSettings.cloudCover ?? 0) * 100)}%</strong>
+          </Typography>
+          <Slider
+            min={0.0}
+            max={1.0}
+            step={0.05}
+            value={weatherSettings.cloudCover ?? 0}
+            onChange={e => setWeatherSettings(prev => ({ ...prev, cloudCover: Number(e.target.value) }))}
+            sx={{ color: '#bd9149' }}
+          />
+        </Box>
 
-        <label>
-          Fog Tint Color
-          <input type="color" value={weatherSettings.fogColor} onChange={e => setWeatherSettings(prev => ({ ...prev, fogColor: e.target.value }))} />
-        </label>
+        <Box>
+          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Fog / Haze Strength</span>
+            <strong>{Math.round(Math.max(0, Math.min(1, ((weatherSettings.fogDensity ?? 0.01) - 0.001) / 0.059)) * 100)}%</strong>
+          </Typography>
+          <Slider
+            min={0.001}
+            max={0.06}
+            step={0.001}
+            value={weatherSettings.fogDensity}
+            onChange={e => setWeatherSettings(prev => ({ ...prev, fogDensity: Number(e.target.value) }))}
+            sx={{ color: '#bd9149' }}
+          />
+        </Box>
+
+        <Box>
+          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Environment Volume</span>
+            <strong>{Math.round((weatherSettings.masterVolume ?? 0.5) * 100)}%</strong>
+          </Typography>
+          <Slider
+            min={0.0}
+            max={1.0}
+            step={0.05}
+            value={weatherSettings.masterVolume ?? 0.5}
+            onChange={e => setWeatherSettings(prev => ({ ...prev, masterVolume: Number(e.target.value) }))}
+            sx={{ color: '#bd9149' }}
+          />
+        </Box>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5 }}>
+          <Typography variant="caption" sx={{ color: '#aab4ad' }}>
+            Fog Tint Color
+          </Typography>
+          <input
+            type="color"
+            value={weatherSettings.fogColor}
+            onChange={e => setWeatherSettings(prev => ({ ...prev, fogColor: e.target.value }))}
+            style={{
+              border: '1px solid #53645a',
+              borderRadius: '4px',
+              background: 'none',
+              cursor: 'pointer',
+              width: '40px',
+              height: '24px'
+            }}
+          />
+        </Box>
       </aside>
     );
   }
@@ -537,9 +1220,9 @@ function ToolWorkflow({
 // ******************************************************************************
 
 function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
-  const [isMinimized, setIsMinimized] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(true);
   // const stateRef = useRef(new Set());
-  
+
   // Custom pipeline to set state values on the global engine window context
   const setVirtualKey = (keyName, isPressed) => {
     window.dispatchEvent(new CustomEvent('settlement-virtual-key-update', {
@@ -555,178 +1238,340 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
     }));
   };
 
+
   return (
-    <div className={`nav-control-panel-wrapper ${isMinimized ? 'minimized' : ''}`}>
-      <button 
-        type="button" 
-        className="nav-panel-toggle-tab"
-        onClick={() => setIsMinimized(!isMinimized)}
-        aria-label={isMinimized ? "Expand navigation panel" : "Minimize navigation panel"}
+    <Box
+      className={`nav-control-panel-wrapper ${isMinimized ? 'minimized' : ''}`}
+      sx={{
+        position: 'absolute',
+        bottom: '16px',
+        right: '16px',
+        zIndex: 100,
+        width: '180px',
+        // The outer container now owns ALL the chrome (bg, border, shadow),
+        // which eliminates the old "panel inside a panel" double-outline look
+        backgroundColor: '#14201cce',
+        border: '1px solid #ffffff2c',
+        borderRadius: '6px',
+        boxShadow: '0 8px 22px #07100bbb',
+        backdropFilter: 'blur(6px)',
+        overflow: 'hidden',
+      }}
+    >
+      {/* ── Integrated header: title + collapse toggle share one bar ── */}
+      <Box
+        component="button"
+        type="button"
+        onClick={() => setIsMinimized(v => !v)}
+        aria-expanded={!isMinimized}
+        aria-label={isMinimized ? 'Expand navigation panel' : 'Minimize navigation panel'}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 1,
+          width: '100%',
+          px: 1.25,
+          py: 0.75,
+          margin: 0,
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          color: '#d8c28f',
+          fontFamily: 'inherit',
+          '&:hover': { backgroundColor: '#ffffff0f' },
+        }}
       >
-        {isMinimized ? <ArrowBackIcon fontSize="small" /> : <ArrowForwardIcon fontSize="small" />}
-      </button>
+        <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '10px', letterSpacing: '.13em', color: '#cbbd9d' }}>
+          CAMERA NAV
+        </Typography>
+        {isMinimized
+          ? <ExpandLessIcon sx={{ fontSize: 18 }} />
+          : <ExpandMoreIcon sx={{ fontSize: 18 }} />}
+      </Box>
 
-      {!isMinimized && (
-        <div className="nav-panel-content">
-          {/* Mode Perspective Changers using MUI Icons */}
-          <div className="nav-group view-modes">
-          <Tooltip title="Top Down View" arrow placement="top">
-            <button type="button" className="button icon-only" onClick={() => handleCommand('topdown')} aria-label="Top Down View">
-              <CenterFocusStrongIcon style={{ verticalAlign: 'middle' }} />
-            </button>
-          </Tooltip>
+      {/* ── Collapsible body ── */}
+      <Collapse in={!isMinimized} timeout={180}>
+        <Box
+          className="nav-panel-content"
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1.5,
+            padding: '10px 12px 12px',
+            borderTop: '1px solid #ffffff1a',
+          }}
+        >
+          {/* Mode Perspective Changers Ribbon */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: '4px' }}>
+            <Tooltip title="Top Down View" arrow placement="top">
+              <IconButton
+                size="small"
+                onClick={() => handleCommand('topdown')}
+                sx={{ flex: 1, color: '#d8c28f', border: '1px solid #526258', borderRadius: '4px', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              >
+                <CenterFocusStrongIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="1st Person Mode" arrow placement="top">
+              <IconButton
+                size="small"
+                onClick={() => handleCommand('firstPerson')}
+                sx={{ flex: 1, color: '#d8c28f', border: '1px solid #526258', borderRadius: '4px', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              >
+                <VisibilityIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Orbit Camera" arrow placement="top">
+              <IconButton
+                size="small"
+                onClick={() => handleCommand('camera')}
+                sx={{ flex: 1, color: '#d8c28f', border: '1px solid #526258', borderRadius: '4px', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              >
+                <PublicIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
 
-          <Tooltip title="1st Person Mode" arrow placement="top">
-            <button type="button" className="button icon-only" onClick={() => handleCommand('firstPerson')} aria-label="1st Person Mode">
-              <VisibilityIcon style={{ verticalAlign: 'middle' }} />
-            </button>
-          </Tooltip>
+          {/* D-Pad Translation Matrix via Native CSS Grid */}
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gridTemplateRows: 'repeat(3, 32px)',
+              gap: '4px',
+              justifyItems: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <Button
+              onMouseDown={() => setVirtualKey('w', true)} onMouseUp={() => setVirtualKey('w', false)} onMouseLeave={() => setVirtualKey('w', false)}
+              sx={{ gridColumn: '2', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+            >
+              <ArrowDropUpIcon />
+            </Button>
+            <Button
+              onMouseDown={() => setVirtualKey('a', true)} onMouseUp={() => setVirtualKey('a', false)} onMouseLeave={() => setVirtualKey('a', false)}
+              sx={{ gridRow: '2', gridColumn: '1', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+            >
+              <ArrowLeftIcon />
+            </Button>
+            <Button
+              onMouseDown={() => setVirtualKey('s', true)} onMouseUp={() => setVirtualKey('s', false)} onMouseLeave={() => setVirtualKey('s', false)}
+              sx={{ gridRow: '3', gridColumn: '2', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+            >
+              <ArrowDropDownIcon />
+            </Button>
+            <Button
+              onMouseDown={() => setVirtualKey('d', true)} onMouseUp={() => setVirtualKey('d', false)} onMouseLeave={() => setVirtualKey('d', false)}
+              sx={{ gridRow: '2', gridColumn: '3', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+            >
+              <ArrowRightIcon />
+            </Button>
+          </Box>
 
-          <Tooltip title="Orbit Camera" arrow placement="top">
-            <button type="button" className="button icon-only" onClick={() => handleCommand('camera')} aria-label="Orbit Camera">
-              <PublicIcon style={{ verticalAlign: 'middle' }} />
-            </button>
-          </Tooltip>
-        </div>
-
-          {/* D-Pad Translation Matrix (WASD equivalent buttons) */}
-          <div className="nav-group dpad-grid">
-            <button type="button" className="button grid-up" onMouseDown={() => setVirtualKey('w', true)} onMouseUp={() => setVirtualKey('w', false)} onMouseLeave={() => setVirtualKey('w', false)}>▲</button>
-            <button type="button" className="button grid-left" onMouseDown={() => setVirtualKey('a', true)} onMouseUp={() => setVirtualKey('a', false)} onMouseLeave={() => setVirtualKey('a', false)}>◀</button>
-            <button type="button" className="button grid-down" onMouseDown={() => setVirtualKey('s', true)} onMouseUp={() => setVirtualKey('s', false)} onMouseLeave={() => setVirtualKey('s', false)}>▼</button>
-            <button type="button" className="button grid-right" onMouseDown={() => setVirtualKey('d', true)} onMouseUp={() => setVirtualKey('d', false)} onMouseLeave={() => setVirtualKey('d', false)}>▶</button>
-          </div>
-
-          {/* Rotations and Alternating Heights (Q/E Orbit, R/F Tilt, Shift/Ctrl Elevate) */}
-          <div className="nav-group axis-utilities">
-            <div className="utility-row">
-              <button type="button" className="button icon-only" onMouseDown={() => setVirtualKey('q', true)} onMouseUp={() => setVirtualKey('q', false)}><UndoIcon style={{ verticalAlign: 'middle' }} />(Q)</button>
-              <button type="button" className="button icon-only" onMouseDown={() => setVirtualKey('e', true)} onMouseUp={() => setVirtualKey('e', false)}><RedoIcon style={{ verticalAlign: 'middle' }} />(E)</button>
-            </div>
-            <div className="utility-row">
-              <button type="button" className="button icon-only" onMouseDown={() => setVirtualKey('r', true)} onMouseUp={() => setVirtualKey('r', false)}>Tilt Up (R)</button>
-              <button type="button" className="button icon-only" onMouseDown={() => setVirtualKey('f', true)} onMouseUp={() => setVirtualKey('f', false)}>Tilt Dn (F)</button>
-            </div>
-            <div className="utility-row">
-              <button type="button" className="button icon-only" onMouseDown={() => setVirtualKey('shift', true)} onMouseUp={() => setVirtualKey('shift', false)}>Raise (Shift)</button>
-              <button type="button" className="button icon-only" onMouseDown={() => setVirtualKey('lower', true)} onMouseUp={() => setVirtualKey('lower', false)}>Lower (Ctrl)</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+          {/* Orbit Rotations, Pitch Tilts, and Elevate Utilities Stack */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('q', true)} onMouseUp={() => setVirtualKey('q', false)} startIcon={<UndoIcon sx={{ scale: '0.8' }} />} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+                Q
+              </Button>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('e', true)} onMouseUp={() => setVirtualKey('e', false)} endIcon={<RedoIcon sx={{ scale: '0.8' }} />} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+                E
+              </Button>
+            </Box>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('r', true)} onMouseUp={() => setVirtualKey('r', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+                Tilt Up (R)
+              </Button>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('f', true)} onMouseUp={() => setVirtualKey('f', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+                Tilt Dn (F)
+              </Button>
+            </Box>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('shift', true)} onMouseUp={() => setVirtualKey('shift', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '9px', padding: '2px' }}>
+                Raise (Shift)
+              </Button>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('lower', true)} onMouseUp={() => setVirtualKey('lower', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '9px', padding: '2px' }}>
+                Lower (Ctrl)
+              </Button>
+            </Box>
+          </Box>
+        </Box>
+      </Collapse>
+    </Box>
   );
 }
 
-export const prepareTerrainSavePayload = (state) => {
-  const payload = { ...state };
-
-  // 1. Clear out the legacy strokes array to prevent DB bloat
-  payload.terrain_strokes = [];
-
-  // 2. Serialize the heightMap into a reference layer
-  if (state.heightMap) {
-    const heightmapLayer = {
-      id: state.heightMap.id || `heightmap-${Date.now()}`,
-      layer_type: 'heightmap',
-      name: state.heightMap.name || 'Sculpted Terrain',
-      grid_width: state.heightMap.grid_width,
-      grid_height: state.heightMap.grid_height,
-      values: Array.from(state.heightMap.values), // Convert Float32Array to standard Array for JSON
-      width_feet: state.heightMap.width_feet,
-      height_feet: state.heightMap.height_feet,
-      origin_x: state.heightMap.origin_x,
-      origin_y: state.heightMap.origin_y,
-      min_elevation_feet: state.heightMap.min_elevation_feet,
-      max_elevation_feet: state.heightMap.max_elevation_feet,
-    };
-
-    // Replace any existing heightmap layer or add a new one
-    const existingLayers = (payload.reference_layers || []).filter(l => l.layer_type !== 'heightmap');
-    payload.reference_layers = [...existingLayers, heightmapLayer];
-  }
-
-  return payload;
-};
-
-
 // This function is the main component for editing the settlement map, handling various tools and interactions.
 export default function SettlementMapEditor({
-    simulation,
-    activeTool,
-    atmosphereSettings = { sunIntensity: 2.2, moonIntensity: 0.15, scatteringScale: 1.0 },
-    setAtmosphereSettings,
-    weatherSettings = { activeWeather: 'clear', fogDensity: 0.01, fogColor: '#a9c9dc' },
-    setWeatherSettings,
-    assets = [],
-    buildings = [],
-    setBuildings = () => { },
+  simulation,
+  activeTool,
+  atmosphereSettings = { sunIntensity: 2.2, moonIntensity: 0.15, scatteringScale: 1.0 },
+  setAtmosphereSettings,
+  weatherSettings = { activeWeather: 'clear', fogDensity: 0.01, fogColor: '#a9c9dc' },
+  setWeatherSettings,
+  assets = [],
+  buildings = [],
+  setBuildings = () => { },
 
-    selected,
-    setSelected,
-    inspectSelection,
-    setInspectSelection = () => { },
-    buildingViewMode = 'satellite',
-    roads = [],
-    setRoads = () => {},
-    strokes = [],
-    setStrokes = () => {},
-    heightMap = null,
-    setHeightMap = () => {},
-    waterBodies = [],
-    setWaterBodies = () => {},
-    mapEnvironment = {},
-    setMapEnvironment = () => {},
-    setFortifications = () => {},
-    dusk,
-    lamps = [],
-    partyPosition,
-    destination,
-    onWaypoint = () => {},
-    referenceLayers = [],
-    onReferencePoint = () => {},
-    calibrationPoints = [],
-    fitRequest = 0,
-    onMapContext = () => {},
-    onCameraChange = null,
-    viewCommand = null,
-    labelState = { ids: [], showAll: false },
-    pointsOfInterest = [],
-    campaignName = ''
-  }) {
+  tileStore,
+  onTilesDirtied = () => { },
+  tileStoreVersion = 0,
 
+  selected,
+  setSelected,
+  inspectSelection,
+  setInspectSelection = () => { },
+  buildingViewMode = 'satellite',
+  roads = [],
+  setRoads = () => { },
+  strokes = [],
+  setStrokes = () => { },
+  heightMap = null,
+  setHeightMap = () => { },
+  blueprintDraft = null,
+  setBlueprintDraft = () => { },
+  waterBodies = [],
+  setWaterBodies = () => { },
+  mapEnvironment = {},
+  setMapEnvironment = () => { },
+  setFortifications = () => { },
+  lamps = [],
+  partyPosition,
+  destination,
+  onWaypoint = () => { },
+  referenceLayers = [],
+  onReferencePoint = () => { },
+  calibrationPoints = [],
+  fitRequest = 0,
+  onMapContext = () => { },
+  onCameraChange = null,
+  
+  viewCommand = null,
+  labelState = { ids: [], showAll: false },
+  pointsOfInterest = [],
+  campaignName = ''
+}) {
   const [assetKey, setAssetKey] = useState(assets[0]?.key || '');
 
   const [terrainMode, setTerrainMode] = useState('raise')
   const [brushRadius, setBrushRadius] = useState(110)
   const [brushStrengths, setBrushStrengths] = useState(DEFAULT_BRUSH_STRENGTHS);
+  const [showHeightmapImport, setShowHeightmapImport] = useState(false);
+  const [heightmapPlacement, setHeightmapPlacement] = useState(null);
 
+  const [buildMode, setBuildMode] = useState('place')
   const [roadMode, setRoadMode] = useState('select')
   const [roadDraft, setRoadDraft] = useState([])
   const [roadWidth, setRoadWidth] = useState(36);
+
   const [wallMode, setWallMode] = useState('select')
   const [wallDraft, setWallDraft] = useState([]);
+  const [wallWidth, setWallWidth] = useState(36);
+
   const [regionMode, setRegionMode] = useState('select')
   const [regionDraft, setRegionDraft] = useState([]);
   const [waterType, setWaterType] = useState('river')
   const [waterDraft, setWaterDraft] = useState([]);
 
   const [selectedRoadId, setSelectedRoadId] = useState(null);
+  const [selectedRoadPointIndex, setSelectedRoadPointIndex] = useState(null); // 👈 ADD THIS
+
   const [selectedFortificationId, setSelectedFortificationId] = useState(null);
+  const [selectedFortificationPointIndex, setSelectedFortificationPointIndex] = useState(null); // 👈 ADD THIS
+
   const [selectedRegionId, setSelectedRegionId] = useState(null);
 
   const [virtualKeys, setVirtualKeys] = useState(new Set());
   const [localViewCommand, setLocalViewCommand] = useState(null);
-  const [pointerLocked, setPointerLocked] = useState(false);
+  const [, setPointerLocked] = useState(false);
   const [scaleIndicator, setScaleIndicator] = useState({ feet: 100, pixels: 100 });
+  const [cameraDebug, setCameraDebug] = useState(null);
+  const onCameraChangeRef = useRef(onCameraChange);
+  const latestCameraPayloadRef = useRef(null);
+  const cameraUpdateTimerRef = useRef(null);
+
+  useEffect(() => {
+    onCameraChangeRef.current = onCameraChange;
+  }, [onCameraChange]);
+
+  const flushCameraChange = useCallback(() => {
+    cameraUpdateTimerRef.current = null;
+    const payload = latestCameraPayloadRef.current;
+    if (!payload) return;
+    setCameraDebug(payload);
+    onCameraChangeRef.current?.(payload);
+  }, []);
+
+  const handleCameraChange = useCallback((payload) => {
+    latestCameraPayloadRef.current = payload;
+    if (cameraUpdateTimerRef.current === null) {
+      cameraUpdateTimerRef.current = setTimeout(flushCameraChange, 100);
+    }
+  }, [flushCameraChange]);
+
+  useEffect(() => () => {
+    if (cameraUpdateTimerRef.current !== null) {
+      clearTimeout(cameraUpdateTimerRef.current);
+    }
+  }, []);
 
   const [firstPersonSettings] = useState(DEFAULT_FIRST_PERSON_SETTINGS);
   // const touchInputRef = useRef({ lookX: 0, lookY: 0, moveX: 0, moveY: 0, sprint: false });
 
-  const bounds = useMemo(
-    () => editorBounds(referenceLayers, heightMap),
-    [referenceLayers, heightMap?.origin_x, heightMap?.origin_y, heightMap?.width_feet, heightMap?.height_feet]
+  const [boundsExpansion, setBoundsExpansion] = useState({ minX: 0, maxX: 0, minY: 0, maxY: 0 });
+  const lastExpansionRef = useRef(0);           // throttle guard
+
+  const baseBounds = useMemo(
+    () => {
+      // tileStore is intentionally mutable; reading the revision here makes
+      // authored/imported frontier tiles participate in the recomputation.
+      void tileStoreVersion;
+      return editorBounds(referenceLayers, tileStore);
+    },
+    [referenceLayers, tileStore, tileStoreVersion]
   );
+
+  const activeReferenceLayer = useMemo(
+    () => referenceLayers.find(layer => layer.visible !== false && layer.image_url) || null,
+    [referenceLayers]
+  );
+
+  const bounds = useMemo(() => {
+    const minX = baseBounds.minX - boundsExpansion.minX;
+    const maxX = baseBounds.maxX + boundsExpansion.maxX;
+    const minY = baseBounds.minY - boundsExpansion.minY;
+    const maxY = baseBounds.maxY + boundsExpansion.maxY;
+    return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+  }, [baseBounds, boundsExpansion]);
+
+  // Called by the camera system when the target nears an edge
+  const handleBoundsExpansion = useCallback((flags) => {
+    const now = Date.now();
+    if (now - lastExpansionRef.current < 2000) return;   // 2 s cooldown
+    lastExpansionRef.current = now;
+
+    const EXPAND_FT = 300;
+    setBoundsExpansion(prev => {
+      const next = { ...prev };
+      let changed = false;
+      if (flags.minX) { next.minX += EXPAND_FT; changed = true; }
+      if (flags.maxX) { next.maxX += EXPAND_FT; changed = true; }
+      if (flags.minY) { next.minY += EXPAND_FT; changed = true; }
+      if (flags.maxY) { next.maxY += EXPAND_FT; changed = true; }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const commitHeightmapPlacement = useCallback(() => {
+    if (!heightmapPlacement) return;
+    const { touched } = overwriteHeightmapIntoTiles(tileStore, heightmapPlacement);
+    if (touched.size) onTilesDirtied(touched);
+    setHeightmapPlacement(null);
+    setShowHeightmapImport(false);
+  }, [heightmapPlacement, onTilesDirtied, tileStore]);
+
 
   const brushMeshRef = useRef(null);
 
@@ -748,6 +1593,28 @@ export default function SettlementMapEditor({
   const pastRef = useRef([]);
   const futureRef = useRef([]);
   const gestureStartSnapshotRef = useRef(null);
+  const gestureTileSnapshotRef = useRef(null);
+  const gestureStrokesRef = useRef([]);
+  const pendingStrokePreviewRef = useRef([]);
+  const strokePreviewFrameRef = useRef(null);
+  const lastStrokePreviewRef = useRef(0);
+
+  const flushStrokePreview = useCallback(timestamp => {
+    if (timestamp - lastStrokePreviewRef.current < 28) {
+      strokePreviewFrameRef.current = requestAnimationFrame(flushStrokePreview);
+      return;
+    }
+    strokePreviewFrameRef.current = null;
+    if (!pendingStrokePreviewRef.current.length) return;
+    lastStrokePreviewRef.current = timestamp;
+    const batch = pendingStrokePreviewRef.current;
+    pendingStrokePreviewRef.current = [];
+    setStrokes(previous => [...previous, ...batch]);
+  }, [setStrokes]);
+
+  useEffect(() => () => {
+    if (strokePreviewFrameRef.current !== null) cancelAnimationFrame(strokePreviewFrameRef.current);
+  }, []);
 
   const onSculptStroke = stroke => {
     const next = {
@@ -757,67 +1624,122 @@ export default function SettlementMapEditor({
       amount: terrainMode === 'flatten' || terrainMode === 'smooth' ? brushStrength / 100 : undefined
     };
 
-    // Append the stroke to the array for real-time rendering.
-    setStrokes(prev => [...prev, next]);
+    gestureStrokesRef.current.push(next);
+    pendingStrokePreviewRef.current.push(next);
+    // Pointer events can arrive much faster than the display can present
+    // frames. Coalesce them into one React update per animation frame.
+    if (strokePreviewFrameRef.current === null) {
+      strokePreviewFrameRef.current = requestAnimationFrame(flushStrokePreview);
+    }
   };
 
   const onSculptStart = () => {
-    if (heightMap) {
-      // Clone the Float32Array before the user starts dragging
-      gestureStartSnapshotRef.current = new Float32Array(heightMap.values);
+    gestureStrokesRef.current = [];
+    pendingStrokePreviewRef.current = [];
+    if (strokePreviewFrameRef.current !== null) {
+      cancelAnimationFrame(strokePreviewFrameRef.current);
+      strokePreviewFrameRef.current = null;
     }
   };
 
   const onSculptEnd = () => {
-    // If no strokes were made during this drag, just reset and exit
-    if (strokes.length === 0) {
-      gestureStartSnapshotRef.current = null;
-      return;
+    if (strokePreviewFrameRef.current !== null) {
+      cancelAnimationFrame(strokePreviewFrameRef.current);
+      strokePreviewFrameRef.current = null;
     }
+    pendingStrokePreviewRef.current = [];
+    const strokes = gestureStrokesRef.current;
+    if (!strokes || strokes.length === 0) return;
 
-    // 1. Clone current heightMap or create default
-    const newHeightMap = heightMap
-      ? { ...heightMap, values: new Float32Array(heightMap.values) }
-      : createDefaultHeightmap();
-
-    // 2. Bake all accumulated real-time strokes into the cloned heightMap permanently
+    // Snapshot only the tiles THIS gesture could actually touch, not the
+    // whole tile store — grab each one's pre-bake values before we mutate it.
+    const beforeTiles = [];
+    const seen = new Set();
     strokes.forEach(stroke => {
-      bakeStrokeIntoHeightmap(newHeightMap, stroke);
+      const r = Number(stroke.radius) || 100;
+      const t0 = tileIndexAt(stroke.x - r, stroke.y - r), t1 = tileIndexAt(stroke.x + r, stroke.y + r);
+      for (let tz = t0.tz; tz <= t1.tz; tz++) for (let tx = t0.tx; tx <= t1.tx; tx++) {
+        const key = tileKey(tx, tz);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const tile = tileStore.get(key);
+        if (tile) beforeTiles.push({ key, values: tile.values.slice() });
+      }
     });
 
-    // 3. Handle undo/redo history using the snapshot we took in onSculptStart
-    if (gestureStartSnapshotRef.current) {
-      const changed = gestureStartSnapshotRef.current.some((val, idx) => val !== newHeightMap.values[idx]);
-      if (changed) {
-        pastRef.current.push(gestureStartSnapshotRef.current);
-        if (pastRef.current.length > 30) pastRef.current.shift(); // Limit to 30 steps
-        futureRef.current = []; // Clear redo stack on new edit
+    const touchedKeys = bakeStrokesIntoTiles(tileStore, strokes);
+
+    if (beforeTiles.length > 0) {
+      const changedBefore = beforeTiles.filter(t => touchedKeys.has(t.key));
+      if (changedBefore.length > 0) {
+        pastRef.current.push(changedBefore.map(t => ({
+          key: t.key,
+          values: new Float32Array(t.values),
+        })));
+        if (pastRef.current.length > 30) pastRef.current.shift();
+        futureRef.current = [];
       }
     }
 
-    // 4. Commit the new baked heightMap and clear the temporary strokes
-    setHeightMap(newHeightMap);
+    onTilesDirtied(touchedKeys);
     setStrokes([]);
-
-    // 5. Reset snapshot for the next gesture
+    gestureStrokesRef.current = [];
+    gestureTileSnapshotRef.current = null;
     gestureStartSnapshotRef.current = null;
   };
 
   const handleUndo = () => {
-    if (pastRef.current.length > 0 && heightMap) {
-      futureRef.current.push(new Float32Array(heightMap.values));
-      const prevState = pastRef.current.pop();
-      setHeightMap({ ...heightMap, values: prevState });
-    }
+    const snap = pastRef.current.pop();
+    if (!snap || snap.length === 0) return;
+
+    // Save current tile state for redo
+    const redoEntries = snap.map(entry => {
+      const t = tileStore.get(entry.key);
+      return {
+        key: entry.key,
+        values: t ? new Float32Array(t.values) : null,
+      };
+    }).filter(e => e.values);
+    futureRef.current.push(redoEntries);
+
+    // Restore tile values
+    snap.forEach(entry => {
+      const t = tileStore.get(entry.key);
+      if (t) t.values.set(entry.values);
+    });
+    onTilesDirtied(new Set(snap.map(entry => entry.key)));
+
+    // Clear strokes → triggers Babylon refresh
+    setStrokes([]);
   };
 
   const handleRedo = () => {
-    if (futureRef.current.length > 0 && heightMap) {
-      pastRef.current.push(new Float32Array(heightMap.values));
-      const nextState = futureRef.current.pop();
-      setHeightMap({ ...heightMap, values: nextState });
-    }
+    const snap = futureRef.current.pop();
+    if (!snap || snap.length === 0) return;
+
+    const undoEntries = snap.map(entry => {
+      const t = tileStore.get(entry.key);
+      return {
+        key: entry.key,
+        values: t ? new Float32Array(t.values) : null,
+      };
+    }).filter(e => e.values);
+    pastRef.current.push(undoEntries);
+
+    snap.forEach(entry => {
+      const t = tileStore.get(entry.key);
+      if (t) t.values.set(entry.values);
+    });
+    onTilesDirtied(new Set(snap.map(entry => entry.key)));
+
+    setStrokes([]);
   };
+
+  const sampleTerrainHeight = useCallback((xFeet, yFeet) => {
+    const { tx, tz } = tileIndexAt(xFeet, yFeet);
+    const tile = tileStore?.get?.(tileKey(tx, tz));
+    return terrainHeightAt(strokes, xFeet, yFeet, tile || heightMap);
+  }, [tileStore, strokes, heightMap]);
 
   // ********************************************************* //
   // Hook listeners to intercept virtual panels actions safely //
@@ -880,10 +1802,9 @@ export default function SettlementMapEditor({
     };
   }, [activeTool]);
 
-
   const setRegions = updater => setMapEnvironment(value => ({ ...value, regions: typeof updater === 'function' ? updater(value.regions || []) : updater }));
   const activeViewCommand = localViewCommand || viewCommand, firstPerson = activeViewCommand?.mode === 'firstPerson', brushStrength = brushStrengths[terrainMode];
-  
+
   const finishRoad = () => {
     if (roadDraft.length < 2) return;
     setRoads(values => [...values, { id: `road-${Date.now()}`, name: `New road ${values.length + 1}`, road_class: 'street', surface_type: 'cobblestone', width_feet: roadWidth, opacity: .78, visible: true, points: roadDraft }]);
@@ -910,11 +1831,11 @@ export default function SettlementMapEditor({
     setWaterBodies(values => [...values.filter(body => waterType !== 'ocean' || body.water_type !== 'ocean'), { id: `water-${Date.now()}`, name: `New ${waterType}`, water_type: waterType, width_feet: 30, depth_feet: 5, surface_elevation_feet: terrainMaterial.sea_level_feet, points: waterDraft }]);
     setWaterDraft([]);
   };
-  
+
   useEffect(() => {
     if (viewCommand) setLocalViewCommand(viewCommand);
   }, [viewCommand]);
-  
+
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('settlement-first-person-change', { detail: firstPerson }));
   }, [firstPerson]);
@@ -930,20 +1851,19 @@ export default function SettlementMapEditor({
     activeTool,
     time: simulation?.time || viewCommand?.time || { hour: 12, minute: 0 },
 
-    terrainMaterial: {
-      sea_level_feet: Number(mapEnvironment.sea_level_feet) || 0,
-      snow_line_feet: Number(mapEnvironment.terrain_material?.snow_line_feet ?? 900),
-      snow_blend_feet: Number(mapEnvironment.terrain_material?.snow_blend_feet ?? 500),
-      cliff_normal_threshold: Number(mapEnvironment.terrain_material?.cliff_normal_threshold ?? 0.86),
-      regions: mapEnvironment.regions || []
-    },
+    terrainMaterial,
     atmosphereSettings,
     weatherSettings,
+
+    pastRef,
+    futureRef,
 
     assets,
     buildings,
     setBuildings,
-    
+    blueprintDraft,
+    setBlueprintDraft,
+
     selected,
     setSelected,
     inspectSelection,
@@ -964,14 +1884,20 @@ export default function SettlementMapEditor({
     roadMode,
     selectedRoadId,
     setSelectedRoadId,
+    selectedRoadPointIndex,
+    setSelectedRoadPointIndex,
+
     fortificationMode: wallMode,
     selectedFortificationId,
     setSelectedFortificationId,
+    selectedFortificationPointIndex,
+    setSelectedFortificationPointIndex,
+
     regionMode,
     selectedRegionId,
     setSelectedRegionId,
     selectedAssetKey: assetKey,
-    buildMode: 'place',
+    buildMode,
     roadWidth,
     roadDraft,
     setRoadDraft,
@@ -986,7 +1912,7 @@ export default function SettlementMapEditor({
     onReferencePoint,
     onMapContext,
     onInspectSelection: setInspectSelection,
-    onSeaLevelPick: () => {},
+    onSeaLevelPick: () => { },
 
     // Terrain editing related props
     terrainMode,
@@ -999,6 +1925,10 @@ export default function SettlementMapEditor({
     onSculptStart,
     handleUndo,
     handleRedo,
+    sampleTerrainHeight,
+    terrainCellFeet: cameraDebug?.window?.cellFeet || 0,
+    heightmapPlacement,
+    setHeightmapPlacement,
 
     viewCommand: activeViewCommand,
 
@@ -1023,30 +1953,29 @@ export default function SettlementMapEditor({
     regions: state.regions,
     waterBodies: state.waterBodies,
     referenceLayers: state.referenceLayers,
-    strokes: state.strokes,
-    heightMap: state.heightMap,
     terrainMaterial: state.terrainMaterial,
     assets: state.assets,
     pointsOfInterest: state.pointsOfInterest,
     animateWater: state.animateWater,
   }), [
     state.buildings, state.roads, state.fortifications, state.regions,
-    state.waterBodies, state.referenceLayers, state.strokes, state.heightMap,
+    state.waterBodies, state.referenceLayers,
     state.terrainMaterial, state.assets, state.pointsOfInterest, state.animateWater
   ]);
-  
+
   return (
     <>
       <BabylonSettlementHost
+        tileStore={tileStore}
+        tileStoreVersion={tileStoreVersion}
         state={state}
         meshState={meshState}
         bounds={bounds}
-        dusk={dusk}
-        brushRadius={brushRadius}
         brushStrength={brushStrengths[terrainMode]}
-        onCameraChange={onCameraChange}
+        onCameraChange={handleCameraChange}
         onPointerLockChange={setPointerLocked}
         onScaleChange={setScaleIndicator}
+        onBoundsExpansion={handleBoundsExpansion}
       />
       <div className="map-scale-indicator" aria-label={`Map scale ${scaleIndicator.feet} feet`}>
         <span style={{ width: `${Math.max(35, Math.min(180, scaleIndicator.pixels))}px` }} />
@@ -1065,6 +1994,14 @@ export default function SettlementMapEditor({
         state={state}
         activeTool={activeTool}
         viewCommand={activeViewCommand}
+
+        bounds={bounds}
+        showHeightmapImport={showHeightmapImport}
+        setShowHeightmapImport={setShowHeightmapImport}
+        heightmapPlacement={heightmapPlacement}
+        setHeightmapPlacement={setHeightmapPlacement}
+        activeReferenceLayer={activeReferenceLayer}
+        commitHeightmapPlacement={commitHeightmapPlacement}
 
         // Brush Configurations
         terrainMode={terrainMode}
@@ -1088,6 +2025,13 @@ export default function SettlementMapEditor({
         assets={assets}
         assetKey={assetKey}
         setAssetKey={setAssetKey}
+        buildings={buildings}
+        setBuildings={setBuildings}
+        buildMode={buildMode}
+        setBuildMode={setBuildMode}
+        blueprintDraft={blueprintDraft}
+        setBlueprintDraft={setBlueprintDraft}
+
         roadMode={roadMode}
         setRoadMode={setRoadMode}
         roadDraft={roadDraft}
@@ -1095,11 +2039,15 @@ export default function SettlementMapEditor({
         finishRoad={finishRoad}
         roadWidth={roadWidth}
         setRoadWidth={setRoadWidth}
+
         wallMode={wallMode}
+        wallWidth={wallWidth}
         setWallMode={setWallMode}
+        setWallWidth={setWallWidth}
         wallDraft={wallDraft}
         setWallDraft={setWallDraft}
         finishWall={finishWall}
+
         regionMode={regionMode}
         setRegionMode={setRegionMode}
         regionDraft={regionDraft}
@@ -1112,6 +2060,67 @@ export default function SettlementMapEditor({
         finishWater={finishWater}
       />
       <NavigationControlPanel viewCommand={state.viewCommand} />
+      {cameraDebug && (
+        <Box
+          sx={{
+            position: 'absolute',
+            left: 12,
+            bottom: 56,
+            zIndex: 5,
+            minWidth: 220,
+            padding: '8px 10px',
+            background: '#0d1410e6',
+            border: '1px solid #ffffff2c',
+            borderRadius: '6px',
+            color: '#cbbd9d',
+            fontFamily: 'monospace',
+            fontSize: '11px',
+            lineHeight: 1.6,
+            pointerEvents: 'none',
+          }}
+        >
+          <div style={{ fontWeight: 700, letterSpacing: '.08em', marginBottom: 2 }}>CAMERA DEBUG</div>
+          <div>target: {cameraDebug.target?.map(v => v.toFixed(1)).join(', ')}</div>
+          <div>radius (zoom): {cameraDebug.radius?.toFixed(1)}</div>
+          <div>alpha/beta: {cameraDebug.alpha?.toFixed(2)} / {cameraDebug.beta?.toFixed(2)}</div>
+          <div>LOD: {cameraDebug.window ? `${cameraDebug.window.cellFeet} ft/cell` : '—'}</div>
+          {cameraDebug.bounds && (
+            <div>
+              bounds: x[{cameraDebug.bounds.minX?.toFixed(0)}, {cameraDebug.bounds.maxX?.toFixed(0)}]
+              {' '}y[{cameraDebug.bounds.minY?.toFixed(0)}, {cameraDebug.bounds.maxY?.toFixed(0)}]
+            </div>
+          )}
+          {cameraDebug.window && (
+            <>
+              <div>
+                height AGL: {cameraDebug.window.h?.toFixed(0)} ft
+                {' '}· view: {cameraDebug.window.dForward?.toFixed(0)} ft
+              </div>
+              <div>
+                tiles: {cameraDebug.window.tilesX}×{cameraDebug.window.tilesZ}
+                {' '}· cell: {cameraDebug.window.cellFeet} ft
+              </div>
+              <div>
+                buffer: {cameraDebug.window.cellsX}×{cameraDebug.window.cellsZ} cells
+                {' '}· span: {cameraDebug.window.spanFeet?.toFixed(0)} ft
+              </div>
+              {cameraDebug.fog && (
+                <>
+                  <div>
+                    fog: {cameraDebug.fog.mode}
+                    {' '}· {cameraDebug.fog.startFeet?.toFixed(0)}–{cameraDebug.fog.endFeet?.toFixed(0)} ft
+                  </div>
+                  <div>
+                    occlusion: center {Math.round((cameraDebug.fog.centerOcclusion || 0) * 100)}%
+                    {' '}· mid {Math.round((cameraDebug.fog.midpointOcclusion || 0) * 100)}%
+                    {' '}· edge {Math.round((cameraDebug.fog.edgeOcclusion || 0) * 100)}%
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </Box>
+      )}
     </>
   );
 }

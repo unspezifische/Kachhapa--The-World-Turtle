@@ -515,7 +515,7 @@
 .atlas-map {
   position: relative;
   flex: 1;
-  min-height: 300px;
+  min-height: 100%;
   overflow: hidden;
   border: 1px solid #59675f;
   border-radius: 8px;
@@ -2097,7 +2097,7 @@
 
 .road-mode-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px
 }
 
@@ -2131,6 +2131,56 @@
   gap: 4px;
   max-height: 245px;
   overflow: auto
+}
+
+/* Base container button style */
+.street-item {
+  display: flex;
+  flex-direction: column;
+  /* Stacks the name above the points */
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 12px;
+  background-color: #10231f;
+  /* Matches your project's dark theme palette */
+  color: #ffffff;
+  border: 1px solid #47423a;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Make the main street name significantly larger and bold */
+.street-item strong {
+  display: block;
+  font-size: 1.1rem;
+  /* Adjust this higher (e.g., 1.2rem) if you want it even bigger */
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 2px;
+  /* Adds space before the point counts */
+}
+
+/* Bump up the size of the point counts so it's readable */
+.street-item small {
+  font-size: 0.85rem;
+  /* Upgraded from the tiny default browser <small> font size */
+  color: #94a3b8;
+  /* Calming muted slate-gray text */
+  font-weight: 400;
+}
+
+/* Hover and active states using your layout wrapper paradigms */
+.street-item:hover {
+  background-color: #16322c;
+  border-color: #7ce6ff;
+  /* Cyan accent highlight on hover */
+}
+
+.street-list .active .street-item {
+  background-color: #1e3a34;
+  border-color: #ffe08a;
+  /* Yellow/Gold focus ring when selected */
 }
 
 .fortification-workflow {
@@ -3513,6 +3563,16 @@
   cursor: none
 }
 
+/* Heightmap placement uses the system pointer until the user starts dragging;
+   the sculpt ring is intentionally hidden because its radius is unrelated. */
+.settlement-map:has(.heightmap-import-panel) canvas {
+  cursor: grab
+}
+
+.settlement-map:has(.heightmap-import-panel) canvas[data-heightmap-dragging='true'] {
+  cursor: grabbing
+}
+
 .map-location-search {
   position: absolute;
   top: 18px;
@@ -3602,18 +3662,6 @@
    HORIZONTAL TOOLBAR & CONTAINER STRUCTURES
    ========================================================================== */
 
-.settlement-toolbar-horizontal {
-  position: absolute;
-  top: 18px;
-  left: 18px;
-  z-index: 500;
-  display: flex;
-  flex-direction: row;
-  gap: 8px;
-  padding: 6px 10px;
-  height: 38px;
-}
-
 .time-control-menu {
   position: absolute;
   top: 23px;
@@ -3651,10 +3699,15 @@
 .editor-menu.secondary-editor-menu,
 .editor-menu.sea-level-menu,
 .editor-menu.region-menu,
-.editor-menu.asset-menu,
 .editor-menu.terrain-menu,
 .editor-menu.fortification-menu,
 .editor-menu.water-menu {
+  top: 72px !important;
+  left: 22px !important;
+  width: 280px;
+}
+
+.editor-menu.asset-menu {
   top: 72px !important;
   left: 22px !important;
   width: 280px;

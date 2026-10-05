@@ -56,7 +56,7 @@ import markdown
 from urllib.parse import unquote
 
 from tables import db
-from tables import *    ## Get all table definitions
+from tables import *
 
 app = Flask(__name__)
 Compress(app)
@@ -5422,14 +5422,20 @@ def get_settlement_map_design(campaign_id):
     if not campaign:
         return jsonify({'message': 'Campaign not found'}), 404
     design = resolve_settlement(campaign_id)
-    if not design:
-        return jsonify({'message': 'Settlement not found'}), 404
-    migrated = persist_reference_layer_media(campaign_id, {'reference_layers': design.reference_layers or []})
-    if migrated['reference_layers'] != (design.reference_layers or []):
-        design.reference_layers = migrated['reference_layers']
-        design.updated_at = datetime.now(timezone.utc)
-        db.session.commit()
-    return jsonify({**design.to_map_dict(), 'asset_catalog': SETTLEMENT_BUILDING_ASSETS}), 200
+    
+    # Fetch Global Terrain Data
+    atlas = CampaignWorldAtlas.query.filter_by(campaign_id=campaign_id).first()
+    global_terrain = {
+        'seed': atlas.global_terrain_seed if atlas else None,
+        'heightmap_url': atlas.global_heightmap_asset.content_url if atlas and atlas.global_heightmap_asset else None
+    }
+
+    payload = {
+        **design.to_map_dict(), 
+        'asset_catalog': SETTLEMENT_BUILDING_ASSETS,
+        'global_terrain': global_terrain # Inject global terrain for DynamicTerrain
+    }
+    return jsonify(payload), 200
 
 
 @app.route('/api/settlement-map/<int:campaign_id>/reference-layers', methods=['POST'])
@@ -5583,69 +5589,103 @@ def save_settlement_map_design(campaign_id):
         return jsonify({'message': 'Campaign not found'}), 404
     if not user_can_edit_campaign(campaign):
         return jsonify({'message': 'Only the campaign DM or owner may edit this map'}), 403
-
     data = request.get_json(silent=True) or {}
-    
     design = resolve_settlement(campaign_id, data.get('settlement_id'))
     if not design:
         return jsonify({'message': 'Settlement not found'}), 404
 
-    # Intercept weather updates safely
     if 'weather' in data:
         if not isinstance(data['weather'], dict):
             return jsonify({'message': 'weather must be an object'}), 400
         design.weather = data['weather']
 
-    terrain_strokes = data.get('terrain_strokes')
-    roads = data.get('roads')
-    water_bodies = data.get('water_bodies', [])
-    buildings = data.get('buildings')
-    reference_layers = data.get('reference_layers', [])
-    environment = data.get('environment')
+    # Partial saves are first-class: during long sculpt sessions the client
+    # flushes terrain tiles in small chunks, and those payloads intentionally
+    # omit roads/buildings/etc. Only fields PRESENT in the request are
+    # validated and applied, so omitting a field can never wipe stored data.
+    provided = {}
+    for field in ('terrain_strokes', 'roads', 'water_bodies', 'buildings', 'reference_layers'):
+        if field not in data:
+            continue
+        value = data[field]
+        if not isinstance(value, list):
+            return jsonify({'message': f'{field} must be an array'}), 400
+        provided[field] = value
 
-    if not all(isinstance(value, list) for value in (terrain_strokes, roads, water_bodies, buildings, reference_layers)):
-        return jsonify({'message': 'terrain_strokes, roads, water_bodies, buildings, and reference_layers must be arrays'}), 400
-        
+    environment = data.get('environment')
     if environment is not None:
         if not isinstance(environment, dict):
             return jsonify({'message': 'environment must be an object'}), 400
-        
-        # Ensure regions exists safely as a list structure
         regions = environment.get('regions', [])
         if not isinstance(regions, list):
             return jsonify({'message': 'environment.regions must be an array'}), 400
-            
         if len(regions) > 250:
             return jsonify({'message': 'Map design exceeds the region limit'}), 413
 
-    if len(terrain_strokes) > 1500 or len(roads) > 500 or len(water_bodies) > 250 or len(buildings) > 5000 or len(reference_layers) > 100:
+    if (len(provided.get('terrain_strokes', [])) > 1500
+            or len(provided.get('roads', [])) > 500
+            or len(provided.get('water_bodies', [])) > 250
+            or len(provided.get('buildings', [])) > 5000
+            or len(provided.get('reference_layers', [])) > 100):
         return jsonify({'message': 'Map design exceeds the editor limits'}), 413
-        
+
     if len(json.dumps(data)) > 2_000_000:
         return jsonify({'message': 'Map design payload exceeds 2 MB'}), 413
 
-    for item_set in (terrain_strokes, roads, water_bodies, buildings, reference_layers):
+    for item_set in provided.values():
         for item in item_set:
             if isinstance(item, dict) and 'source' not in item:
                 item['source'] = 'Unknown'
 
-    design.terrain_strokes = terrain_strokes
-    design.roads = roads
-    design.water_bodies = water_bodies
-    design.buildings = buildings
-    design.reference_layers = reference_layers
-    
+    if 'terrain_strokes' in provided:
+        design.terrain_strokes = provided['terrain_strokes']
+    if 'roads' in provided:
+        design.roads = provided['roads']
+    if 'water_bodies' in provided:
+        design.water_bodies = provided['water_bodies']
+    if 'buildings' in provided:
+        design.buildings = provided['buildings']
+
+    merged_tile_count = 0
+    if 'reference_layers' in provided:
+        # Tiles merge by (tile_x, tile_z); omitted tiles are kept. All other
+        # layer types keep full-replace behavior (client always resends them).
+        incoming_tiles = {}
+        incoming_other = []
+        for layer in provided['reference_layers']:
+            if isinstance(layer, dict) and layer.get('layer_type') == 'heightmap_tile':
+                incoming_tiles[(layer.get('tile_x'), layer.get('tile_z'))] = layer
+            else:
+                incoming_other.append(layer)
+        existing_tiles = {}
+        for layer in (design.reference_layers or []):
+            if isinstance(layer, dict) and layer.get('layer_type') == 'heightmap_tile':
+                existing_tiles[(layer.get('tile_x'), layer.get('tile_z'))] = layer
+        existing_tiles.update(incoming_tiles)
+        merged_tile_count = len(incoming_tiles)
+        design.reference_layers = [*incoming_other, *existing_tiles.values()]
+
     if environment is not None:
         design.environment = environment
-        
+
     design.updated_at = datetime.now(timezone.utc)
-    
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         app.logger.error(f"Database commit error during map save: {str(e)}")
         return jsonify({'message': 'Internal database error saving schema attributes'}), 500
+
+    # Tile-only chunk flushes get a cheap ack: don't re-serialize the whole
+    # settlement back to the saver, and don't blast the full map to every
+    # connected client several times per sculpt stroke.
+    is_terrain_chunk = (
+        set(provided.keys()) == {'reference_layers'}
+        and any(isinstance(layer, dict) and layer.get('layer_type') == 'heightmap_tile'
+                for layer in provided['reference_layers'])
+    )
+    if is_terrain_chunk:
+        return jsonify({'status': 'ok', 'merged_tiles': merged_tile_count}), 200
 
     payload = {**design.to_map_dict(), 'asset_catalog': SETTLEMENT_BUILDING_ASSETS}
     socketio.emit('settlement_map_updated', payload, to=f'campaign:{campaign_id}')

@@ -1057,13 +1057,20 @@ class WorldAtlasLocation(db.Model):
 
     environment = db.Column(db.JSON, nullable=False, default=dict)
     
-    # 🌧️ Add persistent weather tracking footprint
+    # Persistent weather tracking footprint
     weather = db.Column(db.JSON, nullable=False, default=lambda: {
         "activeWeather": "clear",
         "cloudCover": 0.0,
         "fogDensity": 0.005,
         "fogColor": "#a9c9dc"
     }, server_default='{"activeWeather": "clear", "cloudCover": 0.0, "fogDensity": 0.005, "fogColor": "#a9c9dc"}')
+
+    # Camera Preset for seamless continuous-world transitions
+    camera_alpha = db.Column(db.Float, nullable=True)   # Horizontal orbit angle
+    camera_beta = db.Column(db.Float, nullable=True)    # Vertical tilt angle
+    camera_radius = db.Column(db.Float, nullable=True)  # Zoom distance
+    camera_target_x = db.Column(db.Float, nullable=True) # Global X target (World Coords)
+    camera_target_y = db.Column(db.Float, nullable=True) # Global Y target (World Coords)
 
     __table_args__ = (UniqueConstraint('campaign_id', 'map_key', name='uq_world_atlas_location_map_key'),)
 
@@ -1081,18 +1088,28 @@ class WorldAtlasLocation(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
+
     def to_map_dict(self):
-        return {
-            **self.atlas_dict(), 
-            'settlement_id': self.id, 
+        base_dict = self.atlas_dict()
+        base_dict.update({
+            'settlement_id': self.id,
             'coordinate_unit': 'feet',
-            'terrain_strokes': self.terrain_strokes or [], 
+
             'roads': self.roads or [],
-            'water_bodies': self.water_bodies or [], 
+            'water_bodies': self.water_bodies or [],
             'buildings': self.buildings or [],
-            'reference_layers': self.reference_layers or [],
-            'weather': self.weather # Expose to frontend
-        }
+            'reference_layers': self.reference_layers or [], # Keep for local overlays
+            'weather': self.weather,
+            
+            'camera_preset': {
+                'alpha': self.camera_alpha,
+                'beta': self.camera_beta,
+                'radius': self.camera_radius,
+                'target_x': self.camera_target_x,
+                'target_y': self.camera_target_y,
+            }
+        })
+        return base_dict
 
 
 
@@ -1130,6 +1147,12 @@ class CampaignWorldAtlas(db.Model):
     source_name = db.Column(db.String(255))
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     image_asset = db.relationship('MapMediaAsset', foreign_keys=[image_asset_id])
+
+    global_terrain_seed = db.Column(db.Integer, nullable=True)  # Stores a seed value for procedural generation (terrain, foliage, etc.)
+
+    # Global Heightmap Asset ( sculpted heightmap for the entire world)
+    global_heightmap_asset_id = db.Column(db.Integer, db.ForeignKey('map_media_asset.id'), nullable=True)
+    global_heightmap_asset = db.relationship('MapMediaAsset', foreign_keys=[global_heightmap_asset_id])
 
     def to_dict(self):
         return {

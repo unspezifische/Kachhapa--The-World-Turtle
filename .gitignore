@@ -1,6 +1,7 @@
 .DS_Store
 MtG-webapp/
 
+Flask/migrations/
 Flask/static/
 Flask/buildDB.py
 Flask/campaign.py
@@ -26,6 +27,7 @@ TTRPG
 TTRPG.pub
 update_sequence.sql
 5etools-src/
+5etools-img/
 
 flask_monitoringdashboard.db
 __pycache__/

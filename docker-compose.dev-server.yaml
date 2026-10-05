@@ -1,0 +1,33 @@
+# Overlay for low-level frontend debugging: runs CRA's dev server (npm start)
+# instead of the nginx + minified build from docker-compose.yaml.
+# postgres, rabbitmq, and flask are reused unchanged from the base file.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.dev-server.yaml up --build webapp
+#
+# Requires Docker Compose v2.24+ for the !override merge tag. If your
+# version is older, drop the !override tags below — ports/volumes will
+# just be appended to the base file's values instead of replacing them,
+# which is harmless here (the extra "80:80" mapping and socket mount are
+# simply unused in this image).
+
+services:
+  flask:
+    # Override the production Unix socket binding with a TCP port 
+    # so the CRA dev server proxy can reach it over the Docker network.
+    command: ["/bin/sh", "-c", "python bootstrap_database.py && exec gunicorn -w 1 --bind 0.0.0.0:5000 --reload -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker app:app"]
+
+  webapp:
+    build:
+      dockerfile: webapp/Dockerfile.dev
+    ports: !override
+      - "3000:3000"
+    volumes: !override
+      - ./webapp:/app
+      - /app/node_modules # anonymous volume: keeps the container's own
+                          # node_modules from being shadowed by the bind mount
+    environment:
+      # nginx isn't in the picture here, so CRA needs to know where Flask
+      # is directly. Also add "proxy": "http://flask:5000" to
+      # webapp/package.json so unmatched requests get forwarded there.
+      REACT_APP_API_URL: http://flask:5000

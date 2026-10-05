@@ -107,7 +107,6 @@ export default function SettlementPlayerView({ headers, socket }) {
         waterBodies={map.water_bodies || []}
         setWaterBodies={ignoreEdit}
         mapEnvironment={map.environment || {}}
-        dusk={hour >= 18 || hour < 6}
         lamps={route?.lamps || []}
         partyPosition={partyPosition}
         destination={null}

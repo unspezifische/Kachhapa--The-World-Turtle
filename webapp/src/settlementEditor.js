@@ -86,6 +86,29 @@ export function heightmapHeightAt(heightmap, x, y) {
   const height = Math.max(1, Number(heightmap.height_feet) || 1);
   const originX = Number.isFinite(heightmap.origin_x) ? heightmap.origin_x : 0;
   const originY = Number.isFinite(heightmap.origin_y) ? heightmap.origin_y : 0;
+
+  // Terrain tiles are not image heightmaps. Their origin is the south-west
+  // corner, rows increase with world Y, and every value is already measured
+  // in feet. Applying the legacy image-heightmap rules here made the
+  // north/east half of a tile read as out-of-bounds after a stroke was baked.
+  const hasTileCoordinates = heightmap.tile_x != null && heightmap.tile_z != null
+    && Number.isFinite(Number(heightmap.tile_x)) && Number.isFinite(Number(heightmap.tile_z));
+  const isTerrainTile = heightmap.layer_type === 'heightmap_tile' || hasTileCoordinates;
+  if (isTerrainTile) {
+    const u = (x - originX) / width;
+    const v = (y - originY) / height;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return 0;
+
+    const gridWidth = Number(heightmap.grid_width), gridHeight = Number(heightmap.grid_height);
+    const gx = u * (gridWidth - 1), gy = v * (gridHeight - 1);
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const x1 = Math.min(gridWidth - 1, x0 + 1), y1 = Math.min(gridHeight - 1, y0 + 1);
+    const sample = (column, row) => Number(heightmap.values[row * gridWidth + column]) || 0;
+    const lower = sample(x0, y0) + (sample(x1, y0) - sample(x0, y0)) * (gx - x0);
+    const upper = sample(x0, y1) + (sample(x1, y1) - sample(x0, y1)) * (gx - x0);
+    return lower + (upper - lower) * (gy - y0);
+  }
+
   const u = (x - originX + width / 2) / width;
   const v = 1 - (y - originY + height / 2) / height;
   if (u < 0 || u > 1 || v < 0 || v > 1) return 0;
@@ -117,27 +140,43 @@ export function terrainHeightAt(strokes, x, y, heightmap = null) {
 }
 
 export function createTerrainHeightSampler(strokes, heightmap = null, cellSizeFeet = 160) {
-  const cellSize=Math.max(16,Number(cellSizeFeet)||160),buckets=new Map();
-  (strokes||[]).forEach((stroke)=>{
-    const radius=Math.max(1,Number(stroke.radius)||1),x=Number(stroke.x),y=Number(stroke.y);
-    const minColumn=Math.floor((x-radius)/cellSize),maxColumn=Math.floor((x+radius)/cellSize);
-    const minRow=Math.floor((y-radius)/cellSize),maxRow=Math.floor((y+radius)/cellSize);
-    for(let row=minRow;row<=maxRow;row+=1){for(let column=minColumn;column<=maxColumn;column+=1){
-      const key=`${column}:${row}`,bucket=buckets.get(key)||[];bucket.push(stroke);buckets.set(key,bucket);
-    }}
+  return createTerrainStrokeSampler(strokes, (x, y) => heightmapHeightAt(heightmap, x, y), cellSizeFeet);
+}
+
+/** Spatially indexes strokes once and composes them over an arbitrary base. */
+export function createTerrainStrokeSampler(strokes, getBaseHeight, cellSizeFeet = 160) {
+  const cellSize=Math.max(16,Number(cellSizeFeet)||160),rows=new Map();
+  (strokes||[]).forEach((source)=>{
+    const stroke={
+      ...source,
+      x:Number(source.x),y:Number(source.y),radius:Math.max(1,Number(source.radius)||1),
+      delta:Number(source.delta||0),target_elevation_feet:Number(source.target_elevation_feet),
+      amount:Math.max(0,Math.min(1,Number(source.amount)||0)),
+    };
+    const minColumn=Math.floor((stroke.x-stroke.radius)/cellSize),maxColumn=Math.floor((stroke.x+stroke.radius)/cellSize);
+    const minRow=Math.floor((stroke.y-stroke.radius)/cellSize),maxRow=Math.floor((stroke.y+stroke.radius)/cellSize);
+    for(let row=minRow;row<=maxRow;row+=1){
+      let columns=rows.get(row);
+      if(!columns){columns=new Map();rows.set(row,columns);}
+      for(let column=minColumn;column<=maxColumn;column+=1){
+        let bucket=columns.get(column);
+        if(!bucket){bucket=[];columns.set(column,bucket);}
+        bucket.push(stroke);
+      }
+    }
   });
   return (x,y)=>{
-    const candidates=buckets.get(`${Math.floor(x/cellSize)}:${Math.floor(y/cellSize)}`)||[];
+    const candidates=rows.get(Math.floor(y/cellSize))?.get(Math.floor(x/cellSize))||[];
     return candidates.reduce((height,stroke)=>{
-      const radius=Math.max(1,Number(stroke.radius)||1),distance=Math.hypot(x-Number(stroke.x),y-Number(stroke.y));
-      if(distance>=radius)return height;
-      const falloff=(1-(distance/radius)**2)**2;
+      const distance=Math.hypot(x-stroke.x,y-stroke.y);
+      if(distance>=stroke.radius)return height;
+      const falloff=(1-(distance/stroke.radius)**2)**2;
       if(stroke.mode==='flatten'||stroke.mode==='smooth'){
-        const target=Number(stroke.target_elevation_feet),amount=Math.max(0,Math.min(1,Number(stroke.amount)||0))*falloff;
-        return Number.isFinite(target)?height+(target-height)*amount:height;
+        const amount=stroke.amount*falloff;
+        return Number.isFinite(stroke.target_elevation_feet)?height+(stroke.target_elevation_feet-height)*amount:height;
       }
-      return height+Number(stroke.delta||0)*falloff;
-    },heightmapHeightAt(heightmap,x,y));
+      return height+stroke.delta*falloff;
+    },getBaseHeight(x,y));
   };
 }
 
@@ -327,6 +366,9 @@ export function snapBuildingPlacement(candidate, buildings, roads, snapDistance 
   return result;
 }
 
+// =====================================================
+// Functions for placing and editing blueprint buildings
+// =====================================================
 
 export function createBuilding(asset, point, buildings, roads) {
   const candidate = {
@@ -345,11 +387,117 @@ export function createBuilding(asset, point, buildings, roads) {
   return snapBuildingPlacement(candidate, buildings, roads);
 }
 
+export function generateDefaultFloorplan(asset, point) {
+  const w = asset.width_feet || 40;
+  const d = asset.depth_feet || 30;
+  const h = asset.height_feet || 12;
+
+  // Create a simple rectangular footprint centered on the placement point
+  const corners = [
+    { x: point.x - w / 2, y: point.y - d / 2 },
+    { x: point.x + w / 2, y: point.y - d / 2 },
+    { x: point.x + w / 2, y: point.y + d / 2 },
+    { x: point.x - w / 2, y: point.y + d / 2 },
+    { x: point.x - w / 2, y: point.y - d / 2 } // Close the loop
+  ];
+
+  // Wall indices: 0=left(-X), 1=bottom(-Y), 2=right(+X), 3=top(+Y)
+  // Place a door on the bottom wall (index 1), centered
+  const doors = [
+    { wall_index: 1, distance_from_start: w / 2, width: 4, height: 7 }
+  ];
+
+  // Place windows on the left and right walls
+  const windows = [
+    { wall_index: 0, distance_from_start: d / 2, width: 3, height: 4, height_from_floor: 3 },
+    { wall_index: 2, distance_from_start: d / 2, width: 3, height: 4, height_from_floor: 3 }
+  ];
+
+  return {
+    floor_height: h,
+    corners,
+    doors,
+    windows,
+    stairs: [],
+    hatches: []
+  };
+}
+
+export function createBlueprintBuilding(point) {
+  return {
+    id: `building-${Date.now()}`,
+    name: 'Custom Blueprint Building',
+    x: point.x,
+    y: point.y,
+    rotation: 0,
+    is_blueprint: true,
+    levels: [
+      {
+        floor_height: 10,
+        corners: [{ x: point.x, y: point.y }],
+        doors: [],
+        windows: [],
+        stairs: [],
+        hatches: []
+      }
+    ]
+  };
+}
+
+export function addBlueprintCorner(building, point) {
+  const next = { ...building };
+  const currentLevel = next.levels[next.levels.length - 1];
+  currentLevel.corners.push({ x: point.x, y: point.y });
+  return next;
+}
+
+export function closeBlueprintFootprint(building) {
+  const next = { ...building };
+  const currentLevel = next.levels[next.levels.length - 1];
+  if (currentLevel.corners.length > 2) {
+    currentLevel.corners.push({ ...currentLevel.corners[0] }); // Close polygon loop
+  }
+  return next;
+}
+
+export function addBlueprintLevel(building) {
+  const next = { ...building };
+  const prevLevel = next.levels[next.levels.length - 1];
+  next.levels.push({
+    floor_height: prevLevel.floor_height,
+    corners: prevLevel.corners.map(c => ({ ...c })), // Copy footprint by default
+    doors: [], windows: [], stairs: [], hatches: []
+  });
+  return next;
+}
+
+export function addBlueprintStairs(building, levelIndex, stairsData) {
+  const next = { ...building };
+  next.levels[levelIndex].stairs.push({
+    start_x: stairsData.x,
+    start_y: stairsData.y,
+    direction: stairsData.direction || 0,
+    width: stairsData.width || 3,
+    turns: stairsData.turns || 0,
+    going_down: stairsData.going_down || false,
+    ...stairsData
+  });
+  return next;
+}
+
+export function addBlueprintHatch(building, levelIndex, hatchData) {
+  const next = { ...building };
+  next.levels[levelIndex].hatches.push({
+    width: 3, depth: 3, has_ladder: true, ...hatchData
+  });
+  return next;
+}
+
 /**
  * Resizes a building by moving one corner while keeping the opposite corner anchored.
  */
 export function resizeBuildingFromCorner(building, newCornerPosition, cornerOffset, roads = []) {
-  const { x, y, width_feet, depth_feet, rotation } = building;
+  const { x, y, width_feet, depth_feet } = building;
 
   // Calculate the original corner positions
   const halfWidth = width_feet / 2;
@@ -411,112 +559,4 @@ export function resizeBuildingFromCorner(building, newCornerPosition, cornerOffs
     width_feet: newWidth,
     depth_feet: newDepth
   };
-}
-
-/**
- * Creates a default 256x256 heightmap with flat terrain
- */
-export function createDefaultHeightmap() {
-  const gridSize = 256;
-  const grid_width = 256;
-  const grid_height = 256;
-  const values = new Float32Array(grid_width * grid_height);
-
-  // Initialize to flat terrain (all zeros)
-  for (let i = 0; i < values.length; i++) {
-    values[i] = 0;
-  }
-
-  return {
-    id: `heightmap-${Date.now()}`,
-    layer_type: 'heightmap',
-    name: 'Default Heightmap',
-    grid_width: grid_width,
-    grid_height: grid_height,
-    values,
-    width_feet: 1800,
-    height_feet: 1800,
-    origin_x: 0,
-    origin_y: 0,
-    min_elevation_feet: 0,
-    max_elevation_feet: 250,
-    strength: 1,
-    strength_pivot_feet: 0
-  };
-}
-
-/**
- * Bakes a stroke into the heightmap grid using quadratic falloff
- */
-export function bakeStrokeIntoHeightmap(heightmap, stroke) {
-  if (!heightmap || !heightmap.values || !stroke) return;
-
-  const { x, y, radius, strength, mode, target_elevation_feet } = stroke;
-  const grid_width = heightmap.grid_width;
-  const grid_height = heightmap.grid_height;
-  const values = heightmap.values;
-
-  const range = (Number(heightmap.max_elevation_feet) || 250) - (Number(heightmap.min_elevation_feet) || 0);
-  const minimum = Number(heightmap.min_elevation_feet) || 0;
-
-  const width_feet = Number(heightmap.width_feet) || 1800;
-  const height_feet = Number(heightmap.height_feet) || 1800;
-  const origin_x = Number.isFinite(heightmap.origin_x) ? heightmap.origin_x : 0;
-  const origin_y = Number.isFinite(heightmap.origin_y) ? heightmap.origin_y : 0;
-
-  const u = (x - origin_x + width_feet / 2) / width_feet;
-  const v = 1 - (y - origin_y + height_feet / 2) / height_feet;
-
-  // DEBUG: everything we need to know before the bounds check
-  console.log('[bake] grid_width/height:', grid_width, grid_height,
-    'width/height_feet:', width_feet, height_feet,
-    'origin:', origin_x, origin_y,
-    'u/v:', u, v,
-    'strength:', strength, 'mode:', mode);
-
-  if (u < 0 || u > 1 || v < 0 || v > 1) {
-    console.log('[bake] OUT OF BOUNDS — stroke discarded');
-    return;
-  }
-
-  const gx = u * (grid_width - 1);
-  const gy = v * (grid_height - 1);
-
-  const radius_cells = Math.max(1, Math.floor(radius / (width_feet / grid_width)));
-  const min_x = Math.max(0, Math.floor(gx - radius_cells));
-  const max_x = Math.min(grid_width - 1, Math.ceil(gx + radius_cells));
-  const min_y = Math.max(0, Math.floor(gy - radius_cells));
-  const max_y = Math.min(grid_height - 1, Math.ceil(gy + radius_cells));
-
-  console.log('[bake] gx/gy:', gx, gy, 'cell range:', min_x, max_x, min_y, max_y);
-
-  const centerIndex = Math.round(gy) * grid_width + Math.round(gx);
-  const centerBefore = values[centerIndex];
-
-  for (let grid_y = min_y; grid_y <= max_y; grid_y++) {
-    for (let grid_x = min_x; grid_x <= max_x; grid_x++) {
-      const cell_x = (grid_x / (grid_width - 1)) * width_feet + origin_x - width_feet / 2;
-      const cell_y = (1 - grid_y / (grid_height - 1)) * height_feet + origin_y - height_feet / 2;
-      const distance = Math.hypot(cell_x - x, cell_y - y);
-      if (distance >= radius) continue;
-
-      const normalized = 1 - (distance / radius) ** 2;
-      const falloff = Math.max(0, normalized * normalized);
-      const cellIndex = grid_y * grid_width + grid_x;
-
-      if (mode === 'flatten' || mode === 'smooth') {
-        const target = Number(target_elevation_feet);
-        const amount = Math.max(0, Math.min(1, Number(strength) || 0)) * falloff;
-        if (Number.isFinite(target) && range > 0) {
-          const targetNormalized = ((target - minimum) / range) * 255;
-          values[cellIndex] = values[cellIndex] + (targetNormalized - values[cellIndex]) * amount;
-        }
-      } else {
-        const delta = Number(strength || 0) * falloff;
-        if (range > 0) values[cellIndex] += (delta / range) * 255;
-      }
-    }
-  }
-
-  console.log('[bake] center cell before/after:', centerBefore, values[centerIndex]);
 }

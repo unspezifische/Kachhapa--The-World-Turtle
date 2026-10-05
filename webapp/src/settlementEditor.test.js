@@ -1,5 +1,5 @@
 import { calibrateReferenceLayer, createTerrainHeightSampler, firstPersonLookAngles, heightmapHeightAt, insertClosedBoundaryPoint, insertRoadControlPoint, nearestRoadPoint, pitchPositionAroundTarget, referenceLayerUv, resizeBuildingFromCorner, roadWidthAt, rotatePositionAroundVerticalAxis, snapBuildingPlacement, snapRegionBoundaryPoint, snapRoadNetworkPoint, snapRoadSplineTranslation, terrainHeightAt, terrainSurfaceWeights, waterDepthAtSeaLevel, waterFlowSpeed } from './settlementEditor';
-import { babylonToWorld, fortificationVertexData, roadVertexData, terrainVertexData, worldToBabylon } from './settlementBabylon';
+import { babylonToWorld, buildWorldMapData, fortificationVertexData, roadVertexData, worldToBabylon } from './settlementBabylon';
 
 test('camera rotation preserves radius and opposite turns restore the position', () => {
   const target={x:3,y:0,z:-2},position={x:13,y:15,z:8};
@@ -50,14 +50,19 @@ test('Babylon coordinate transforms preserve world feet and elevation', () => {
   expect(babylonToWorld(point)).toEqual({ x: 125, y: -75, elevation: 40 });
 });
 
-test('Babylon terrain and road geometry produce indexed vertex buffers', () => {
-  const bounds = { minX: -100, maxX: 100, minY: -100, maxY: 100, width: 200, height: 200 };
-  const terrain = terrainVertexData([], bounds, null);
+test('Babylon road geometry produces an indexed vertex buffer', () => {
   const road = roadVertexData({ width_feet: 20, points: [{ x: -50, y: 0 }, { x: 50, y: 0 }] }, [], null);
-  expect(terrain.positions.length).toBeGreaterThan(0);
-  expect(terrain.indices.length).toBeGreaterThan(0);
   expect(road.positions.length).toBeGreaterThan(0);
   expect(road.indices.length).toBeGreaterThan(0);
+});
+
+test('DynamicTerrain world buffers sample feet and store Babylon scene units', () => {
+  const result = buildWorldMapData((x, y) => x + y, {
+    minX: 0, maxX: 100, minY: 0, maxY: 100,
+  }, 1);
+  expect(result.mapSubX).toBe(3);
+  expect(result.mapSubZ).toBe(3);
+  expect(Array.from(result.mapData.slice(0, 6))).toEqual([0, 0, 0, 1, 1, 0]);
 });
 
 test('Babylon fortification geometry produces an elevated indexed wall buffer', () => {

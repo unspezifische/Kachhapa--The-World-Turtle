@@ -1,0 +1,31 @@
+# Dockerfile.dev - development image running CRA's dev server (npm start)
+# Kept separate from the production Dockerfile (which builds + serves via Nginx)
+# so you can still build a real production image when you need one.
+FROM node:18-alpine
+
+WORKDIR /app
+
+ENV NODE_OPTIONS="--max-old-space-size=6144"
+ENV GENERATE_SOURCEMAP=false
+
+# Bind mounts on macOS/Windows Docker Desktop don't reliably emit fs-change
+# events, so CRA's watcher needs polling to pick up edits for hot reload.
+ENV CHOKIDAR_USEPOLLING=true
+ENV WATCHPACK_POLLING=true
+
+ENV HOST=0.0.0.0
+ENV PORT=3000
+# Uncomment if the browser shows "Invalid Host Header":
+# ENV DANGEROUSLY_DISABLE_HOST_CHECK=true
+
+COPY webapp/package*.json ./
+RUN npm install -g npm@10.8.3
+RUN npm install
+
+# Source is bind-mounted by docker-compose for live editing; this COPY is
+# only a fallback so the image is runnable before that mount is attached.
+COPY webapp/. ./
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
