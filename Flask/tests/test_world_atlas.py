@@ -109,6 +109,22 @@ class WorldAtlasTest(unittest.TestCase):
         self.assertEqual(session.deleted, [])
         self.assertEqual(session.commits, 0)
 
+    def test_terrain_tiles_are_downsampled_for_overview_lod(self):
+        tile = {
+            'layer_type': 'heightmap_tile',
+            'grid_width': 5,
+            'grid_height': 5,
+            'width_feet': 4,
+            'height_feet': 4,
+            'values': list(range(25)),
+        }
+        sampled = app_module.terrain_tile_for_lod(tile, 2)
+
+        self.assertEqual(sampled['grid_width'], 3)
+        self.assertEqual(sampled['grid_height'], 3)
+        self.assertEqual(sampled['values'], [0, 2, 4, 10, 12, 14, 20, 22, 24])
+        self.assertEqual(tile['grid_width'], 5)
+
 
 if __name__ == '__main__':
     unittest.main()

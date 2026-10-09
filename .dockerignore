@@ -6,3 +6,4 @@ venv
 webapp/node_modules
 webapp/build
 database_backup.dump
+5etools-src/

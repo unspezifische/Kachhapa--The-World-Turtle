@@ -19,6 +19,8 @@ import {
   TextField,
   ToggleButtonGroup,
   ToggleButton,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 
 
@@ -61,13 +63,19 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import BabylonSettlementHost from './BabylonSettlementHost';
+import { radiusToSlider, sliderToRadius, radiusStops } from './brushRadius';
 
 import {
   terrainHeightAt,
+  insertRoadControlPoint,
+  insertOpenSplineControlPoint,
+  deleteSplineControlPoint,
 } from './settlementEditor';
 
 import {
   bakeStrokesIntoTiles,
+  createWorldSampler,
+  ensureTile,
   tileKey,
   tileIndexAt,
   TILE_FEET,
@@ -82,6 +90,17 @@ import './SettlementToolPanels.css';
 const TERRAIN_SIZE_FEET = 1800;
 const DEFAULT_FIRST_PERSON_SETTINGS = { sensitivity: 50, invertX: false, invertY: false, fov: 75, walkSpeed: 8, eyeHeight: 6 };
 const DEFAULT_BRUSH_STRENGTHS = { raise: 8, lower: 8, flatten: 35, smooth: 35 };
+
+const ROAD_CLASS_DEFAULTS = {
+  trail: { label: 'Trail', width: 8, surface: 'dirt' },
+  alley: { label: 'Alley', width: 12, surface: 'dirt' },
+  lane: { label: 'Lane', width: 18, surface: 'dirt' },
+  street: { label: 'Street', width: 30, surface: 'cobblestone' },
+  avenue: { label: 'Avenue', width: 48, surface: 'cobblestone' },
+  highway: { label: 'Highway', width: 36, surface: 'dirt' },
+};
+const ROAD_SURFACE_OPTIONS = ['dirt', 'cobblestone', 'brick', 'paved', 'stone', 'wood'];
+
 
 function editorBounds(referenceLayers, tileStore) {
   const authoredTiles = tileStore ? [...tileStore.values()].filter(t => !t.generated || t.dirty) : [];
@@ -148,6 +167,15 @@ function ToolWorkflow({
   finishRoad,
   roadWidth,
   setRoadWidth,
+  roadClass,
+  setRoadClass,
+  roadSurface,
+  setRoadSurface,
+  roadSnapEnabled,
+  setRoadSnapEnabled,
+  roadSnapToleranceFeet,
+  canUndoSplineEdit,
+  undoSplineEdit,
 
   wallWidth,
   setWallWidth,
@@ -186,6 +214,13 @@ function ToolWorkflow({
 
   const [roadSearch, setRoadSearch] = useState('');
   const [wallSearch, setWallSearch] = useState('');
+  const [radiusInput, setRadiusInput] = useState(String(brushRadius));
+  useEffect(() => setRadiusInput(String(brushRadius)), [brushRadius]);
+  const commitRadiusInput = () => {
+    const radius = Math.max(30, Math.min(2400, Number(radiusInput) || 30));
+    setBrushRadius(radius);
+    setRadiusInput(String(radius));
+  };
 
   // Sync inputs dynamically if time advances smoothly via active server simulation clocks
   useEffect(() => {
@@ -305,6 +340,72 @@ function ToolWorkflow({
           <ToggleButton value="draw-new"><AddIcon fontSize="small" /> Draw</ToggleButton>
         </ToggleButtonGroup>
 
+        {['refine', 'move-spline'].includes(roadMode) && (
+          <Box sx={{ mb: 1.5, px: 0.5 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={roadSnapEnabled}
+                  onChange={event => setRoadSnapEnabled(event.target.checked)}
+                  sx={{ color: '#718079', '&.Mui-checked': { color: '#bd9149' } }}
+                />
+              }
+              label={
+                <Typography variant="caption" sx={{ color: '#d5ddd7', fontSize: '11px' }}>
+                  Snap to road network
+                </Typography>
+              }
+              sx={{ m: 0 }}
+            />
+            <Typography variant="caption" sx={{ display: 'block', color: '#718079', fontSize: '10px', ml: 4 }}>
+              Snap radius: {Math.round(roadSnapToleranceFeet)} ft · automatically scales with zoom
+            </Typography>
+          </Box>
+        )}
+
+        {roadMode === 'refine' && selectedRoad && (
+          <Typography variant="caption" sx={{ display: 'block', color: '#94a3b8', lineHeight: 1.4, mb: 1.5 }}>
+            Drag a control point to reshape the road. Right-click the road or a control point for add/delete options.
+          </Typography>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
+          <Button variant="outlined" size="small" startIcon={<UndoIcon />} disabled={!canUndoSplineEdit} onClick={undoSplineEdit} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+            Undo Edit
+          </Button>
+          <Button variant="outlined" size="small" disabled={state.selectedRoadPointIndex == null} onClick={() => state.setSelectedRoadPointIndex(null)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+            Clear Point
+          </Button>
+        </Box>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
+          <Box>
+            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>New Road Class</Typography>
+            <Select
+              size="small"
+              fullWidth
+              value={roadClass}
+              onChange={e => {
+                const nextClass = e.target.value;
+                const defaults = ROAD_CLASS_DEFAULTS[nextClass] || ROAD_CLASS_DEFAULTS.street;
+                setRoadClass(nextClass);
+                setRoadWidth(defaults.width);
+                setRoadSurface(defaults.surface);
+              }}
+              sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
+            >
+              {Object.entries(ROAD_CLASS_DEFAULTS).map(([key, config]) => <MenuItem key={key} value={key}>{config.label}</MenuItem>)}
+            </Select>
+          </Box>
+          <Box>
+            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>New Surface</Typography>
+            <Select size="small" fullWidth value={roadSurface} onChange={e => setRoadSurface(e.target.value)} sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}>
+              {ROAD_SURFACE_OPTIONS.map(surface => <MenuItem key={surface} value={surface}>{surface.charAt(0).toUpperCase() + surface.slice(1)}</MenuItem>)}
+            </Select>
+          </Box>
+        </Box>
+
         {/* New Width Slider Control Input packaging */}
         <Box sx={{ mb: 2 }}>
           <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
@@ -347,7 +448,7 @@ function ToolWorkflow({
             <Button
               key={r.id}
               fullWidth
-              onClick={() => { state.setSelectedRoadId(r.id); state.setSelectedRoadPointIndex(null); }}
+              onClick={() => { state.setSelectedRoadId(r.id); state.setSelectedRoadPointIndex(null); state.setSelected(r); }}
               sx={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -370,75 +471,150 @@ function ToolWorkflow({
         </Box>
 
         {/* Contextual Selected Road Metadata Sub-Panel Form */}
-        {selectedRoad && (
-          <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            <TextField
-              label="Rename Road"
-              size="small"
-              fullWidth
-              value={selectedRoad.name || ''}
-              onChange={e => state.setRoads(v => v.map(old => old.id === selectedRoad.id ? { ...old, name: e.target.value } : old))}
-            />
-
-            {/* Node Point Spline Matrix Selection Array layout */}
-            <Box className="road-point-picker" sx={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxHeight: '80px', overflowY: 'auto' }}>
-              {selectedRoad.points.map((p, idx) => (
-                <Button
-                  key={idx}
+        {
+          selectedRoad && (
+            <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                <Select
                   size="small"
-                  onClick={() => state.setSelectedRoadPointIndex(idx)}
-                  sx={{
-                    minWidth: '28px',
-                    height: '28px',
-                    padding: 0,
-                    backgroundColor: state.selectedRoadPointIndex === idx ? '#ffe08a' : '#23352d',
-                    color: state.selectedRoadPointIndex === idx ? '#17211c' : '#d5ddd7',
-                    '&:hover': { backgroundColor: '#a87e3e' }
-                  }}
+                  value={selectedRoad.road_class || 'street'}
+                  onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, road_class: e.target.value } : road))}
+                  sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
                 >
-                  {idx + 1}
-                </Button>
-              ))}
-            </Box>
+                  {Object.entries(ROAD_CLASS_DEFAULTS).map(([key, config]) => <MenuItem key={key} value={key}>{config.label}</MenuItem>)}
+                </Select>
+                <Select
+                  size="small"
+                  value={selectedRoad.surface_type || 'dirt'}
+                  onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, surface_type: e.target.value } : road))}
+                  sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
+                >
+                  {ROAD_SURFACE_OPTIONS.map(surface => <MenuItem key={surface} value={surface}>{surface.charAt(0).toUpperCase() + surface.slice(1)}</MenuItem>)}
+                </Select>
+              </Box>
 
-            {/* Node Coordinates editor Row inputs */}
-            {selectedPoint && (
+              <TextField
+                label="Rename Road"
+                size="small"
+                fullWidth
+                value={selectedRoad.name || ''}
+                onChange={e => state.setRoads(v => v.map(old => old.id === selectedRoad.id ? { ...old, name: e.target.value } : old))}
+              />
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
                 <TextField
-                  label="Coordinate X"
+                  label="Base Width (ft)"
                   type="number"
                   size="small"
-                  value={Math.round(selectedPoint.x)}
-                  onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
-                    ...r,
-                    points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
-                  } : r))}
+                  value={selectedRoad.width_feet ?? 30}
+                  inputProps={{ min: 4, max: 200, step: 1 }}
+                  onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, width_feet: Math.max(4, Number(e.target.value) || 4) } : road))}
                 />
-                <TextField
-                  label="Coordinate Y"
-                  type="number"
+                <Button
                   size="small"
-                  value={Math.round(selectedPoint.y)}
-                  onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
-                    ...r,
-                    points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
-                  } : r))}
-                />
+                  variant="outlined"
+                  onClick={() => {
+                    const defaults = ROAD_CLASS_DEFAULTS[selectedRoad.road_class || 'street'] || ROAD_CLASS_DEFAULTS.street;
+                    state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, width_feet: defaults.width, surface_type: defaults.surface } : road));
+                  }}
+                  sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
+                >
+                  Apply Class Defaults
+                </Button>
               </Box>
-            )}
 
-            <Button
-              variant="contained"
-              color="error"
-              fullWidth
-              startIcon={<DeleteIcon />}
-              onClick={() => { state.setRoads(v => v.filter(old => old.id !== selectedRoad.id)); state.setSelectedRoadId(null); }}
-            >
-              Delete Road Segment
-            </Button>
-          </Box>
-        )}
-      </aside>
+              {/* Node Point Spline Matrix Selection Array layout */}
+              <Box className="road-point-picker" sx={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxHeight: '80px', overflowY: 'auto' }}>
+                {selectedRoad.points.map((p, idx) => (
+                  <Button
+                    key={idx}
+                    size="small"
+                    onClick={() => state.setSelectedRoadPointIndex(idx)}
+                    sx={{
+                      minWidth: '28px',
+                      height: '28px',
+                      padding: 0,
+                      backgroundColor: state.selectedRoadPointIndex === idx ? '#ffe08a' : '#23352d',
+                      color: state.selectedRoadPointIndex === idx ? '#17211c' : '#d5ddd7',
+                      '&:hover': { backgroundColor: '#a87e3e' }
+                    }}
+                  >
+                    {idx + 1}
+                  </Button>
+                ))}
+              </Box>
+
+              {/* Node Coordinates editor Row inputs */}
+              {selectedPoint && (
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                  <TextField
+                    label="Coordinate X"
+                    type="number"
+                    size="small"
+                    value={Math.round(selectedPoint.x)}
+                    onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
+                      ...r,
+                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
+                    } : r))}
+                  />
+                  <TextField
+                    label="Coordinate Y"
+                    type="number"
+                    size="small"
+                    value={Math.round(selectedPoint.y)}
+                    onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
+                      ...r,
+                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
+                    } : r))}
+                  />
+                </Box>
+              )}
+
+              {selectedPoint && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <TextField
+                    label="Point Width (ft)"
+                    type="number"
+                    size="small"
+                    value={selectedPoint.width_feet ?? selectedRoad.width_feet ?? roadWidth}
+                    inputProps={{ min: 4, max: 200, step: 1 }}
+                    onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? {
+                      ...road,
+                      points: road.points.map((point, pointIndex) => pointIndex === state.selectedRoadPointIndex ? { ...point, width_feet: Math.max(4, Number(e.target.value) || 4) } : point)
+                    } : road))}
+                  />
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                    <Button size="small" variant="outlined" onClick={() => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? {
+                      ...road,
+                      points: road.points.map((point, pointIndex) => {
+                        if (pointIndex !== state.selectedRoadPointIndex) return point;
+                        const { width_feet, ...rest } = point;
+                        return rest;
+                      })
+                    } : road))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+                      Use Road Width
+                    </Button>
+                    <Button size="small" variant="outlined" color="error"
+                      disabled={state.selectedRoadPointIndex === 0 || state.selectedRoadPointIndex === selectedRoad.points.length - 1 || selectedRoad.points.length <= 2}
+                      onClick={() => state.deleteSelectedSplinePoint?.('road')} sx={{ textTransform: 'none' }}>
+                      Delete Point
+                    </Button>
+                  </Box>
+                </Box>
+              )}
+
+              <Button
+                variant="contained"
+                color="error"
+                fullWidth
+                startIcon={<DeleteIcon />}
+                onClick={() => { state.setRoads(v => v.filter(old => old.id !== selectedRoad.id)); state.setSelectedRoadId(null); }}
+              >
+                Delete Road Segment
+              </Button>
+            </Box>
+          )
+        }
+      </aside >
     );
   }
 
@@ -509,9 +685,11 @@ function ToolWorkflow({
               <TextField
                 type="number"
                 size="small"
-                value={brushRadius}
-                inputProps={{ min: 30, max: 1200 }}
-                onChange={event => setBrushRadius(Math.max(30, Math.min(1200, Number(event.target.value) || 30)))}
+                value={radiusInput}
+                inputProps={{ min: 30, max: 2400, 'aria-label': 'Brush radius in feet' }}
+                onChange={event => setRadiusInput(event.target.value)}
+                onBlur={commitRadiusInput}
+                onKeyDown={event => { if (event.key === 'Enter') commitRadiusInput(); }}
                 sx={{
                   width: '75px',
                   '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: '#fff', fontSize: '12px' }
@@ -519,12 +697,21 @@ function ToolWorkflow({
               />
             </Box>
             <Slider
-              min={30}
-              max={1200}
-              step={10}
-              value={brushRadius}
-              onChange={(e, val) => setBrushRadius(Number(val))}
-              sx={{ color: '#bd9149', py: 1 }}
+              min={0}
+              max={100}
+              step={null}
+              marks={radiusStops}
+              value={radiusToSlider(brushRadius)}
+              valueLabelDisplay="auto"
+              valueLabelFormat={() => `${brushRadius} ft`}
+              getAriaValueText={() => `${brushRadius} feet`}
+              aria-label="Brush radius"
+              onChange={(e, val) => setBrushRadius(sliderToRadius(Number(val)))}
+              sx={{
+                color: '#bd9149', py: 1, '& .MuiSlider-mark': { opacity: 0 },
+                ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`& .MuiSlider-mark[data-index="${97 + i}"]`, { opacity: 1 }])),
+                '& .MuiSlider-markLabel': { color: '#cbbd9d', fontSize: '10px' }
+              }}
             />
           </Box>
 
@@ -593,9 +780,9 @@ function ToolWorkflow({
 
   // Provide tools for Forticiations panel
   if (activeTool === 'fortification') {
-    const selectedWall = state.walls?.find(r => r.id === state.selectedWallId);
-    const filteredWalls = state.walls?.filter(r => !wallSearch || (r.name || '').toLowerCase().includes(wallSearch.toLowerCase())) || [];
-    const selectedPoint = selectedWall?.points?.[state.selectedWallPointIndex];
+    const selectedWall = state.fortifications?.find(r => r.id === state.selectedFortificationId);
+    const filteredWalls = state.fortifications?.filter(r => !wallSearch || (r.name || '').toLowerCase().includes(wallSearch.toLowerCase())) || [];
+    const selectedPoint = selectedWall?.points?.[state.selectedFortificationPointIndex];
 
     return (
       <aside className="editor-menu road-menu secondary-editor-menu">
@@ -633,6 +820,21 @@ function ToolWorkflow({
           <ToggleButton value="move-spline" disabled={!selectedWall}><OpenInNewIcon fontSize="small" /> Move</ToggleButton>
           <ToggleButton value="draw-new"><AddIcon fontSize="small" /> Draw</ToggleButton>
         </ToggleButtonGroup>
+
+        {wallMode === 'refine' && selectedWall && (
+          <Typography variant="caption" sx={{ display: 'block', color: '#94a3b8', lineHeight: 1.4, mb: 1.5 }}>
+            Drag a control point above the wall to reshape it. Click the selected wall between control points to add a new point.
+          </Typography>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
+          <Button variant="outlined" size="small" startIcon={<UndoIcon />} disabled={!canUndoSplineEdit} onClick={undoSplineEdit} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+            Undo Edit
+          </Button>
+          <Button variant="outlined" size="small" disabled={state.selectedFortificationPointIndex == null} onClick={() => state.setSelectedFortificationPointIndex(null)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+            Clear Point
+          </Button>
+        </Box>
 
         {/* Slider Ribbon Controls */}
         <Box sx={{ mb: 2 }}>
@@ -676,16 +878,16 @@ function ToolWorkflow({
             <Button
               key={r.id}
               fullWidth
-              onClick={() => { state.setSelectedWallId(r.id); state.setSelectedWallPointIndex(null); }}
+              onClick={() => { state.setSelectedFortificationId(r.id); state.setSelectedFortificationPointIndex(null); state.setSelected(r); }}
               sx={{
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'flex-start',
                 textTransform: 'none',
                 padding: '6px 10px',
-                backgroundColor: r.id === state.selectedWallId ? '#1e3a34' : '#10231f',
+                backgroundColor: r.id === state.selectedFortificationId ? '#1e3a34' : '#10231f',
                 border: '1px solid',
-                borderColor: r.id === state.selectedWallId ? '#ffe08a' : '#47423a',
+                borderColor: r.id === state.selectedFortificationId ? '#ffe08a' : '#47423a',
                 borderRadius: '4px',
                 color: '#fff',
                 textAlign: 'left',
@@ -706,22 +908,22 @@ function ToolWorkflow({
               size="small"
               fullWidth
               value={selectedWall.name || ''}
-              onChange={e => state.setWalls(v => v.map(old => old.id === selectedWall.id ? { ...old, name: e.target.value } : old))}
+              onChange={e => state.setFortifications(v => v.map(old => old.id === selectedWall.id ? { ...old, name: e.target.value } : old))}
             />
 
             {/* Node Index Picker Layout Map */}
-            <Box className="road-point-picker" sx={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxHeigh: '80px', overflowY: 'auto' }}>
+            <Box className="road-point-picker" sx={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxHeight: '80px', overflowY: 'auto' }}>
               {selectedWall.points.map((p, idx) => (
                 <Button
                   key={idx}
                   size="small"
-                  onClick={() => state.setSelectedWallPointIndex(idx)}
+                  onClick={() => state.setSelectedFortificationPointIndex(idx)}
                   sx={{
                     minWidth: '28px',
                     height: '28px',
                     padding: 0,
-                    backgroundColor: state.selectedWallPointIndex === idx ? '#ffe08a' : '#23352d',
-                    color: state.selectedWallPointIndex === idx ? '#17211c' : '#d5ddd7',
+                    backgroundColor: state.selectedFortificationPointIndex === idx ? '#ffe08a' : '#23352d',
+                    color: state.selectedFortificationPointIndex === idx ? '#17211c' : '#d5ddd7',
                     '&:hover': { backgroundColor: '#a87e3e' }
                   }}
                 >
@@ -738,9 +940,9 @@ function ToolWorkflow({
                   type="number"
                   size="small"
                   value={Math.round(selectedPoint.x)}
-                  onChange={e => state.setWalls(v => v.map(w => w.id === selectedWall.id ? {
+                  onChange={e => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
                     ...w,
-                    points: w.points.map((pt, pi) => pi === state.selectedWallPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
+                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
                   } : w))}
                 />
                 <TextField
@@ -748,12 +950,20 @@ function ToolWorkflow({
                   type="number"
                   size="small"
                   value={Math.round(selectedPoint.y)}
-                  onChange={e => state.setWalls(v => v.map(w => w.id === selectedWall.id ? {
+                  onChange={e => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
                     ...w,
-                    points: w.points.map((pt, pi) => pi === state.selectedWallPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
+                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
                   } : w))}
                 />
               </Box>
+            )}
+
+            {selectedPoint && (
+              <Button size="small" variant="outlined" color="error"
+                disabled={state.selectedFortificationPointIndex === 0 || state.selectedFortificationPointIndex === selectedWall.points.length - 1 || selectedWall.points.length <= 2}
+                onClick={() => state.deleteSelectedSplinePoint?.('wall')} sx={{ textTransform: 'none' }}>
+                Delete Selected Point
+              </Button>
             )}
 
             <Button
@@ -761,7 +971,7 @@ function ToolWorkflow({
               color="error"
               fullWidth
               startIcon={<DeleteIcon />}
-              onClick={() => { state.setWalls(v => v.filter(old => old.id !== selectedWall.id)); state.setSelectedRoadId(null); }}
+              onClick={() => { state.setFortifications(v => v.filter(old => old.id !== selectedWall.id)); state.setSelectedFortificationId(null); state.setSelectedFortificationPointIndex(null); state.setSelected(null); }}
             >
               Delete Wall Track
             </Button>
@@ -1018,13 +1228,14 @@ function ToolWorkflow({
       </aside>
     );
   }
-
-
   if (activeTool === 'atmosphere' && atmosphereSettings) {
+    const fogStartRatio = atmosphereSettings.fogStartRatio ?? 0.92;
+    const fogEndRatio = atmosphereSettings.fogEndRatio ?? 1.03;
+
     return (
       <aside className="editor-menu atmosphere-menu">
         <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 2, letterSpacing: '.13em' }}>
-          ATMOSPHERE PLUGINS
+          ATMOSPHERE PLUGIN
         </Typography>
 
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -1072,8 +1283,105 @@ function ToolWorkflow({
               sx={{ color: '#bd9149' }}
             />
           </Box>
+
+          <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5 }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: '#cbbd9d',
+                display: 'block',
+                mb: 1.5,
+                fontWeight: 700,
+                letterSpacing: '.08em'
+              }}
+            >
+              DISTANCE OCCLUSION
+            </Typography>
+
+            <Box sx={{ mb: 2 }}>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: '#aab4ad',
+                  display: 'flex',
+                  justifyContent: 'space-between'
+                }}
+              >
+                <span>Fog Start</span>
+                <strong>{Math.round(fogStartRatio * 100)}% of view</strong>
+              </Typography>
+
+              <Slider
+                min={0.60}
+                max={1.20}
+                step={0.01}
+                value={fogStartRatio}
+                valueLabelDisplay="auto"
+                valueLabelFormat={value => `${Math.round(value * 100)}%`}
+                onChange={(e, value) => {
+                  const start = Number(value);
+
+                  setAtmosphereSettings(prev => ({
+                    ...prev,
+                    fogStartRatio: start,
+
+                    // Never allow full fog to precede the start.
+                    fogEndRatio: Math.max(
+                      prev.fogEndRatio ?? 1.03,
+                      start + 0.02
+                    )
+                  }));
+                }}
+                sx={{ color: '#bd9149' }}
+              />
+
+              <Typography
+                variant="caption"
+                sx={{ color: '#718079', fontSize: '10px' }}
+              >
+                Distance from the camera at which atmospheric fading begins.
+              </Typography>
+            </Box>
+
+            <Box>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: '#aab4ad',
+                  display: 'flex',
+                  justifyContent: 'space-between'
+                }}
+              >
+                <span>Fog Full</span>
+                <strong>{Math.round(fogEndRatio * 100)}% of view</strong>
+              </Typography>
+
+              <Slider
+                min={Math.max(0.70, fogStartRatio + 0.02)}
+                max={1.50}
+                step={0.01}
+                value={fogEndRatio}
+                valueLabelDisplay="auto"
+                valueLabelFormat={value => `${Math.round(value * 100)}%`}
+                onChange={(e, value) =>
+                  setAtmosphereSettings(prev => ({
+                    ...prev,
+                    fogEndRatio: Number(value)
+                  }))
+                }
+                sx={{ color: '#bd9149' }}
+              />
+
+              <Typography
+                variant="caption"
+                sx={{ color: '#718079', fontSize: '10px' }}
+              >
+                Distance at which terrain is completely hidden by atmosphere.
+              </Typography>
+            </Box>
+          </Box>
         </Box>
-      </aside>
+      </aside >
     );
   }
 
@@ -1407,7 +1715,15 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
 export default function SettlementMapEditor({
   simulation,
   activeTool,
-  atmosphereSettings = { sunIntensity: 2.2, moonIntensity: 0.15, scatteringScale: 1.0 },
+  buildMode = 'place-asset',
+  setBuildMode = () => { },
+  atmosphereSettings = {
+    sunIntensity: 2.2,
+    moonIntensity: 0.15,
+    scatteringScale: 1.0,
+    fogStartRatio: 0.92,
+    fogEndRatio: 1.03,
+  },
   setAtmosphereSettings,
   weatherSettings = { activeWeather: 'clear', fogDensity: 0.01, fogColor: '#a9c9dc' },
   setWeatherSettings,
@@ -1442,16 +1758,19 @@ export default function SettlementMapEditor({
   destination,
   onWaypoint = () => { },
   referenceLayers = [],
+  referencePlacement = null,
+  setReferencePlacement = () => { },
   onReferencePoint = () => { },
   calibrationPoints = [],
   fitRequest = 0,
   onMapContext = () => { },
   onCameraChange = null,
-  
+
   viewCommand = null,
   labelState = { ids: [], showAll: false },
   pointsOfInterest = [],
-  campaignName = ''
+  campaignName = '',
+  onSceneReady = () => { }
 }) {
   const [assetKey, setAssetKey] = useState(assets[0]?.key || '');
 
@@ -1461,10 +1780,12 @@ export default function SettlementMapEditor({
   const [showHeightmapImport, setShowHeightmapImport] = useState(false);
   const [heightmapPlacement, setHeightmapPlacement] = useState(null);
 
-  const [buildMode, setBuildMode] = useState('place')
   const [roadMode, setRoadMode] = useState('select')
   const [roadDraft, setRoadDraft] = useState([])
-  const [roadWidth, setRoadWidth] = useState(36);
+  const [roadWidth, setRoadWidth] = useState(ROAD_CLASS_DEFAULTS.street.width);
+  const [roadClass, setRoadClass] = useState('street');
+  const [roadSurface, setRoadSurface] = useState(ROAD_CLASS_DEFAULTS.street.surface);
+  const [roadSnapEnabled, setRoadSnapEnabled] = useState(false);
 
   const [wallMode, setWallMode] = useState('select')
   const [wallDraft, setWallDraft] = useState([]);
@@ -1483,10 +1804,43 @@ export default function SettlementMapEditor({
 
   const [selectedRegionId, setSelectedRegionId] = useState(null);
 
+  const [splineContextMenu, setSplineContextMenu] = useState(null);
+  const splineHistoryRef = useRef([]);
+  const [splineHistoryVersion, setSplineHistoryVersion] = useState(0);
+
+  const recordSplineUndo = useCallback((kind, item) => {
+    if (!item?.id) return;
+    splineHistoryRef.current.push({ kind, id: item.id, before: JSON.parse(JSON.stringify(item)) });
+    if (splineHistoryRef.current.length > 60) splineHistoryRef.current.shift();
+    setSplineHistoryVersion(value => value + 1);
+  }, []);
+
+  const undoSplineEdit = useCallback(() => {
+    const entry = splineHistoryRef.current.pop();
+    if (!entry) return;
+    if (entry.kind === 'road') {
+      setRoads(values => values.map(road => road.id === entry.id ? entry.before : road));
+      setSelectedRoadId(entry.id);
+      setSelectedRoadPointIndex(null);
+      setSelected(entry.before);
+    } else if (entry.kind === 'wall') {
+      setFortifications(values => values.map(wall => wall.id === entry.id ? entry.before : wall));
+      setSelectedFortificationId(entry.id);
+      setSelectedFortificationPointIndex(null);
+      setSelected(entry.before);
+    }
+    setSplineHistoryVersion(value => value + 1);
+  }, [setRoads, setFortifications, setSelected]);
+
+
   const [virtualKeys, setVirtualKeys] = useState(new Set());
   const [localViewCommand, setLocalViewCommand] = useState(null);
   const [, setPointerLocked] = useState(false);
   const [scaleIndicator, setScaleIndicator] = useState({ feet: 100, pixels: 100 });
+  const roadSnapToleranceFeet = useMemo(
+    () => Math.max(8, Math.min(120, (Number(scaleIndicator.feet) || 100) * 0.35)),
+    [scaleIndicator.feet]
+  );
   const [cameraDebug, setCameraDebug] = useState(null);
   const onCameraChangeRef = useRef(onCameraChange);
   const latestCameraPayloadRef = useRef(null);
@@ -1578,6 +1932,94 @@ export default function SettlementMapEditor({
   const regions = useMemo(() => mapEnvironment.regions || [], [mapEnvironment.regions]);
   const fortifications = mapEnvironment.fortifications || [];
 
+  const deleteSelectedSplinePoint = useCallback((kind) => {
+    if (kind === 'road') {
+      const road = roads.find(value => value.id === selectedRoadId);
+      if (!road || selectedRoadPointIndex == null) return;
+      const updated = deleteSplineControlPoint(road, selectedRoadPointIndex);
+      if (updated === road) return;
+      recordSplineUndo('road', road);
+      setRoads(values => values.map(value => value.id === road.id ? updated : value));
+      setSelectedRoadPointIndex(null);
+    } else if (kind === 'wall') {
+      const wall = fortifications.find(value => value.id === selectedFortificationId);
+      if (!wall || selectedFortificationPointIndex == null) return;
+      const updated = deleteSplineControlPoint(wall, selectedFortificationPointIndex);
+      if (updated === wall) return;
+      recordSplineUndo('wall', wall);
+      setFortifications(values => values.map(value => value.id === wall.id ? updated : value));
+      setSelectedFortificationPointIndex(null);
+    }
+  }, [roads, selectedRoadId, selectedRoadPointIndex, fortifications, selectedFortificationId, selectedFortificationPointIndex, recordSplineUndo, setRoads, setFortifications]);
+
+  const applySplineContextAction = useCallback((action) => {
+    const menu = splineContextMenu;
+    if (!menu) return;
+    if (action === 'add') {
+      if (menu.kind === 'road') {
+        const road = roads.find(value => value.id === menu.id);
+        if (road) {
+          recordSplineUndo('road', road);
+          let insertionPoint = menu.point;
+          if (Number.isInteger(menu.index) && road.points.length > 1) {
+            const neighborIndex = menu.index < road.points.length - 1 ? menu.index + 1 : menu.index - 1;
+            const neighbor = road.points[neighborIndex];
+            const selectedPoint = road.points[menu.index];
+            insertionPoint = { x: (selectedPoint.x + neighbor.x) / 2, y: (selectedPoint.y + neighbor.y) / 2 };
+          }
+          const updated = insertRoadControlPoint(road, insertionPoint);
+          let index = null;
+          for (let i = 0; i < updated.points.length; i += 1) {
+            if (i >= road.points.length || updated.points[i] !== road.points[i]) { index = i; break; }
+          }
+          setRoads(values => values.map(value => value.id === road.id ? updated : value));
+          setSelectedRoadId(road.id);
+          setSelectedRoadPointIndex(index);
+        }
+      } else if (menu.kind === 'wall') {
+        const wall = fortifications.find(value => value.id === menu.id);
+        if (wall) {
+          recordSplineUndo('wall', wall);
+          let insertionPoint = menu.point;
+          if (Number.isInteger(menu.index) && wall.points.length > 1) {
+            const neighborIndex = menu.index < wall.points.length - 1 ? menu.index + 1 : menu.index - 1;
+            const neighbor = wall.points[neighborIndex];
+            const selectedPoint = wall.points[menu.index];
+            insertionPoint = { x: (selectedPoint.x + neighbor.x) / 2, y: (selectedPoint.y + neighbor.y) / 2 };
+          }
+          const result = insertOpenSplineControlPoint(wall, insertionPoint);
+          setFortifications(values => values.map(value => value.id === wall.id ? result.item : value));
+          setSelectedFortificationId(wall.id);
+          setSelectedFortificationPointIndex(result.index);
+        }
+      }
+    } else if (action === 'delete' && Number.isInteger(menu.index)) {
+      if (menu.kind === 'road') {
+        const road = roads.find(value => value.id === menu.id);
+        if (road) {
+          const updated = deleteSplineControlPoint(road, menu.index);
+          if (updated !== road) {
+            recordSplineUndo('road', road);
+            setRoads(values => values.map(value => value.id === road.id ? updated : value));
+            setSelectedRoadPointIndex(null);
+          }
+        }
+      } else if (menu.kind === 'wall') {
+        const wall = fortifications.find(value => value.id === menu.id);
+        if (wall) {
+          const updated = deleteSplineControlPoint(wall, menu.index);
+          if (updated !== wall) {
+            recordSplineUndo('wall', wall);
+            setFortifications(values => values.map(value => value.id === wall.id ? updated : value));
+            setSelectedFortificationPointIndex(null);
+          }
+        }
+      }
+    }
+    setSplineContextMenu(null);
+  }, [splineContextMenu, roads, fortifications, recordSplineUndo, setRoads, setFortifications]);
+
+
   const terrainMaterial = useMemo(() => ({
     sea_level_feet: Number(mapEnvironment.sea_level_feet) || 0,
     snow_line_feet: Number(mapEnvironment.terrain_material?.snow_line_feet ?? 900),
@@ -1662,7 +2104,7 @@ export default function SettlementMapEditor({
         const key = tileKey(tx, tz);
         if (seen.has(key)) continue;
         seen.add(key);
-        const tile = tileStore.get(key);
+        const tile = ensureTile(tileStore, tx, tz);
         if (tile) beforeTiles.push({ key, values: tile.values.slice() });
       }
     });
@@ -1735,11 +2177,10 @@ export default function SettlementMapEditor({
     setStrokes([]);
   };
 
-  const sampleTerrainHeight = useCallback((xFeet, yFeet) => {
-    const { tx, tz } = tileIndexAt(xFeet, yFeet);
-    const tile = tileStore?.get?.(tileKey(tx, tz));
-    return terrainHeightAt(strokes, xFeet, yFeet, tile || heightMap);
-  }, [tileStore, strokes, heightMap]);
+  const sampleTerrainHeight = useMemo(() => tileStore
+    ? createWorldSampler(tileStore, () => strokes, () => heightmapPlacement, { materializeMissing: false })
+    : (x, y) => terrainHeightAt(strokes, x, y, heightMap),
+    [tileStore, strokes, heightmapPlacement, heightMap]);
 
   // ********************************************************* //
   // Hook listeners to intercept virtual panels actions safely //
@@ -1807,7 +2248,7 @@ export default function SettlementMapEditor({
 
   const finishRoad = () => {
     if (roadDraft.length < 2) return;
-    setRoads(values => [...values, { id: `road-${Date.now()}`, name: `New road ${values.length + 1}`, road_class: 'street', surface_type: 'cobblestone', width_feet: roadWidth, opacity: .78, visible: true, points: roadDraft }]);
+    setRoads(values => [...values, { id: `road-${Date.now()}`, name: `New road ${values.length + 1}`, road_class: roadClass, surface_type: roadSurface, width_feet: roadWidth, opacity: .78, visible: true, points: roadDraft }]);
     setRoadDraft([]);
     setRoadMode('select');
   };
@@ -1841,11 +2282,25 @@ export default function SettlementMapEditor({
   }, [firstPerson]);
 
   useEffect(() => {
-    setSelected?.(null);
+    if (activeTool !== 'build') setSelected?.(null);
     setSelectedRoadId(null);
     setSelectedFortificationId(null);
     setSelectedRegionId(null);
+    setSplineContextMenu(null);
   }, [activeTool, setSelected]);
+
+  useEffect(() => {
+    const onKeyDown = event => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z' || event.shiftKey) return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable) return;
+      if (!['road', 'fortification'].includes(activeTool)) return;
+      event.preventDefault();
+      undoSplineEdit();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTool, undoSplineEdit]);
 
   const state = {
     activeTool,
@@ -1882,6 +2337,11 @@ export default function SettlementMapEditor({
     fortifications,
     setFortifications,
     roadMode,
+    roadSnapEnabled,
+    roadSnapToleranceFeet,
+    recordSplineUndo,
+    openSplineContextMenu: setSplineContextMenu,
+    deleteSelectedSplinePoint,
     selectedRoadId,
     setSelectedRoadId,
     selectedRoadPointIndex,
@@ -1910,6 +2370,8 @@ export default function SettlementMapEditor({
     seaLevelPicking: false,
     onWaypoint,
     onReferencePoint,
+    referencePlacement,
+    setReferencePlacement,
     onMapContext,
     onInspectSelection: setInspectSelection,
     onSeaLevelPick: () => { },
@@ -1976,19 +2438,111 @@ export default function SettlementMapEditor({
         onPointerLockChange={setPointerLocked}
         onScaleChange={setScaleIndicator}
         onBoundsExpansion={handleBoundsExpansion}
+        onSceneReady={onSceneReady}
       />
+
       <div className="map-scale-indicator" aria-label={`Map scale ${scaleIndicator.feet} feet`}>
         <span style={{ width: `${Math.max(35, Math.min(180, scaleIndicator.pixels))}px` }} />
         <strong>
-          {scaleIndicator.feet >= 5280 ? `${(scaleIndicator.feet / 5280).toFixed(1)} mi` : `${scaleIndicator.feet} ft`}
+          {scaleIndicator.feet >= 5280
+            ? `${(scaleIndicator.feet / 5280).toFixed(1)} mi`
+            : `${scaleIndicator.feet} ft`}
         </strong>
       </div>
-      {['inspect', 'player'].includes(activeTool) && inspectSelection && <aside className="inspect-map-selection">
-        <button type="button" className="inspect-selection-close" onClick={() => setInspectSelection(null)} aria-label="Close">x</button>
-        <span>{inspectSelection.kind}</span>
-        <h3>{inspectSelection.name || 'Mapped feature'}</h3>
-        <p>{inspectSelection.public_description || inspectSelection.description || inspectSelection.summary || 'Known settlement feature.'}</p>
-      </aside>}
+
+      {['inspect', 'player'].includes(activeTool) && inspectSelection && (
+        <aside className="inspect-map-selection">
+          <button
+            type="button"
+            className="inspect-selection-close"
+            onClick={() => setInspectSelection(null)}
+            aria-label="Close"
+          >
+            x
+          </button>
+
+          <span>
+            {inspectSelection.kind}
+          </span>
+
+          <h3>
+            {inspectSelection.name || 'Mapped feature'}
+          </h3>
+
+          <p>
+            {inspectSelection.public_description
+              || inspectSelection.description
+              || inspectSelection.summary
+              || 'Known settlement feature.'}
+          </p>
+        </aside>
+      )}
+
+      {splineContextMenu && (
+        <Box
+          onContextMenu={event => event.preventDefault()}
+          sx={{
+            position: 'fixed',
+            left: splineContextMenu.clientX,
+            top: splineContextMenu.clientY,
+            zIndex: 1500,
+            minWidth: 170,
+            p: 0.5,
+            backgroundColor: '#14201cf2',
+            border: '1px solid #53645a',
+            borderRadius: '5px',
+            boxShadow: '0 8px 24px #0009'
+          }}
+        >
+          <Button
+            fullWidth
+            size="small"
+            onClick={() => applySplineContextAction('add')}
+            sx={{
+              justifyContent: 'flex-start',
+              color: '#d5ddd7',
+              textTransform: 'none'
+            }}
+          >
+            {Number.isInteger(splineContextMenu.index)
+              ? 'Add Adjacent Point'
+              : 'Add Point Here'}
+          </Button>
+
+          {Number.isInteger(splineContextMenu.index) && (
+            <Button
+              fullWidth
+              size="small"
+              color="error"
+              disabled={
+                splineContextMenu.index === 0
+                || splineContextMenu.index === splineContextMenu.pointCount - 1
+                || splineContextMenu.pointCount <= 2
+              }
+              onClick={() => applySplineContextAction('delete')}
+              sx={{
+                justifyContent: 'flex-start',
+                textTransform: 'none'
+              }}
+            >
+              Delete Point
+            </Button>
+          )}
+
+          <Button
+            fullWidth
+            size="small"
+            onClick={() => setSplineContextMenu(null)}
+            sx={{
+              justifyContent: 'flex-start',
+              color: '#94a3b8',
+              textTransform: 'none'
+            }}
+          >
+            Cancel
+          </Button>
+        </Box>
+      )}
 
       <ToolWorkflow
         state={state}
@@ -2009,8 +2563,14 @@ export default function SettlementMapEditor({
         brushRadius={brushRadius}
         setBrushRadius={setBrushRadius} // Passes down your top-level hook setter directly
         brushStrength={brushStrength}
+
         // Maps value updates straight into your nested strengths array object slot cleanly
-        setBrushStrength={value => setBrushStrengths(values => ({ ...values, [terrainMode]: value }))}
+        setBrushStrength={value =>
+          setBrushStrengths(values => ({
+            ...values,
+            [terrainMode]: value
+          }))
+        }
 
         selected={selected}
         setSelected={setSelected}
@@ -2039,6 +2599,18 @@ export default function SettlementMapEditor({
         finishRoad={finishRoad}
         roadWidth={roadWidth}
         setRoadWidth={setRoadWidth}
+        roadClass={roadClass}
+        setRoadClass={setRoadClass}
+        roadSurface={roadSurface}
+        setRoadSurface={setRoadSurface}
+        roadSnapEnabled={roadSnapEnabled}
+        setRoadSnapEnabled={setRoadSnapEnabled}
+        roadSnapToleranceFeet={roadSnapToleranceFeet}
+        canUndoSplineEdit={
+          splineHistoryVersion > 0
+          && splineHistoryRef.current.length > 0
+        }
+        undoSplineEdit={undoSplineEdit}
 
         wallMode={wallMode}
         wallWidth={wallWidth}
@@ -2053,13 +2625,18 @@ export default function SettlementMapEditor({
         regionDraft={regionDraft}
         setRegionDraft={setRegionDraft}
         finishRegion={finishRegion}
+
         waterType={waterType}
         setWaterType={setWaterType}
         waterDraft={waterDraft}
         setWaterDraft={setWaterDraft}
         finishWater={finishWater}
       />
-      <NavigationControlPanel viewCommand={state.viewCommand} />
+
+      <NavigationControlPanel
+        viewCommand={state.viewCommand}
+      />
+
       {cameraDebug && (
         <Box
           sx={{
@@ -2079,37 +2656,78 @@ export default function SettlementMapEditor({
             pointerEvents: 'none',
           }}
         >
-          <div style={{ fontWeight: 700, letterSpacing: '.08em', marginBottom: 2 }}>CAMERA DEBUG</div>
-          <div>target: {cameraDebug.target?.map(v => v.toFixed(1)).join(', ')}</div>
-          <div>radius (zoom): {cameraDebug.radius?.toFixed(1)}</div>
-          <div>alpha/beta: {cameraDebug.alpha?.toFixed(2)} / {cameraDebug.beta?.toFixed(2)}</div>
-          <div>LOD: {cameraDebug.window ? `${cameraDebug.window.cellFeet} ft/cell` : '—'}</div>
+          <div
+            style={{
+              fontWeight: 700,
+              letterSpacing: '.08em',
+              marginBottom: 2
+            }}
+          >
+            CAMERA DEBUG
+          </div>
+
+          <div>
+            target: {cameraDebug.target?.map(v => v.toFixed(1)).join(', ')}
+          </div>
+
+          <div>
+            radius (zoom): {cameraDebug.radius?.toFixed(1)}
+          </div>
+
+          <div>
+            alpha/beta: {cameraDebug.alpha?.toFixed(2)} / {cameraDebug.beta?.toFixed(2)}
+          </div>
+
+          <div>
+            LOD: {cameraDebug.window
+              ? `${cameraDebug.window.cellFeet} ft/cell`
+              : '—'}
+          </div>
+
           {cameraDebug.bounds && (
             <div>
-              bounds: x[{cameraDebug.bounds.minX?.toFixed(0)}, {cameraDebug.bounds.maxX?.toFixed(0)}]
-              {' '}y[{cameraDebug.bounds.minY?.toFixed(0)}, {cameraDebug.bounds.maxY?.toFixed(0)}]
+              bounds: x[
+              {cameraDebug.bounds.minX?.toFixed(0)},
+              {' '}
+              {cameraDebug.bounds.maxX?.toFixed(0)}
+              ] y[
+              {cameraDebug.bounds.minY?.toFixed(0)},
+              {' '}
+              {cameraDebug.bounds.maxY?.toFixed(0)}
+              ]
             </div>
           )}
+
           {cameraDebug.window && (
             <>
+              {cameraDebug.window.totalTiles != null && (
+                <div>
+                  loaded: {cameraDebug.window.loadedTiles}/{cameraDebug.window.totalTiles} sampled tile regions
+                </div>
+              )}
+
               <div>
                 height AGL: {cameraDebug.window.h?.toFixed(0)} ft
                 {' '}· view: {cameraDebug.window.dForward?.toFixed(0)} ft
               </div>
+
               <div>
                 tiles: {cameraDebug.window.tilesX}×{cameraDebug.window.tilesZ}
                 {' '}· cell: {cameraDebug.window.cellFeet} ft
               </div>
+
               <div>
                 buffer: {cameraDebug.window.cellsX}×{cameraDebug.window.cellsZ} cells
                 {' '}· span: {cameraDebug.window.spanFeet?.toFixed(0)} ft
               </div>
+
               {cameraDebug.fog && (
                 <>
                   <div>
                     fog: {cameraDebug.fog.mode}
                     {' '}· {cameraDebug.fog.startFeet?.toFixed(0)}–{cameraDebug.fog.endFeet?.toFixed(0)} ft
                   </div>
+
                   <div>
                     occlusion: center {Math.round((cameraDebug.fog.centerOcclusion || 0) * 100)}%
                     {' '}· mid {Math.round((cameraDebug.fog.midpointOcclusion || 0) * 100)}%

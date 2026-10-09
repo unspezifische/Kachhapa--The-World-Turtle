@@ -50,7 +50,6 @@ services:
     volumes:
       - ./Flask:/app
       - ./5etools-src:/5etools-src:ro  # Mount 5etools data as read-only
-      - ./5etools-img:/5etools-img:ro  # Mount the images as read-only
       - myapp_socket:/tmp
       - ./Flask/media:/app/media
     ports:
@@ -77,6 +76,7 @@ services:
       - flask
     volumes:
       - myapp_socket:/tmp
+      - ./5etools-src:/var/www/5etools:ro
     networks:
       - Kachhapa-network
 

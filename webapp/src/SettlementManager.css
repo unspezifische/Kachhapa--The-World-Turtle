@@ -579,7 +579,7 @@
   box-shadow: 0 2px 6px #000
 }
 
-.atlas-marker span {
+.atlas-marker>.atlas-marker-visual>span {
   padding: 3px 6px;
   border-radius: 3px;
   background: #16221ddd;
@@ -587,7 +587,7 @@
   white-space: nowrap
 }
 
-.atlas-marker.active span {
+.atlas-marker.active>.atlas-marker-visual>span {
   background: #a87e3e;
   color: #17211c;
   font-weight: 800
@@ -602,7 +602,7 @@
   background: #514a47
 }
 
-.atlas-marker.destroyed span {
+.atlas-marker.destroyed>.atlas-marker-visual>span {
   text-decoration: line-through
 }
 
@@ -1689,7 +1689,7 @@
   background: #3f302c
 }
 
-.atlas-marker.destroyed span {
+.atlas-marker.destroyed>.atlas-marker-visual>span {
   text-decoration: line-through
 }
 
@@ -3546,13 +3546,22 @@
 }
 
 /* Atlas coordinates anchor the pin itself; the label extends to its right. */
-.atlas-marker {
-  transform: translate(-9.5px, -13.5px)
-}
-
-.atlas-draft-marker {
-  transform: translate(-11.5px, -16.25px)
-}
+.atlas-map-content { position: absolute; inset: 0; transform-origin: 0 0; width: 100%; height: 100%; }
+.atlas-art, .atlas-terrain-handoff-layer { position: absolute; inset: 0; transition: opacity 180ms linear; pointer-events: none; }
+.atlas-art { background-size: 100% 100%; background-position: center; background-repeat: no-repeat; }
+.atlas-terrain-handoff-layer { display: grid; place-items: center; background-color: #203d39; background-image: linear-gradient(#86a96b1c 1px, transparent 1px), linear-gradient(90deg, #86a96b1c 1px, transparent 1px), radial-gradient(circle at 20% 30%, #749c6733, transparent 35%), radial-gradient(circle at 75% 65%, #bca96a2b, transparent 42%); background-size: 96px 96px, 96px 96px, auto, auto; color: #d6c38099; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
+.atlas-marker, .atlas-draft-marker { position: absolute; width: 0; height: 0; padding: 0; border: 0; background: transparent; transform: none; overflow: visible; z-index: 4; }
+.atlas-marker-visual { position: absolute; left: 0; top: 0; display: block; width: 26px; height: 34px; transform-origin: 50% 100%; will-change: transform; }
+.atlas-marker { cursor: pointer; touch-action: none; }
+.atlas-marker.movable { cursor: grab; }
+.atlas-marker.dragging { cursor: grabbing; z-index: 8; }
+.atlas-marker i, .atlas-draft-marker i { position: absolute; width: 14px; height: 14px; left: 6px; bottom: 0; border: 3px solid #f1ce79; border-radius: 50% 50% 50% 0; background: #7a3f2d; transform: rotate(-45deg); box-shadow: 0 2px 6px #000; }
+.atlas-marker-visual>span { position: absolute; left: 26px; bottom: 0; padding: 5px 8px; border-radius: 3px; background: #16221ded; font-size: 11px; line-height: 1; color: #efe2c3; white-space: nowrap; opacity: .52; transition: opacity 120ms ease, translate 120ms ease; pointer-events: none; text-shadow: 0 1px 1px #000; }
+.atlas-marker:hover .atlas-marker-visual>span, .atlas-marker:focus-visible .atlas-marker-visual>span, .atlas-marker.active .atlas-marker-visual>span, .atlas-marker.dragging .atlas-marker-visual>span { opacity: 1; translate: 2px 0; }
+.atlas-marker.active .atlas-marker-visual>span { background: #a87e3e; color: #17211c; font-weight: 800; text-shadow: none; }
+.atlas-draft-marker { pointer-events: none; }
+.atlas-draft-marker .atlas-marker-visual>span { opacity: .9; }
+.atlas-terrain-status { position: absolute; top: 11px; left: 50%; z-index: 9; transform: translateX(-50%); padding: 5px 9px; border: 1px solid #a98b4d; border-radius: 3px; background: #14211eed; color: #e4cc8e; font-size: 9px; letter-spacing: .06em; pointer-events: none; }
 
 .terrain-brush-modes {
   display: grid;

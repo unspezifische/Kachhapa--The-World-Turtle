@@ -1,0 +1,23 @@
+.reference-menu.reference-placement-panel { color: #d5ddd7; max-height: calc(100% - 100px); box-sizing: border-box; }
+.reference-placement-panel h3 { color: #d7c496; font-size: 13px; letter-spacing: .12em; margin: 0 0 14px; }
+.reference-placement-panel p { font-size: 12px; line-height: 1.5; margin: 10px 0; }
+.reference-placement-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.reference-menu.reference-placement-panel label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: #d5ddd7; text-transform: none; }
+.reference-placement-panel input:not([type=checkbox]):not([type=range]):not([type=file]) { box-sizing: border-box; min-width: 0; width: 100%; background: #101b17; color: #f1eadb; border: 1px solid #627568; border-radius: 4px; padding: 8px; font: inherit; color-scheme: dark; }
+.reference-placement-panel input:focus-visible, .reference-placement-panel button:focus-visible, .reference-upload-button:focus-within { outline: 2px solid #eac16f; outline-offset: 2px; }
+.reference-placement-panel button, .reference-placement-panel .reference-upload-button { border: 1px solid #627568; background: #23352d; color: #eee4cf; border-radius: 4px; padding: 9px; cursor: pointer; font: inherit; font-size: 12px; text-align: center; }
+.reference-placement-panel button:hover, .reference-placement-panel button[aria-pressed=true] { background: #354b3f; border-color: #d4b578; }
+.reference-placement-panel .reference-primary, .reference-placement-panel .reference-upload-button { background: #bd9149; color: #15221a; font-weight: 700; }
+.reference-placement-panel button:disabled, .reference-placement-panel .is-busy { opacity: .5; cursor: wait; }
+.reference-menu.reference-placement-panel .reference-check { flex-direction: row; align-items: center; margin: 12px 0; }
+.reference-placement-panel .reference-step { color: #e3c384; font-size: 10px; letter-spacing: .12em; }
+.reference-placement-panel .reference-hint { color: #aebdb3; font-size: 11px; }
+.reference-number-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 10px 0; }
+.reference-actions { display: flex; gap: 8px; margin: 12px 0; }
+.reference-actions button { flex: 1; }
+.reference-layer-list { display: grid; gap: 6px; margin: 14px 0; }
+.reference-layer-list button { text-align: left; overflow-wrap: anywhere; }
+.reference-layer-list small { display: block; color: #aebdb3; margin-top: 4px; }
+.reference-placement-panel .reference-error { color: #ffb0a0; }
+.reference-placement-panel .reference-remove { color: #f3b4a7; background: transparent; }
+.reference-placement-panel input[type=range] { width: 100%; accent-color: #d4ad63; }

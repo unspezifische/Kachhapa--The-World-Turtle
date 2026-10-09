@@ -62,6 +62,7 @@ import BedtimeIcon from '@mui/icons-material/Bedtime';
 // Miscellaneous other icons
 import AddIcon from '@mui/icons-material/Add';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import OpenWithIcon from '@mui/icons-material/OpenWith';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
@@ -70,11 +71,14 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 
 import AtlasViewport from './AtlasViewport';
+import BlueprintLevels from './BlueprintLevels';
+import ReferencePlacementPanel from './ReferencePlacementPanel';
+import { mergeReferenceSave } from './referencePlacement';
 import {
   calibrateReferenceLayer,
   FALLBACK_ASSET_CATALOG,
+  FEET_PER_SCENE_UNIT,
   closeBlueprintFootprint,
-  addBlueprintLevel,
 } from './settlementEditor';
 import {
   createTileStore,
@@ -82,6 +86,8 @@ import {
   hydrateTiles,
   setStoreDefaults,
   bakeStrokesIntoTiles,
+  TILE_FEET,
+  tileKey,
 } from './settlementTiles';
 
 import {
@@ -92,7 +98,8 @@ import {
 import './SettlementManager.css';
 import './SettlementToolPanels.css';
 
-const SettlementMapEditor = lazy(() => import('./SettlementMapEditor'));
+const loadSettlementMapEditor = () => import('./SettlementMapEditor');
+const SettlementMapEditor = lazy(loadSettlementMapEditor);
 // The MapEditor file provides the actual tool implementation. This file (SettlementManager) just provides the UI
 
 async function readReferenceImageDimensions(file) {
@@ -133,10 +140,6 @@ function SalesChart({ rows }) {
 
 const textAffiliation = location => location.affiliation ? ` · ${location.affiliation}` : '';
 
-function MapLoading({ settlementName }) {
-  return <div className="settlement-map-loading" role="status" aria-live="polite"><i /><strong>Loading {settlementName || 'settlement'}…</strong><span>Preparing terrain, roads, buildings, and simulation state.</span></div>;
-}
-
 export default function SettlementManager({ headers, socket, mainEnvironmentUrl = '/', initialTool = 'atlas' }) {
   const [localViewCommand, setLocalViewCommand] = useState({ mode: 'camera', nonce: Date.now() });
   const activeViewCommand = localViewCommand;
@@ -169,22 +172,17 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const setFortifications = useCallback(updater => setMapEnvironment(environment => ({ ...environment, fortifications: typeof updater === 'function' ? updater(environment.fortifications || []) : updater })), []);
   const [referenceLayers, setReferenceLayers] = useState([])
   const [selectedReferenceId, setSelectedReferenceId] = useState(null);
+  const [referenceDraft, setReferenceDraft] = useState(null);
+  const referenceCameraRef = useRef(null);
+  const displayedReferenceLayers = useMemo(() => referenceDraft
+    ? [...referenceLayers.filter(layer => layer.id !== referenceDraft.id), referenceDraft]
+    : referenceLayers, [referenceLayers, referenceDraft]);
   const [calibrationPoints, setCalibrationPoints] = useState([])
   const [knownDistance, setKnownDistance] = useState(471)
   const [fitRequest, setFitRequest] = useState(0);
-  const [referenceUpload, setReferenceUpload] = useState({
-    file: null, name: '',
-    width_feet: 1800,
-    height_feet: 1800,
-    origin_x: 0,
-    origin_y: 0,
-    scope: 'city',
-    linked_building_id: '',
-    sync_exterior: false
-  })
-  const [uploadStatus, setUploadStatus] = useState('');
   const [designLoaded, setDesignLoaded] = useState(false)
   const [mapLoading, setMapLoading] = useState(false)
+  const mapLoadStartedAtRef = useRef(0);
   const [saveStatus, setSaveStatus] = useState('Choose a settlement');
 
   const [activeCalendar, setActiveCalendar] = useState(null);
@@ -205,6 +203,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   // them into whatever's already stored, so we never need to resend the
   // whole settlement's terrain just because it grew.
   const dirtyTileKeysRef = useRef(new Set());
+  const terrainTileCoverageRef = useRef(new Map());
+  const terrainTileFetchTimerRef = useRef(null);
+  const terrainTileFetchControllerRef = useRef(null);
 
   // Every PUT (chunk flush or debounced full save) runs through this queue so
   // two requests can never interleave and race on the server-side tile merge.
@@ -245,8 +246,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [atlas, setAtlas] = useState({ atlas: { key: 'blank', name: 'Campaign World' }, locations: [] });
   const [atlasUpload, setAtlasUpload] = useState({ file: null, attribution: '', settingDefault: false });
   const [activeSettlementId, setActiveSettlementId] = useState(null);
+  const [selectedAtlasId, setSelectedAtlasId] = useState(null);
   const [settlementName, setSettlementName] = useState('World Atlas');
   const [movingAtlasId, setMovingAtlasId] = useState(null);
+  const [pendingAtlasMove, setPendingAtlasMove] = useState(null);
   const [showAtlasUpload, setShowAtlasUpload] = useState(false);
   const [newSettlementName, setNewSettlementName] = useState('');
   const [atlasStatus, setAtlasStatus] = useState('Loading World Atlas…');
@@ -268,7 +271,24 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [buildingViewMode, setBuildingViewMode] = useState('satellite');
   const [buildingEditDraft, setBuildingEditDraft] = useState(null);
   const [buildingEvents, setBuildingEvents] = useState(null);
+  const [buildingDeleteTarget, setBuildingDeleteTarget] = useState(null);
+  const [skipBuildingDeleteConfirmation, setSkipBuildingDeleteConfirmation] = useState(false);
+  const [buildingDeleteSessionId, setBuildingDeleteSessionId] = useState(socket?.id || null);
+
+  useEffect(() => {
+    const syncBuildingDeleteSession = () => setBuildingDeleteSessionId(socket?.id || null);
+    syncBuildingDeleteSession();
+    socket?.on?.('connect', syncBuildingDeleteSession);
+    return () => socket?.off?.('connect', syncBuildingDeleteSession);
+  }, [socket]);
+
+  useEffect(() => {
+    setBuildingDeleteTarget(null);
+    setSkipBuildingDeleteConfirmation(false);
+  }, [buildingDeleteSessionId]);
   const bootstrappedCampaign = useRef(null);
+  const settlementMapCacheRef = useRef(new Map());
+  const settlementMapRequestsRef = useRef(new Map());
 
   const campaignId = String(headers?.campaignID || headers?.CampaignID || '');
 
@@ -389,6 +409,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
     const store = tileStoreRef.current;
     store.clear();
+    dirtyTileKeysRef.current.clear();
+    terrainTileCoverageRef.current.clear();
+    terrainTileFetchControllerRef.current?.abort();
     setStoreDefaults(store, { seaLevelFeet: Number(map.environment?.sea_level_feet) || 0 });
     if (mapHeightMap) seedStoreFromHeightMap(store, mapHeightMap);
     hydrateTiles(store, map.reference_layers || []);
@@ -439,21 +462,54 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   }, []);
 
 
-  const openSettlement = useCallback(async (settlementId) => {
+  const fetchSettlementMap = useCallback((settlementId) => {
+    const id = Number(settlementId);
+    if (settlementMapCacheRef.current.has(id)) return Promise.resolve(settlementMapCacheRef.current.get(id));
+    if (settlementMapRequestsRef.current.has(id)) return settlementMapRequestsRef.current.get(id);
+    const request = axios.get(`/api/settlement-map/${campaignId}?settlement_id=${id}`, { headers })
+      .then(response => { settlementMapCacheRef.current.set(id, response.data); return response.data; })
+      .finally(() => settlementMapRequestsRef.current.delete(id));
+    settlementMapRequestsRef.current.set(id, request);
+    return request;
+  }, [campaignId, headers]);
+
+  const prefetchSettlement = useCallback((settlementId) => {
+    if (!campaignId || !settlementId) return;
+    loadSettlementMapEditor();
+    fetchSettlementMap(settlementId).catch(error => console.error('Unable to prefetch settlement map:', error));
+  }, [campaignId, fetchSettlementMap]);
+
+  const openSettlement = useCallback(async (settlementId, options = {}) => {
     if (!campaignId || !settlementId) return;
     const location = atlas.locations.find(item => item.id === Number(settlementId));
-    setActiveTool('inspect'); setActiveSettlementId(Number(settlementId)); setDesignLoaded(false); setMapLoading(true); setSaveStatus('Loading map…'); setSelected(null);
+    const startedAt = performance.now();
+    mapLoadStartedAtRef.current = startedAt;
+    const fromAtlasZoom = options.fromAtlasZoom === true;
+    const beginSceneLoad = () => {
+      setActiveTool('inspect'); setActiveSettlementId(Number(settlementId)); setDesignLoaded(false); setMapLoading(true); setSaveStatus('Loading map…'); setSelected(null);
+    };
+    // Cross the Atlas threshold immediately. Prefetching normally makes the
+    // data available already, but a slow request must not leave the user stuck
+    // at 1000% zoom with no visible transition.
+    beginSceneLoad();
+    if (fromAtlasZoom) setAtlasStatus(`Preparing ${location?.name || 'settlement'} terrain…`);
     if (location?.name) setSettlementName(location.name);
     try {
-      const response = await axios.get(`/api/settlement-map/${campaignId}?settlement_id=${settlementId}`, { headers });
-      applyMap(response.data);
+      const map = await fetchSettlementMap(settlementId);
+      settlementMapCacheRef.current.delete(Number(settlementId));
+      applyMap(map);
     } catch (error) {
       console.error('Unable to load settlement map:', error);
       setSaveStatus(error.response?.data?.message || 'Map load failed');
     } finally {
       setMapLoading(false);
     }
-  }, [campaignId, headers, applyMap, atlas.locations]);
+  }, [campaignId, applyMap, atlas.locations, fetchSettlementMap]);
+
+  const handleSceneReady = useCallback(() => {
+    const completedMs = Math.max(0, performance.now() - mapLoadStartedAtRef.current);
+    setSaveStatus(`Map loaded in ${(completedMs / 1000).toFixed(1)}s`);
+  }, []);
 
   const applySimulation = useCallback((state) => { setSimulation(state); if (state?.time?.day) setDay(state.time.day); }, []);
 
@@ -694,12 +750,81 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     });
   }, [chooseDestination, atlas.locations, activeSettlementId]);
 
+  const scheduleTerrainTileFetch = useCallback((camera) => {
+    const bounds = camera?.terrainBounds;
+    if (!designLoaded || !campaignId || !activeSettlementId || !bounds) return;
+    if (terrainTileFetchTimerRef.current !== null) window.clearTimeout(terrainTileFetchTimerRef.current);
+    terrainTileFetchTimerRef.current = window.setTimeout(async () => {
+      terrainTileFetchTimerRef.current = null;
+      let minX = Math.floor(bounds.minX / TILE_FEET);
+      let maxX = Math.floor(bounds.maxX / TILE_FEET);
+      let minZ = Math.floor(bounds.minY / TILE_FEET);
+      let maxZ = Math.floor(bounds.maxY / TILE_FEET);
+      // Keep one request bounded even when the camera is looking at the horizon.
+      if ((maxX - minX + 1) * (maxZ - minZ + 1) > 1024) {
+        const centerX = Math.floor(((camera.target?.[0] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
+        const centerZ = Math.floor(((camera.target?.[2] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
+        minX = centerX - 15; maxX = centerX + 16;
+        minZ = centerZ - 15; maxZ = centerZ + 16;
+      }
+      const renderCellFeet = Math.max(1, Number(camera.window?.cellFeet) || 16);
+      // Editing always requests the native 16-ft samples before a brush can
+      // overwrite the tile. Overview modes may use compact LOD responses.
+      const requestedCellFeet = activeTool === 'terrain' ? 16 : renderCellFeet;
+      const requestedGrid = Math.min(257, Math.max(2, Math.ceil(TILE_FEET / requestedCellFeet) + 1));
+      let needsFetch = false;
+      for (let z = minZ; z <= maxZ && !needsFetch; z += 1) {
+        for (let x = minX; x <= maxX; x += 1) {
+          if ((terrainTileCoverageRef.current.get(tileKey(x, z)) || 0) < requestedGrid) {
+            needsFetch = true;
+            break;
+          }
+        }
+      }
+      if (!needsFetch) return;
+
+      terrainTileFetchControllerRef.current?.abort();
+      const controller = new AbortController();
+      terrainTileFetchControllerRef.current = controller;
+      try {
+        const response = await axios.get(`/api/settlement-map/${campaignId}/terrain-tiles`, {
+          headers,
+          signal: controller.signal,
+          params: { settlement_id: activeSettlementId, min_x: minX, max_x: maxX,
+            min_z: minZ, max_z: maxZ, cell_feet: requestedCellFeet },
+        });
+        if (controller.signal.aborted) return;
+        for (let z = minZ; z <= maxZ; z += 1) {
+          for (let x = minX; x <= maxX; x += 1) {
+            terrainTileCoverageRef.current.set(tileKey(x, z), requestedGrid);
+          }
+        }
+        const safeTiles = (response.data.tiles || []).filter(
+          tile => !dirtyTileKeysRef.current.has(tileKey(Number(tile.tile_x), Number(tile.tile_z)))
+        );
+        if (safeTiles.length) {
+          hydrateTiles(tileStoreRef.current, safeTiles);
+          setTileStoreVersion(value => value + 1);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) console.error('Unable to stream terrain tiles:', error);
+      }
+    }, 120);
+  }, [activeSettlementId, activeTool, campaignId, designLoaded, headers]);
+
+  useEffect(() => () => {
+    if (terrainTileFetchTimerRef.current !== null) window.clearTimeout(terrainTileFetchTimerRef.current);
+    terrainTileFetchControllerRef.current?.abort();
+  }, []);
+
   // 3. Wrap the conditional onCameraChange inline function
   const handleCameraChange = useCallback((camera) => {
+    referenceCameraRef.current = camera;
+    scheduleTerrainTileFetch(camera);
     if (playerFollow) {
       sendPlayerCommand('camera', { camera });
     }
-  }, [playerFollow, sendPlayerCommand]);
+  }, [playerFollow, scheduleTerrainTileFetch, sendPlayerCommand]);
 
   const applyReferenceCalibration = () => {
     if (!selectedReference || calibrationPoints.length !== 2) return;
@@ -707,23 +832,47 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     setCalibrationPoints([]); setFitRequest(value => value + 1);
   };
 
-  const uploadReference = async (event) => {
-    event.preventDefault();
-    if (!referenceUpload.file || !campaignId) return;
-    try {
-      setUploadStatus('Inspecting original image…');
-      const optimized = await optimizeReferenceImage(referenceUpload.file);
-      const form = new FormData();
-      form.append('file', optimized.file);
-      form.append('settlement_id', activeSettlementId);
-      ['name', 'width_feet', 'height_feet', 'origin_x', 'origin_y', 'scope', 'linked_building_id', 'sync_exterior'].forEach(key => form.append(key, referenceUpload[key]));
-      setUploadStatus(`${optimized.width && optimized.height ? `${optimized.width} × ${optimized.height} px · ` : ''}Uploading original…`);
-      const response = await axios.post(`/api/settlement-map/${campaignId}/reference-layers`, form, { headers });
-      const layer = response.data.layer;
-      setReferenceLayers((response.data.map.reference_layers || [...referenceLayers, layer]).filter(value => value.layer_type !== 'heightmap'));
-      setSelectedReferenceId(layer.id); setReferenceUpload(value => ({ ...value, file: null, name: '' }));
-      setUploadStatus(`Original retained · viewer ${layer.preview_pixel_width} × ${layer.preview_pixel_height} px`); setFitRequest(value => value + 1);
-    } catch (error) { console.error('Unable to upload reference map:', error); setUploadStatus(error.response?.data?.message || error.response?.data?.details || error.message || 'Upload failed'); }
+  const applyReferencePlacement = async (placement, file) => {
+    if (!file) {
+      setReferenceLayers(values => values.map(layer => layer.id === placement.id ? placement : layer));
+      referenceLayersRef.current = referenceLayersRef.current.map(layer => layer.id === placement.id ? placement : layer);
+      return placement;
+    }
+    const form = new FormData();
+    form.append('file', file);
+    form.append('settlement_id', activeSettlementId);
+    ['name', 'width_feet', 'height_feet', 'origin_x', 'origin_y', 'rotation_degrees', 'opacity', 'scope'].forEach(key => form.append(key, placement[key]));
+    const response = await runSerializedSave(async () => {
+      try {
+        const result = await axios.post(`/api/settlement-map/${campaignId}/reference-layers`, form, { headers });
+        const layer = result.data.layer;
+        referenceLayersRef.current = [...referenceLayersRef.current.filter(value => value.id !== layer.id), layer];
+        setReferenceLayers(referenceLayersRef.current);
+        setSelectedReferenceId(layer.id);
+        return result;
+      } catch (error) { return { error }; }
+    });
+    if (response.error) throw response.error;
+    return response.data.layer;
+  };
+
+  const uploadFloorImage = async (file, level) => {
+    const optimized = await optimizeReferenceImage(file);
+    const form = new FormData();
+    form.append('file', optimized.file);
+    form.append('settlement_id', activeSettlementId);
+    form.append('scope', 'building');
+    form.append('linked_building_id', selectedBuilding.id);
+    form.append('floor_level_id', level.id);
+    form.append('name', `${selectedBuilding.name} · ${level.name}`);
+    const response = await axios.post(`/api/settlement-map/${campaignId}/reference-layers`, form, { headers });
+    const layer = response.data.layer;
+    setReferenceLayers(values => [...values.filter(l => l.id !== layer.id), layer]);
+    const xs = level.corners.map(p => p.x), ys = level.corners.map(p => p.y);
+    const width = Math.max(10, Math.max(...xs) - Math.min(...xs));
+    return { image_url: layer.image_url, image_asset_id: layer.image_asset_id,
+      x: (Math.min(...xs) + Math.max(...xs)) / 2 || 0, y: (Math.min(...ys) + Math.max(...ys)) / 2 || 0,
+      width_feet: width, height_feet: width * (layer.pixel_height / Math.max(1, layer.pixel_width)), rotation: 0, opacity: 0.6, visible: true };
   };
 
   const formatDuration = (minutes) => minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${Math.floor(minutes / 1440)}d ${Math.floor((minutes % 1440) / 60)}h`;
@@ -752,8 +901,29 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   };
 
   const placeSettlement = async (id, x, y) => {
+    const prior = atlas.locations.find(location => location.id === id);
+    // Dragging feels immediate; the network request only confirms or rolls
+    // back the marker rather than holding its visual position hostage.
+    if (prior) updateAtlasLocation({ ...prior, atlas_x: x, atlas_y: y });
+    setAtlasStatus(`Positioning ${prior?.name || 'settlement'}…`);
     try { const response = await axios.patch(`/api/world-atlas/${campaignId}/settlements/${id}`, { atlas_x: x, atlas_y: y }, { headers }); updateAtlasLocation(response.data); setAtlasStatus(`${response.data.name} placed on the atlas.`); }
-    catch (error) { setAtlasStatus(error.response?.data?.message || 'Unable to place settlement'); }
+    catch (error) { if (prior) updateAtlasLocation(prior); setAtlasStatus(error.response?.data?.message || 'Unable to place settlement'); }
+  };
+
+  const beginAtlasMove = location => {
+    setMovingAtlasId(location.id);
+    setPendingAtlasMove({ id: location.id, atlas_x: location.atlas_x, atlas_y: location.atlas_y });
+    setSelectedAtlasId(location.id);
+    setAtlasStatus(location.atlas_x == null
+      ? `Click the atlas to place ${location.name}, then choose Apply.`
+      : `Drag ${location.name}'s pin tip, then choose Apply.`);
+  };
+
+  const applyAtlasMove = async location => {
+    if (!pendingAtlasMove || pendingAtlasMove.id !== location.id || pendingAtlasMove.atlas_x == null || pendingAtlasMove.atlas_y == null) return;
+    await placeSettlement(location.id, pendingAtlasMove.atlas_x, pendingAtlasMove.atlas_y);
+    setMovingAtlasId(null);
+    setPendingAtlasMove(null);
   };
 
   const setSettlementStatus = async (location, status) => {
@@ -783,11 +953,59 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const selectedAsset = assets.find(asset => asset.key === selectedBuilding?.asset_key);
   const selectedRoad = roads.find(road => road.id === selectedBuilding?.front_road_id);
 
-  const deleteSelectedBuilding = () => {
+  const deleteBuildingById = useCallback((buildingId) => {
+    if (buildingId == null) return;
+    setBuildings(values => values.filter(building => building.id !== buildingId));
+    setSelected(current => current?.id === buildingId ? null : current);
+  }, []);
+
+  const buildingDeletePreferenceKey = buildingDeleteSessionId
+    ? `kachhapa:skip-building-delete-confirmation:${buildingDeleteSessionId}`
+    : null;
+
+  const requestDeleteSelectedBuilding = useCallback(() => {
     if (!selectedBuilding) return;
-    setBuildings(values => values.filter(building => building.id !== selectedBuilding.id));
-    setSelected(null);
-  };
+    let skipConfirmation = false;
+    if (buildingDeletePreferenceKey) {
+      try { skipConfirmation = window.sessionStorage.getItem(buildingDeletePreferenceKey) === 'true'; }
+      catch { /* Browser storage may be unavailable; keep the safe confirmation. */ }
+    }
+    if (skipConfirmation) {
+      deleteBuildingById(selectedBuilding.id);
+      return;
+    }
+    setSkipBuildingDeleteConfirmation(false);
+    setBuildingDeleteTarget(selectedBuilding);
+  }, [buildingDeletePreferenceKey, deleteBuildingById, selectedBuilding]);
+
+  const closeBuildingDeleteDialog = useCallback(() => {
+    setBuildingDeleteTarget(null);
+    setSkipBuildingDeleteConfirmation(false);
+  }, []);
+
+  const confirmBuildingDeletion = useCallback(() => {
+    if (!buildingDeleteTarget) return;
+    if (skipBuildingDeleteConfirmation && buildingDeletePreferenceKey) {
+      try { window.sessionStorage.setItem(buildingDeletePreferenceKey, 'true'); }
+      catch { /* The deletion can still proceed without remembering the preference. */ }
+    }
+    deleteBuildingById(buildingDeleteTarget.id);
+    closeBuildingDeleteDialog();
+  }, [buildingDeletePreferenceKey, buildingDeleteTarget, closeBuildingDeleteDialog, deleteBuildingById, skipBuildingDeleteConfirmation]);
+
+  useEffect(() => {
+    if (activeTool !== 'build' || buildMode !== 'select-placed' || !selectedBuilding || buildingDeleteTarget) return undefined;
+    const handleBuildingDeleteShortcut = event => {
+      if (event.key !== 'Backspace' || event.defaultPrevented) return;
+      const target = event.target;
+      const tagName = target?.tagName?.toLowerCase();
+      if (target?.isContentEditable || target?.closest?.('[contenteditable="true"]') || ['input', 'textarea', 'select'].includes(tagName)) return;
+      event.preventDefault();
+      requestDeleteSelectedBuilding();
+    };
+    window.addEventListener('keydown', handleBuildingDeleteShortcut);
+    return () => window.removeEventListener('keydown', handleBuildingDeleteShortcut);
+  }, [activeTool, buildMode, buildingDeleteTarget, requestDeleteSelectedBuilding, selectedBuilding]);
 
   const updateSelectedBuilding = (updater) => {
     if (!selectedBuilding) return;
@@ -909,6 +1127,8 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
       // Send to server (serialized behind any in-flight chunk flush)
       runSerializedSave(async () => {
         try {
+          // An upload may have completed while this save waited in the queue.
+          payload.reference_layers = mergeReferenceSave(referenceLayersRef.current, payload.reference_layers);
           await axios.put(`/api/settlement-map/${campaignId}`, payload, { headers });
           setSaveStatus('Saved');
           committedChunkKeys.forEach(key => dirtyKeys.delete(key)); // committed
@@ -1095,13 +1315,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
         )}
 
         <main className="settlement-map" style={{ flex: 1, position: 'relative' }} onClick={() => setMapContext(null)}>
-          {activeTool !== 'atlas' && designLoaded && !mapLoading && <Suspense fallback={<MapLoading settlementName={settlementName} />}>
+          {activeTool !== 'atlas' && designLoaded && !mapLoading && <Suspense fallback={null}>
             <SettlementMapEditor
               tileStore={tileStoreRef.current}
               onTilesDirtied={handleTilesDirtied}
               tileStoreVersion={tileStoreVersion}
               activeTool={activeTool}
               buildMode={buildMode}
+              setBuildMode={setBuildMode}
               blueprintDraft={blueprintDraft}
               setBlueprintDraft={setBlueprintDraft}
               atmosphereSettings={atmosphereSettings}
@@ -1132,7 +1353,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               lamps={lamps}
               partyPosition={travelContext.party_position}
               destination={destination}
-              referenceLayers={referenceLayers}
+              referenceLayers={displayedReferenceLayers}
+              referencePlacement={activeTool === 'reference' ? referenceDraft : null}
+              setReferencePlacement={setReferenceDraft}
               onWaypoint={handleWaypoint}
               onReferencePoint={recordCalibrationPoint}
               onCameraChange={handleCameraChange}
@@ -1141,6 +1364,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               pointsOfInterest={travelContext.points_of_interest}
               campaignName={headers?.campaignName || headers?.CampaignName || ''}
               onMapContext={setMapContext}
+              onSceneReady={handleSceneReady}
             />
           </Suspense>
           }
@@ -1268,7 +1492,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
             </Box>
           )}
 
-          {activeTool === 'reference' && selectedReference &&
+          {activeTool === 'reference' && selectedReference && !referenceDraft &&
             <div className="reference-projection-toggle">
               <label>
                 <input type="checkbox" checked={selectedReference.project_to_terrain !== false} onChange={event => updateReference(selectedReference.id, layer => ({ ...layer, project_to_terrain: event.target.checked }))} /> Project image onto sculpted terrain
@@ -1305,21 +1529,25 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 <Box sx={{ flex: 1, borderRadius: '8px', border: '1px solid #526258', background: '#07100b' }}>
                   <AtlasViewport
                     atlas={atlas.atlas}
-                    locations={atlas.locations}
-                    selectedId={movingAtlasId || activeSettlementId}
-                    onSelect={id => openSettlement(id)}
-                    placementEnabled={movingAtlasId != null}
-                    onPlace={async (x, y) => {
-                      await placeSettlement(movingAtlasId, x, y);
-                      setMovingAtlasId(null);
-                    }}
+                    locations={atlas.locations.map(location => pendingAtlasMove?.id === location.id
+                      ? { ...location, atlas_x: pendingAtlasMove.atlas_x, atlas_y: pendingAtlasMove.atlas_y }
+                      : location)}
+                    selectedId={movingAtlasId || selectedAtlasId || activeSettlementId}
+                    movableId={movingAtlasId}
+                    onSelect={setSelectedAtlasId}
+                    onOpen={id => openSettlement(id)}
+                    onMove={(id, atlas_x, atlas_y) => { if (id === movingAtlasId) setPendingAtlasMove({ id, atlas_x, atlas_y }); }}
+                    onTerrainApproach={prefetchSettlement}
+                    onTerrainEnter={id => openSettlement(id, { fromAtlasZoom: true })}
+                    placementEnabled={movingAtlasId != null && atlas.locations.find(location => location.id === movingAtlasId)?.atlas_x == null}
+                    onPlace={(atlas_x, atlas_y) => setPendingAtlasMove({ id: movingAtlasId, atlas_x, atlas_y })}
                   />
                 </Box>
 
                 <Typography variant="caption" className="atlas-help" sx={{ mt: 1, color: '#8f9d95', fontStyle: 'italic' }}>
                   {movingAtlasId
-                    ? `Click the atlas surface layout to set ${atlas.locations.find(l => l.id === movingAtlasId)?.name || 'the settlement'}'s new geo-coordinates.`
-                    : 'Wheel to zoom and drag to pan landscape. Choose Move beside a location entry before re-anchoring its map marker.'}
+                    ? `${atlas.locations.find(l => l.id === movingAtlasId)?.atlas_x == null ? 'Click the atlas' : 'Drag the pin tip'} to preview ${atlas.locations.find(l => l.id === movingAtlasId)?.name || 'the settlement'}'s new coordinates, then choose Apply.`
+                    : 'Wheel to zoom and drag to pan. Zoom through 1000% over a settlement pin to enter its terrain.'}
                 </Typography>
               </Box>
 
@@ -1395,7 +1623,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 {/* 3. SCROLLABLE LOCATION DIRECTORY RECORD CARDS CAROUSEL */}
                 <Box className="atlas-location-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, flex: 1, overflowY: 'auto', pr: 0.5 }}>
                   {atlas.locations.map(location => {
-                    const isActive = location.id === (movingAtlasId || activeSettlementId);
+                    const isActive = location.id === (movingAtlasId || selectedAtlasId || activeSettlementId);
                     const isDestroyed = location.status === 'destroyed';
 
                     return (
@@ -1434,10 +1662,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                             <Button
                               size="small"
                               variant={movingAtlasId === location.id ? 'contained' : 'outlined'}
-                              onClick={() => { setMovingAtlasId(location.id); setAtlasStatus(`Click the map overworld coordinates to re-anchor ${location.name}.`); }}
+                              onClick={() => movingAtlasId === location.id ? applyAtlasMove(location) : beginAtlasMove(location)}
+                              disabled={movingAtlasId === location.id && (pendingAtlasMove?.atlas_x == null || pendingAtlasMove?.atlas_y == null)}
                               sx={{ textTransform: 'none', fontSize: '10px', height: '22px', color: '#fff', borderColor: '#53645a', backgroundColor: movingAtlasId === location.id ? '#16322c' : 'transparent' }}
                             >
-                              Move
+                              {movingAtlasId === location.id ? 'Apply' : 'Move'}
                             </Button>
 
                             {location.atlas_x != null && (
@@ -1477,129 +1706,25 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
 
           {activeTool === 'reference' && (
-            <aside className="editor-menu reference-menu">
-              <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1 }}>
-                REFERENCE LAYERS
-              </Typography>
-
-              <form onSubmit={uploadReference}>
-                <Button variant="contained" component="label" fullWidth sx={{ mb: 1, backgroundColor: '#23352d' }}>
-                  Choose Map File
-                  <input
-                    type="file"
-                    hidden
-                    accept="image/png,image/jpeg,image/webp"
-                    onChange={event => setReferenceUpload(value => ({
-                      ...value,
-                      file: event.target.files?.[0] || null,
-                      name: value.name || event.target.files?.[0]?.name.replace(/\.[^.]+$/, '') || ''
-                    }))}
-                  />
-                </Button>
-
-                <TextField
-                  label="Name"
-                  size="small"
-                  fullWidth
-                  value={referenceUpload.name}
-                  onChange={event => setReferenceUpload(value => ({ ...value, name: event.target.value }))}
-                  sx={{ mb: 1, input: { color: '#fff' } }}
-                />
-
-                <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
-                  <TextField
-                    label="Width (ft)"
-                    type="number"
-                    size="small"
-                    value={referenceUpload.width_feet}
-                    onChange={event => setReferenceUpload(value => ({ ...value, width_feet: Number(event.target.value) }))}
-                  />
-                  <TextField
-                    label="Height (ft)"
-                    type="number"
-                    size="small"
-                    value={referenceUpload.height_feet}
-                    onChange={event => setReferenceUpload(value => ({ ...value, height_feet: Number(event.target.value) }))}
-                  />
-                </Box>
-
-                <Button type="submit" variant="contained" fullWidth disabled={!referenceUpload.file} sx={{ color: '#17211c', backgroundColor: '#bd9149' }}>
-                  Upload Reference
-                </Button>
-                {uploadStatus && <Typography variant="caption" sx={{ color: '#aebbb3', display: 'block', mt: 1 }}>{uploadStatus}</Typography>}
-              </form>
-
-              {referenceLayers.length > 0 && (
-                <Box sx={{ mt: 2, borderTop: '1px solid #33443b', pt: 1 }}>
-                  <ToggleButtonGroup
-                    orientation="vertical"
-                    value={selectedReferenceId}
-                    exclusive
-                    fullWidth
-                    onChange={(e, id) => { if (id !== null) { setSelectedReferenceId(id); setCalibrationPoints([]); } }}
-                    sx={{ mb: 2, gap: '4px' }}
-                  >
-                    {referenceLayers.map(layer => (
-                      <ToggleButton key={layer.id} value={layer.id} sx={{ justifyContent: 'space-between', textTransform: 'none', color: '#d5ddd7' }}>
-                        <span>{layer.name}</span>
-                        <Typography variant="caption" sx={{ color: '#94a3b8' }}>{Math.round(layer.width_feet)} × {Math.round(layer.height_feet)} ft</Typography>
-                      </ToggleButton>
-                    ))}
-                  </ToggleButtonGroup>
-
-                  {selectedReference && (
-                    <Box className="reference-settings" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                      <FormControlLabel
-                        control={<Checkbox checked={selectedReference.visible} onChange={event => updateReference(selectedReference.id, layer => ({ ...layer, visible: event.target.checked }))} />}
-                        label="Visible"
-                        sx={{ color: '#d5ddd7' }}
-                      />
-
-                      <Box>
-                        <Typography variant="caption" sx={{ color: '#aebbb3' }}>Opacity: {Math.round(selectedReference.opacity * 100)}%</Typography>
-                        <Slider
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={selectedReference.opacity}
-                          onChange={event => updateReference(selectedReference.id, layer => ({ ...layer, opacity: Number(event.target.value) }))}
-                          sx={{ color: '#bd9149' }}
-                        />
-                      </Box>
-
-                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-                        <TextField label="Width (ft)" type="number" size="small" value={selectedReference.width_feet} onChange={event => updateReference(selectedReference.id, layer => ({ ...layer, width_feet: Number(event.target.value), feet_per_pixel: Number(event.target.value) / Math.max(1, Number(layer.pixel_width)) }))} />
-                        <TextField label="Height (ft)" type="number" size="small" value={selectedReference.height_feet} onChange={event => updateReference(selectedReference.id, layer => ({ ...layer, height_feet: Number(event.target.value) }))} />
-                        <TextField label="Center X" type="number" size="small" value={selectedReference.origin_x} onChange={event => updateReference(selectedReference.id, layer => ({ ...layer, origin_x: Number(event.target.value) }))} />
-                        <TextField label="Center Y" type="number" size="small" value={selectedReference.origin_y} onChange={event => updateReference(selectedReference.id, layer => ({ ...layer, origin_y: Number(event.target.value) }))} />
-                      </Box>
-
-                      <Box className="calibration-box" sx={{ background: '#101815', p: 1, borderRadius: 1, border: '1px solid #3d4d43' }}>
-                        <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#ecd89f' }}>Distance Calibration</Typography>
-                        <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mb: 1 }}>
-                          {calibrationPoints[0] ? `A: ${calibrationPoints[0].x}, ${calibrationPoints[0].y}` : 'Click point A'} · {calibrationPoints[1] ? `B: ${calibrationPoints[1].x}, ${calibrationPoints[1].y}` : 'Click point B'}
-                        </Typography>
-                        <TextField label="Known Distance (ft)" type="number" size="small" fullWidth value={knownDistance} onChange={event => setKnownDistance(Number(event.target.value))} sx={{ mb: 1 }} />
-                        <Button variant="contained" fullWidth disabled={calibrationPoints.length !== 2} onClick={applyReferenceCalibration} sx={{ backgroundColor: '#bd9149', color: '#17211c' }}>
-                          Apply Calibration
-                        </Button>
-                      </Box>
-
-                      <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                        <Button variant="outlined" fullWidth onClick={() => setFitRequest(value => value + 1)} sx={{ color: '#d5ddd7', borderColor: '#53645a' }}>
-                          Fit In View
-                        </Button>
-                        <Button variant="contained" color="error" fullWidth onClick={() => { setReferenceLayers(values => values.filter(layer => layer.id !== selectedReference.id)); setSelectedReferenceId(null); setCalibrationPoints([]); }}>
-                          Remove Layer
-                        </Button>
-                      </Box>
-                    </Box>
-                  )}
-                </Box>
-              )}
-            </aside>
+            <ReferencePlacementPanel key={activeSettlementId} layers={referenceLayers.filter(l => !l.floor_level_id)} selectedId={selectedReferenceId}
+              select={id => { setSelectedReferenceId(id); setCalibrationPoints([]); }}
+              draft={referenceDraft} setDraft={setReferenceDraft} cameraRef={referenceCameraRef}
+              apply={applyReferencePlacement}
+              remove={id => { setReferenceLayers(values => values.filter(l => l.id !== id)); setSelectedReferenceId(null); }}
+              fit={reference => setLocalViewCommand({ mode: 'reference', reference, nonce: Date.now() })}
+              calibration={<details><summary>Distance calibration</summary>
+                <p>Click two terrain points, then enter their known distance.</p>
+                <p>{calibrationPoints.length}/2 points selected</p>
+                <input aria-label="Known distance in feet" type="number" min="1" value={knownDistance} onChange={e => setKnownDistance(Number(e.target.value))} />
+                <button disabled={calibrationPoints.length !== 2 || knownDistance <= 0} onClick={applyReferenceCalibration}>Apply calibration</button>
+              </details>}
+            />
           )}
 
+          {activeTool === 'inspect' && selectedBuilding?.is_blueprint && (
+            <Button sx={{ position: 'absolute', right: 24, bottom: 70, background: '#23352d', color: '#e7d6ae' }}
+              onClick={() => { setBuildMode('select-placed'); setActiveTool('build'); }}>Building details & levels</Button>
+          )}
           {activeTool === 'build' && designLoaded && (
             <aside className="editor-menu build-tools-panel">
               <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
@@ -1608,7 +1733,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
               {/* Integrated 3-Way Mode Selection Header Ribbon Selector */}
               <ToggleButtonGroup
-                value={buildMode}
+                value={buildMode === 'move-selected' ? 'select-placed' : buildMode}
                 exclusive
                 fullWidth
                 size="small"
@@ -1699,13 +1824,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         Close Footprint Polygon Loop
                       </Button>
 
-                      <Button variant="outlined" size="small" fullWidth onClick={() => setBlueprintDraft(addBlueprintLevel(blueprintDraft))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
-                        Add Next Floor Level (Extrude Up)
-                      </Button>
+                      <Typography variant="caption">Trace the ground floor here. Add upper floors and basements from the building’s Levels section after saving.</Typography>
 
                       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mt: 0.5 }}>
-                        <Button variant="contained" color="success" size="small" onClick={() => { setBuildings(prev => [...prev, blueprintDraft]); setSelected(blueprintDraft); setBlueprintDraft(null); setBuildMode('select-placed'); }}>
-                          Save Mesh
+                        <Button disabled={(blueprintDraft.levels?.[0]?.corners.length || 0) < 3} variant="contained" color="success" size="small" onClick={() => { const finished = closeBlueprintFootprint(blueprintDraft); setBuildings(prev => [...prev.filter(b => b.id !== finished.id), finished]); setSelected(finished); setBlueprintDraft(null); setBuildMode('select-placed'); }}>
+                          Create Building
                         </Button>
                         <Button variant="contained" color="error" size="small" onClick={() => { setBlueprintDraft(null); setBuildMode('place-asset'); }}>
                           Cancel
@@ -1717,7 +1840,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               )}
 
               {/* MODE C: PROPERTY SELECTION & ADJUSTMENT TRACKS */}
-              {buildMode === 'select-placed' && (
+              {['select-placed', 'move-selected'].includes(buildMode) && (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto' }}>
                     {buildings.map(building => (
@@ -1749,8 +1872,25 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                     )}
                   </Box>
 
+                  <Typography variant="caption" sx={{ color: '#94a3b8', lineHeight: 1.35 }}>
+                    {buildMode === 'move-selected'
+                      ? 'Drag the selected structure on the map, then choose Done Moving.'
+                      : 'Select a building to edit it or move it on the map.'}
+                  </Typography>
+
                   {selectedBuilding && (
                     <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                      <Button
+                        variant={buildMode === 'move-selected' ? 'contained' : 'outlined'}
+                        startIcon={<OpenWithIcon fontSize="small" />}
+                        onClick={() => setBuildMode(buildMode === 'move-selected' ? 'select-placed' : 'move-selected')}
+                        sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
+                      >
+                        {buildMode === 'move-selected' ? 'Done Moving' : 'Move Structure'}
+                      </Button>
+                      {selectedBuilding.is_blueprint && <BlueprintLevels key={selectedBuilding.id} building={selectedBuilding}
+                        onChange={next => setBuildings(values => values.map(b => b.id === next.id ? next : b))}
+                        uploadImage={uploadFloorImage} />}
                       <TextField
                         label="Rename Structure"
                         size="small"
@@ -1764,7 +1904,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           <span>Width Boundary</span>
                           <strong>{Math.round(selectedBuilding.width_feet)} ft</strong>
                         </Typography>
-                        <Slider min={10} max={200} step={1} value={selectedBuilding.width_feet} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, width_feet: Number(val) }))} sx={{ color: '#bd9149', py: 0.5 }} />
+                        <Slider disabled={!!selectedBuilding.is_blueprint} min={10} max={200} step={1} value={selectedBuilding.width_feet} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, width_feet: Number(val) }))} sx={{ color: '#bd9149', py: 0.5 }} />
                       </Box>
 
                       <Box>
@@ -1772,7 +1912,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           <span>Depth Dimension</span>
                           <strong>{Math.round(selectedBuilding.depth_feet)} ft</strong>
                         </Typography>
-                        <Slider min={10} max={200} step={1} value={selectedBuilding.depth_feet} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, depth_feet: Number(val) }))} sx={{ color: '#bd9149', py: 0.5 }} />
+                        <Slider disabled={!!selectedBuilding.is_blueprint} min={10} max={200} step={1} value={selectedBuilding.depth_feet} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, depth_feet: Number(val) }))} sx={{ color: '#bd9149', py: 0.5 }} />
                       </Box>
 
                       <Box>
@@ -1783,7 +1923,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         <Slider min={0} max={359} step={1} value={Math.round((selectedBuilding.rotation || 0) * 180 / Math.PI)} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, rotation: Number(val) * Math.PI / 180 }))} sx={{ color: '#bd9149', py: 0.5 }} />
                       </Box>
 
-                      <Button variant="contained" color="error" fullWidth startIcon={<DeleteIcon />} onClick={deleteSelectedBuilding} sx={{ fontWeight: 'bold', textTransform: 'none' }}>
+                      <Button variant="contained" color="error" fullWidth startIcon={<DeleteIcon />} onClick={requestDeleteSelectedBuilding} sx={{ fontWeight: 'bold', textTransform: 'none' }}>
                         Delete Selected Building
                       </Button>
                     </Box>
@@ -2356,6 +2496,51 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
       </Box>
 
       <>
+        <Dialog
+          open={Boolean(buildingDeleteTarget)}
+          onClose={closeBuildingDeleteDialog}
+          onKeyDown={event => {
+            if (event.key !== 'Enter' || event.defaultPrevented) return;
+            event.preventDefault();
+            confirmBuildingDeletion();
+          }}
+          aria-labelledby="building-delete-dialog-title"
+          aria-describedby="building-delete-dialog-description"
+          maxWidth="xs"
+          fullWidth
+          PaperProps={{
+            sx: {
+              backgroundColor: '#14201c',
+              backgroundImage: 'none',
+              border: '1px solid #9f3a3a',
+              color: '#d5ddd7',
+              p: 1
+            }
+          }}
+        >
+          <DialogTitle id="building-delete-dialog-title" sx={{ color: '#fff', fontWeight: 700, pb: 1 }}>
+            Delete {buildingDeleteTarget?.name || 'this building'}?
+          </DialogTitle>
+          <DialogContent>
+            <Typography id="building-delete-dialog-description" variant="body2" sx={{ color: '#c3cec7', lineHeight: 1.5, mb: 1.5 }}>
+              This removes the selected building from the settlement. Press Enter to confirm or Escape to cancel.
+            </Typography>
+            <FormControlLabel
+              control={<Checkbox checked={skipBuildingDeleteConfirmation} onChange={event => setSkipBuildingDeleteConfirmation(event.target.checked)} sx={{ color: '#e05252', '&.Mui-checked': { color: '#e05252' } }} />}
+              label="Don't ask me again for this session"
+              sx={{ color: '#d5ddd7', alignItems: 'center' }}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+            <Button variant="outlined" onClick={closeBuildingDeleteDialog} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+              Cancel
+            </Button>
+            <Button autoFocus variant="contained" color="error" startIcon={<DeleteIcon />} onClick={confirmBuildingDeletion} sx={{ fontWeight: 'bold', textTransform: 'none' }}>
+              Delete Building
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         <Dialog
           open={Boolean(buildingEditDraft)}
           onClose={() => setBuildingEditDraft(null)}

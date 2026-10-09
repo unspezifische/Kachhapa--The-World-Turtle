@@ -1112,6 +1112,32 @@ class WorldAtlasLocation(db.Model):
         return base_dict
 
 
+class SettlementTerrainTile(db.Model):
+    """One independently writable authored terrain tile."""
+    __tablename__ = 'settlement_terrain_tile'
+    id = db.Column(db.Integer, primary_key=True)
+    settlement_id = db.Column(
+        db.Integer,
+        db.ForeignKey('world_atlas_location.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    tile_x = db.Column(db.Integer, nullable=False)
+    tile_z = db.Column(db.Integer, nullable=False)
+    payload = db.Column(db.JSON, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            'settlement_id', 'tile_x', 'tile_z',
+            name='uq_settlement_terrain_tile_coordinates',
+        ),
+    )
+
 
 class MapMediaAsset(db.Model):
     """Opaque, database-backed raster used by settlement maps and world atlases."""

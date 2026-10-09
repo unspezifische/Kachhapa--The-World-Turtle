@@ -1,6 +1,6 @@
 import { createTerrainHeightSampler, createTerrainStrokeSampler, heightmapHeightAt } from './settlementEditor';
 
-export const TILE_GRID = 128;              // cells per tile side (match your original heightmap grid_width if possible)
+export const TILE_GRID = 257;              // 256 intervals = 16 ft; supports 30-ft brushes reliably
 export const TILE_FEET = 4096;             // world footprint of one tile
 // TILE_GRID is the number of stored points, so there are TILE_GRID - 1
 // intervals between the two shared tile edges.
@@ -18,6 +18,19 @@ function valueNoise(x, y) {
 function fbm(x, y) {
     return 0.5 * valueNoise(x, y) + 0.25 * valueNoise(x * 2.1, y * 2.1)
         + 0.125 * valueNoise(x * 4.3, y * 4.3) + 0.0625 * valueNoise(x * 8.7, y * 8.7);
+}
+
+// Procedural terrain fills unknown frontier; it must not invent lakes in a
+// default flat settlement. Explicit/imported below-sea samples still propagate
+// across a genuine coast through the edge-correction pass below.
+const naturalTerrainHeight = (store, x, y, base = store.defaults?.baseFeet ?? 30) => {
+    const value = base + (fbm(x / 900, y / 900) - 0.5) * 48;
+    if (store.defaults?.allowProceduralOcean) return value;
+    return Math.max((store.defaults?.seaLevelFeet ?? 0) + 2, value);
+};
+
+function validTileValue(value) {
+    return Number.isFinite(Number(value));
 }
 
 export const tileKey = (tx, tz) => `${tx},${tz}`;
@@ -97,7 +110,13 @@ export function ensureTile(store, tx, tz, options = {}) {
     const G = TILE_GRID;
     const N = store.get(tileKey(tx, tz + 1)), S = store.get(tileKey(tx, tz - 1));
     const E = store.get(tileKey(tx + 1, tz)), W = store.get(tileKey(tx - 1, tz));
-    const baseFall = options.fallbackBaseFeet ?? 30;
+    const baseFall = options.fallbackBaseFeet ?? store.defaults?.baseFeet ?? 30;
+    const baseline = (x, y) => naturalTerrainHeight(store, x, y, baseFall);
+    // Initialize EVERY sample, including edges with no existing neighbor.
+    // World coordinates make adjacent independently generated edges identical.
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+        tile.values[j * G + i] = baseline(tile.origin_x + i * CELL_FEET, tile.origin_y + j * CELL_FEET);
+    }
 
     // 1. Hard-copy shared borders from existing neighbors (exact seam match)
     const edges = { n: null, s: null, e: null, w: null };
@@ -111,26 +130,34 @@ export function ensureTile(store, tx, tz, options = {}) {
     if (S && W) tile.values[0] = (edges.s[0] + edges.w[0]) / 2;
     if (S && E) tile.values[G - 1] = (edges.s[G - 1] + edges.e[0]) / 2;
 
-    const hasAny = !!(N || S || E || W);
     const smooth = t => t * t * (3 - 2 * t);
+
+    // Include natural edges in the blend too: approaching an unshared edge
+    // must converge to its initialized heights, not to an unrelated neighbor.
+    edges.n = tile.values.slice((G - 1) * G);
+    edges.s = tile.values.slice(0, G);
+    edges.w = Array.from({ length: G }, (_, j) => tile.values[j * G]);
+    edges.e = Array.from({ length: G }, (_, j) => tile.values[j * G + G - 1]);
+    for (let k = 0; k < G; k++) {
+        const x = tile.origin_x + k * CELL_FEET, y = tile.origin_y + k * CELL_FEET;
+        edges.n[k] -= baseline(x, tile.origin_y + TILE_FEET);
+        edges.s[k] -= baseline(x, tile.origin_y);
+        edges.w[k] -= baseline(tile.origin_x, y);
+        edges.e[k] -= baseline(tile.origin_x + TILE_FEET, y);
+    }
 
     // 2. Fill interior: distance-faded edge blend + noise that ramps in away from seams
     for (let j = 1; j < G - 1; j++) for (let i = 1; i < G - 1; i++) {
         const dN = G - 1 - j, dS = j, dW = i, dE = G - 1 - i;
-        let wSum = 0, vSum = 0, dMin = Infinity;
-        if (edges.n) { const w = 1 / (dN + 1); wSum += w; vSum += w * edges.n[i]; dMin = Math.min(dMin, dN); }
-        if (edges.s) { const w = 1 / (dS + 1); wSum += w; vSum += w * edges.s[i]; dMin = Math.min(dMin, dS); }
-        if (edges.w) { const w = 1 / (dW + 1); wSum += w; vSum += w * edges.w[j]; dMin = Math.min(dMin, dW); }
-        if (edges.e) { const w = 1 / (dE + 1); wSum += w; vSum += w * edges.e[j]; dMin = Math.min(dMin, dE); }
-        const edgeVal = wSum ? vSum / wSum : baseFall;
-        const f = hasAny ? 1 - smooth(Math.max(0, Math.min(1, dMin / EDGE_FADE_CELLS))) : 0;
-        const noiseAmp = 60 * (1 - f);                    // feet of relief, zero at seams
-        const n = (fbm((tile.origin_x + i * CELL_FEET) / 900, (tile.origin_y + j * CELL_FEET) / 900) - 0.5) * 2;
-        tile.values[j * G + i] = edgeVal * f + baseFall * (1 - f) + n * noiseAmp;
-    }
-    if (!hasAny) for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
-        if (j === 0 || i === 0 || j === G - 1 || i === G - 1)
-            tile.values[j * G + i] = baseFall + (fbm(i / 9, j / 9) - 0.5) * 0; // open-ocean/island-less frontier stays flat base
+        const wN = 1 / (dN * dN), wS = 1 / (dS * dS);
+        const wW = 1 / (dW * dW), wE = 1 / (dE * dE);
+        // Propagate only the departure from natural terrain. With no authored
+        // neighbors, this leaves the same smooth global noise across all tiles.
+        const correction = (
+            wN * edges.n[i] + wS * edges.s[i] + wW * edges.w[j] + wE * edges.e[j]
+        ) / (wN + wS + wW + wE);
+        const f = 1 - smooth(Math.min(1, Math.min(dN, dS, dW, dE) / EDGE_FADE_CELLS));
+        tile.values[j * G + i] += correction * f;
     }
     applyOceanContinuity(tile, store, { reshape: true, selfSeedBorder: false });
     store.set(key, tile);
@@ -138,7 +165,7 @@ export function ensureTile(store, tx, tz, options = {}) {
 }
 
 /** Live sampler: strokes composed on top of whichever tile the point falls in. */
-export function createWorldSampler(store, getStrokes, getHeightmapPlacement = () => null) {
+export function createWorldSampler(store, getStrokes, getHeightmapPlacement = () => null, { materializeMissing = true } = {}) {
     let indexedStrokes = null;
     let strokeSampler = null;
     return (xFeet, yFeet) => {
@@ -149,11 +176,37 @@ export function createWorldSampler(store, getStrokes, getHeightmapPlacement = ()
             indexedStrokes = strokes;
             strokeSampler = createTerrainStrokeSampler(strokes, (x, y) => {
                 const { tx, tz } = tileIndexAt(x, y);
-                return heightmapHeightAt(ensureTile(store, tx, tz), x, y);
+                const tile = store.get(tileKey(tx, tz));
+                if (tile) return heightmapHeightAt(tile, x, y);
+                if (materializeMissing) return heightmapHeightAt(ensureTile(store, tx, tz), x, y);
+                return sampleFrontier(store, x, y);
             });
         }
         return strokeSampler(xFeet, yFeet);
     };
+}
+
+// Overview rendering samples the frontier directly. Merely looking at hundreds
+// of distant tiles should not allocate 128x128 arrays for each one.
+export function sampleFrontier(store, x, y) {
+    const base = (px, py) => naturalTerrainHeight(store, px, py);
+    const { tx, tz } = tileIndexAt(x, y);
+    const x0 = tx * TILE_FEET, y0 = tz * TILE_FEET;
+    const sides = [
+        [tx - 1, tz, x0, y, x - x0], [tx + 1, tz, x0 + TILE_FEET, y, x0 + TILE_FEET - x],
+        [tx, tz - 1, x, y0, y - y0], [tx, tz + 1, x, y0 + TILE_FEET, y0 + TILE_FEET - y],
+    ];
+    let correction = 0, weights = 0, nearest = Infinity;
+    for (const [nx, nz, px, py, distance] of sides) {
+        const neighbor = store.get(tileKey(nx, nz));
+        if (distance < 0.0001 && neighbor) return heightmapHeightAt(neighbor, px, py);
+        const weight = 1 / Math.max(0.0001, distance * distance);
+        weights += weight;
+        nearest = Math.min(nearest, distance);
+        if (neighbor) correction += weight * (heightmapHeightAt(neighbor, px, py) - base(px, py));
+    }
+    const t = Math.min(1, nearest / (EDGE_FADE_CELLS * CELL_FEET));
+    return base(x, y) + correction / weights * (1 - t * t * (3 - 2 * t));
 }
 
 /** Axis-aligned world bounds for a (possibly rotated) heightmap placement. */
@@ -400,7 +453,30 @@ export function isOceanAtFeet(store, xFeet, yFeet) {
 export function hydrateTiles(store, layers = []) {
     (layers || []).filter(l => l.layer_type === 'heightmap_tile' && Array.isArray(l.values)).forEach(l => {
         const tile = blankTile(Number(l.tile_x), Number(l.tile_z));
-        tile.values = Float32Array.from(l.values);
+        const sourceWidth = Math.max(1, Math.floor(Number(l.grid_width) || 0));
+        const sourceHeight = Math.max(1, Math.floor(Number(l.grid_height) || 0));
+        const sourceLength = sourceWidth * sourceHeight;
+        const complete = l.values.length >= sourceLength;
+        const sourceValid = complete && l.values.slice(0, sourceLength).every(validTileValue);
+        if (sourceWidth === TILE_GRID && sourceHeight === TILE_GRID) {
+            // Do not let one invalid JSON value turn into a zero-foot pit. A
+            // finite stored 0 is preserved; absent/invalid samples regenerate
+            // from the same deterministic terrain used by the frontier.
+            for (let index = 0; index < tile.values.length; index++) {
+                const x = tile.origin_x + (index % TILE_GRID) * CELL_FEET;
+                const y = tile.origin_y + Math.floor(index / TILE_GRID) * CELL_FEET;
+                tile.values[index] = validTileValue(l.values[index]) ? Number(l.values[index]) : naturalTerrainHeight(store, x, y);
+            }
+        } else {
+            // Older saves used 128 points per side. Resample elevations, not
+            // image intensities. A truncated layer is treated as partial data,
+            // not a blanket of zero elevation that can punch false lakes.
+            for (let j = 0; j < TILE_GRID; j++) for (let i = 0; i < TILE_GRID; i++) {
+                const x = tile.origin_x + i * CELL_FEET, y = tile.origin_y + j * CELL_FEET;
+                const value = sourceValid ? heightmapHeightAt(l, x, y) : NaN;
+                tile.values[j * TILE_GRID + i] = Number.isFinite(value) ? value : naturalTerrainHeight(store, x, y);
+            }
+        }
         tile.generated = !!l.generated;
         tile.dirty = false;
         store.set(tileKey(tile.tile_x, tile.tile_z), tile);

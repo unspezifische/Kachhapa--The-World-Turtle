@@ -125,9 +125,9 @@ def _generate_water(environment, rng, radius):
             "id": "generated-coast", "name": "Coast", "water_type": "ocean",
             "width_feet": 300, "depth_feet": 30,
             "points": [
-                {"x": -1000, "y": -1000}, {"x": edge, "y": -1000},
+                {"x": -radius, "y": -radius}, {"x": edge, "y": -radius},
                 {"x": round(edge + 35, 2), "y": -radius * .25}, {"x": round(edge - 25, 2), "y": radius * .35},
-                {"x": edge, "y": 1000}, {"x": -1000, "y": 1000},
+                {"x": edge, "y": radius}, {"x": -radius, "y": radius},
             ],
         })
     return bodies

@@ -31,9 +31,7 @@ FROM nginx:alpine
 # Copy the build output to Nginx's html directory
 COPY --from=build /app/build /usr/share/nginx/html
 
-# Copy the standalone 5etools static site to a directory the nginx config expects
-# This requires docker build context to include the project root (handled in docker-compose)
-COPY 5etools-src /var/www/5etools
+# The standalone 5etools static site is mounted at /var/www/5etools by Compose.
 
 # Copy the custom Nginx configuration file (path is relative to build context)
 COPY webapp/nginx-docker.conf /etc/nginx/nginx.conf

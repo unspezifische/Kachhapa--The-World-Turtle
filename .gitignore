@@ -1,7 +1,10 @@
 .DS_Store
 MtG-webapp/
 
-Flask/migrations/
+Flask/migrations/*
+!Flask/migrations/versions/
+Flask/migrations/versions/*
+!Flask/migrations/versions/7c1d2e3f4a5b_normalize_settlement_terrain_tiles.py
 Flask/static/
 Flask/buildDB.py
 Flask/campaign.py
@@ -27,7 +30,6 @@ TTRPG
 TTRPG.pub
 update_sequence.sql
 5etools-src/
-5etools-img/
 
 flask_monitoringdashboard.db
 __pycache__/

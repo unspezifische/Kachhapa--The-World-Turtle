@@ -3,6 +3,7 @@ import {
   CELL_FEET,
   createTileStore,
   createWorldSampler,
+  ensureTile,
   hydrateTiles,
   overwriteHeightmapIntoTiles,
   sampleHeightmapPlacement,
@@ -14,6 +15,34 @@ import {
   tileKey,
 } from './settlementTiles';
 import { heightmapHeightAt } from './settlementEditor';
+
+test('new tile edges are initialized and continuous even before neighbors exist', () => {
+  const store = createTileStore({ baseFeet: 1000 });
+  const a = ensureTile(store, -1, 0);
+  const b = ensureTile(store, 0, 0);
+  const c = ensureTile(store, 0, 1);
+  for (const tile of [a, b, c]) {
+    expect(Math.min(...tile.values)).toBeGreaterThan(900);
+  }
+  for (let i = 0; i < TILE_GRID; i++) {
+    expect(a.values[i * TILE_GRID + TILE_GRID - 1]).toBe(b.values[i * TILE_GRID]);
+    expect(b.values[(TILE_GRID - 1) * TILE_GRID + i]).toBe(c.values[i]);
+  }
+  const independent = createTileStore({ baseFeet: 1000 });
+  const reverseB = ensureTile(independent, 0, 0);
+  const reverseA = ensureTile(independent, -1, 0);
+  for (let i = 0; i < TILE_GRID; i++) {
+    expect(reverseA.values[i * TILE_GRID + TILE_GRID - 1]).toBe(reverseB.values[i * TILE_GRID]);
+    expect(reverseB.values[i * TILE_GRID]).toBe(b.values[i * TILE_GRID]);
+  }
+});
+
+test('default procedural plains never create below-sea puddles', () => {
+  const store = createTileStore({ seaLevelFeet: 0, baseFeet: 30 });
+  const tile = ensureTile(store, 14, -8);
+  expect(Math.min(...tile.values)).toBeGreaterThan(0);
+  expect(Math.max(...tile.values) - Math.min(...tile.values)).toBeGreaterThan(1);
+});
 
 const flatTileLayer = (tileX = 0, tileZ = 0, elevation = 10) => ({
   layer_type: 'heightmap_tile',
@@ -27,6 +56,45 @@ const flatTileLayer = (tileX = 0, tileZ = 0, elevation = 10) => ({
   origin_y: tileZ * TILE_FEET,
   values: Array(TILE_GRID * TILE_GRID).fill(elevation),
   generated: false,
+});
+
+test('old 128-point tile saves retain elevations when resampled to 16-ft storage', () => {
+  const store = createTileStore();
+  hydrateTiles(store, [{ ...flatTileLayer(), grid_width: 128, grid_height: 128, values: Array(128 * 128).fill(42) }]);
+  const tile = store.get('0,0');
+  expect(tile.grid_width).toBe(257);
+  expect(tile.values).toHaveLength(257 * 257);
+  expect(heightmapHeightAt(tile, 1234, 2468)).toBeCloseTo(42);
+  expect(tile.dirty).toBe(false);
+});
+
+test('a truncated tile cannot become a zero-elevation lake during hydration', () => {
+  const store = createTileStore({ baseFeet: 100 });
+  hydrateTiles(store, [{ ...flatTileLayer(), values: Array(400).fill(42) }]);
+  const tile = store.get('0,0');
+  expect(tile.values).toHaveLength(TILE_GRID * TILE_GRID);
+  expect(Math.min(...tile.values)).toBeGreaterThan(0);
+  // The valid prefix survives; invalid/missing cells use deterministic land.
+  expect(tile.values[0]).toBe(42);
+  expect(tile.values[tile.values.length - 1]).toBeGreaterThan(0);
+});
+
+test('invalid tile samples regenerate as land instead of coercing to zero', () => {
+  const store = createTileStore({ baseFeet: 80 });
+  const values = Array(TILE_GRID * TILE_GRID).fill(25);
+  values[values.length - 1] = 'not-a-height';
+  hydrateTiles(store, [{ ...flatTileLayer(), values }]);
+  expect(store.get('0,0').values[0]).toBe(25);
+  expect(store.get('0,0').values.at(-1)).toBeGreaterThan(0);
+});
+
+test('a 30-ft brush persists even at the center between four stored samples', () => {
+  const store = createTileStore();
+  hydrateTiles(store, [flatTileLayer()]);
+  const x = CELL_FEET * 40.5, y = CELL_FEET * 40.5;
+  bakeStrokesIntoTiles(store, [{ x, y, radius: 30, delta: 10, mode: 'raise' }]);
+  const restored = createTileStore(); hydrateTiles(restored, serializeTiles(store));
+  expect(createWorldSampler(restored, () => [])(x, y)).toBeGreaterThan(17);
 });
 
 const imagePlacement = (overrides = {}) => ({

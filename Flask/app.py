@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 import io
 import os
+import math
 import hashlib
 import mimetypes
 import base64
@@ -5421,7 +5422,7 @@ def get_settlement_map_design(campaign_id):
     campaign = Campaign.query.get(campaign_id)
     if not campaign:
         return jsonify({'message': 'Campaign not found'}), 404
-    design = resolve_settlement(campaign_id)
+    design = resolve_settlement(campaign_id, request.args.get('settlement_id'))
     
     # Fetch Global Terrain Data
     atlas = CampaignWorldAtlas.query.filter_by(campaign_id=campaign_id).first()
@@ -5436,6 +5437,63 @@ def get_settlement_map_design(campaign_id):
         'global_terrain': global_terrain # Inject global terrain for DynamicTerrain
     }
     return jsonify(payload), 200
+
+
+def terrain_tile_for_lod(payload, requested_cell_feet):
+    """Return a tile sampled closely enough for the current render LOD."""
+    values = payload.get('values') if isinstance(payload, dict) else None
+    source_width = int(payload.get('grid_width') or 0) if isinstance(payload, dict) else 0
+    source_height = int(payload.get('grid_height') or 0) if isinstance(payload, dict) else 0
+    if not isinstance(values, list) or source_width < 2 or source_height < 2:
+        return payload
+    tile_width = max(1.0, float(payload.get('width_feet') or 4096))
+    tile_height = max(1.0, float(payload.get('height_feet') or 4096))
+    cell_feet = max(1.0, float(requested_cell_feet or 16))
+    target_width = min(source_width, max(2, int(math.ceil(tile_width / cell_feet)) + 1))
+    target_height = min(source_height, max(2, int(math.ceil(tile_height / cell_feet)) + 1))
+    if target_width == source_width and target_height == source_height:
+        return payload
+
+    x_indices = [round(i * (source_width - 1) / (target_width - 1)) for i in range(target_width)]
+    y_indices = [round(i * (source_height - 1) / (target_height - 1)) for i in range(target_height)]
+    sampled = [values[y * source_width + x] for y in y_indices for x in x_indices]
+    return {
+        **payload,
+        'grid_width': target_width,
+        'grid_height': target_height,
+        'values': sampled,
+    }
+
+
+@app.route('/api/settlement-map/<int:campaign_id>/terrain-tiles', methods=['GET'])
+@jwt_required()
+def get_settlement_terrain_tiles(campaign_id):
+    if not Campaign.query.get(campaign_id):
+        return jsonify({'message': 'Campaign not found'}), 404
+    design = resolve_settlement(campaign_id, request.args.get('settlement_id'))
+    if not design:
+        return jsonify({'message': 'Settlement not found'}), 404
+    try:
+        min_x = int(request.args.get('min_x'))
+        max_x = int(request.args.get('max_x'))
+        min_z = int(request.args.get('min_z'))
+        max_z = int(request.args.get('max_z'))
+        cell_feet = max(1.0, min(4096.0, float(request.args.get('cell_feet', 16))))
+    except (TypeError, ValueError):
+        return jsonify({'message': 'Tile bounds must be integers'}), 400
+    if min_x > max_x or min_z > max_z:
+        return jsonify({'message': 'Tile bounds are invalid'}), 400
+    requested_count = (max_x - min_x + 1) * (max_z - min_z + 1)
+    if requested_count > 1024:
+        return jsonify({'message': 'At most 1024 terrain tiles may be requested'}), 413
+
+    query = SettlementTerrainTile.query.filter(
+        SettlementTerrainTile.settlement_id == design.id,
+        SettlementTerrainTile.tile_x.between(min_x, max_x),
+        SettlementTerrainTile.tile_z.between(min_z, max_z),
+    ).order_by(SettlementTerrainTile.tile_z, SettlementTerrainTile.tile_x)
+    tiles = [terrain_tile_for_lod(row.payload, cell_feet) for row in query.yield_per(8)]
+    return jsonify({'tiles': tiles, 'requested_cell_feet': cell_feet}), 200
 
 
 @app.route('/api/settlement-map/<int:campaign_id>/reference-layers', methods=['POST'])
@@ -5573,6 +5631,12 @@ def upload_settlement_reference_layer(campaign_id):
                 'feet_per_pixel_y': linked_height / max(pixel_height, 1),
                 'rotation_degrees': float(linked.get('rotation', 0)) * 180 / 3.141592653589793,
             })
+    if request.form.get('floor_level_id'):
+        # Floor plans belong to a building level; they must not replace the
+        # settlement's projected terrain reference when uploaded.
+        layer['floor_level_id'] = request.form.get('floor_level_id')[:120]
+        layer['visible'] = False
+        layer['project_to_terrain'] = False
     design.reference_layers = [*(design.reference_layers or []), layer]
     design.updated_at = datetime.now(timezone.utc)
     db.session.commit()
@@ -5648,22 +5712,42 @@ def save_settlement_map_design(campaign_id):
 
     merged_tile_count = 0
     if 'reference_layers' in provided:
-        # Tiles merge by (tile_x, tile_z); omitted tiles are kept. All other
-        # layer types keep full-replace behavior (client always resends them).
+        # Terrain tiles are independent rows.  A small sculpt flush therefore
+        # never reads or rewrites the rest of the settlement's terrain.
         incoming_tiles = {}
         incoming_other = []
         for layer in provided['reference_layers']:
             if isinstance(layer, dict) and layer.get('layer_type') == 'heightmap_tile':
-                incoming_tiles[(layer.get('tile_x'), layer.get('tile_z'))] = layer
+                try:
+                    key = (int(layer.get('tile_x')), int(layer.get('tile_z')))
+                except (TypeError, ValueError):
+                    return jsonify({'message': 'Terrain tile coordinates must be integers'}), 400
+                incoming_tiles[key] = layer
             else:
                 incoming_other.append(layer)
-        existing_tiles = {}
-        for layer in (design.reference_layers or []):
-            if isinstance(layer, dict) and layer.get('layer_type') == 'heightmap_tile':
-                existing_tiles[(layer.get('tile_x'), layer.get('tile_z'))] = layer
-        existing_tiles.update(incoming_tiles)
         merged_tile_count = len(incoming_tiles)
-        design.reference_layers = [*incoming_other, *existing_tiles.values()]
+        design.reference_layers = incoming_other
+        if incoming_tiles:
+            xs = {key[0] for key in incoming_tiles}
+            zs = {key[1] for key in incoming_tiles}
+            existing_rows = SettlementTerrainTile.query.filter(
+                SettlementTerrainTile.settlement_id == design.id,
+                SettlementTerrainTile.tile_x.in_(xs),
+                SettlementTerrainTile.tile_z.in_(zs),
+            ).all()
+            rows_by_key = {(row.tile_x, row.tile_z): row for row in existing_rows}
+            for key, tile in incoming_tiles.items():
+                row = rows_by_key.get(key)
+                if row:
+                    row.payload = tile
+                    row.updated_at = datetime.now(timezone.utc)
+                else:
+                    db.session.add(SettlementTerrainTile(
+                        settlement_id=design.id,
+                        tile_x=key[0],
+                        tile_z=key[1],
+                        payload=tile,
+                    ))
 
     if environment is not None:
         design.environment = environment

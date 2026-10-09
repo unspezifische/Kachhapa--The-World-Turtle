@@ -1,6 +1,7 @@
-import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { FALLBACK_ASSET_CATALOG } from './settlementEditor';
+import { FALLBACK_ASSET_CATALOG, FEET_PER_SCENE_UNIT } from './settlementEditor';
+import { createTileStore, hydrateTiles, setStoreDefaults, TILE_FEET, tileKey } from './settlementTiles';
 import './SettlementPlayerView.css';
 
 const SettlementMapEditor = lazy(() => import('./SettlementMapEditor'));
@@ -27,6 +28,58 @@ export default function SettlementPlayerView({ headers, socket }) {
   const [viewCommand,setViewCommand] = useState(null);
   const [labelState,setLabelState] = useState({ids:(initialParams.get('labels')||'').split(',').filter(Boolean),showAll:initialParams.get('showAllLabels')==='1'});
   const ignoreEdit = useCallback(() => {}, []);
+  const tileStoreRef = useRef(null);
+  if (tileStoreRef.current === null) tileStoreRef.current = createTileStore();
+  const [tileStoreVersion, setTileStoreVersion] = useState(0);
+  const tileCoverageRef = useRef(new Map());
+  const tileFetchTimerRef = useRef(null);
+  const tileFetchControllerRef = useRef(null);
+
+  const streamTerrainTiles = useCallback((camera) => {
+    const bounds = camera?.terrainBounds;
+    if (!campaignId || !settlementId || !bounds) return;
+    if (tileFetchTimerRef.current !== null) clearTimeout(tileFetchTimerRef.current);
+    tileFetchTimerRef.current = setTimeout(async () => {
+      tileFetchTimerRef.current = null;
+      let minX = Math.floor(bounds.minX / TILE_FEET), maxX = Math.floor(bounds.maxX / TILE_FEET);
+      let minZ = Math.floor(bounds.minY / TILE_FEET), maxZ = Math.floor(bounds.maxY / TILE_FEET);
+      if ((maxX - minX + 1) * (maxZ - minZ + 1) > 1024) {
+        const centerX = Math.floor(((camera.target?.[0] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
+        const centerZ = Math.floor(((camera.target?.[2] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
+        minX = centerX - 15; maxX = centerX + 16; minZ = centerZ - 15; maxZ = centerZ + 16;
+      }
+      const cellFeet = Math.max(1, Number(camera.window?.cellFeet) || 16);
+      const grid = Math.min(257, Math.max(2, Math.ceil(TILE_FEET / cellFeet) + 1));
+      let needed = false;
+      for (let z = minZ; z <= maxZ && !needed; z += 1) for (let x = minX; x <= maxX; x += 1) {
+        if ((tileCoverageRef.current.get(tileKey(x, z)) || 0) < grid) { needed = true; break; }
+      }
+      if (!needed) return;
+      tileFetchControllerRef.current?.abort();
+      const controller = new AbortController();
+      tileFetchControllerRef.current = controller;
+      try {
+        const response = await axios.get(`/api/settlement-map/${campaignId}/terrain-tiles`, {
+          headers, signal: controller.signal,
+          params: { settlement_id: settlementId, min_x: minX, max_x: maxX,
+            min_z: minZ, max_z: maxZ, cell_feet: cellFeet },
+        });
+        if (controller.signal.aborted) return;
+        for (let z = minZ; z <= maxZ; z += 1) for (let x = minX; x <= maxX; x += 1) {
+          tileCoverageRef.current.set(tileKey(x, z), grid);
+        }
+        hydrateTiles(tileStoreRef.current, response.data.tiles || []);
+        setTileStoreVersion(value => value + 1);
+      } catch (error) {
+        if (!controller.signal.aborted) console.error('Unable to stream player terrain:', error);
+      }
+    }, 120);
+  }, [campaignId, headers, settlementId]);
+
+  useEffect(() => () => {
+    if (tileFetchTimerRef.current !== null) clearTimeout(tileFetchTimerRef.current);
+    tileFetchControllerRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     if (!campaignId) return undefined;
@@ -43,6 +96,10 @@ export default function SettlementPlayerView({ headers, socket }) {
     }).then(([mapResponse, simulationResponse, travelResponse]) => {
       if (!active) return;
       setMap(mapResponse.data);
+      tileStoreRef.current.clear();
+      tileCoverageRef.current.clear();
+      setStoreDefaults(tileStoreRef.current, { seaLevelFeet: Number(mapResponse.data.environment?.sea_level_feet) || 0 });
+      setTileStoreVersion(value => value + 1);
       setSettlementId(mapResponse.data.settlement_id);
       setSettlementName(mapResponse.data.name||'New Settlement');
       setSimulation(simulationResponse.data);
@@ -93,6 +150,9 @@ export default function SettlementPlayerView({ headers, socket }) {
     <div className="settlement-player-view">
       <Suspense fallback={<div className="settlement-player-loading" role="status"><i/><span>Preparing 3D map…</span></div>}><SettlementMapEditor
         activeTool="player"
+        tileStore={tileStoreRef.current}
+        tileStoreVersion={tileStoreVersion}
+        onCameraChange={streamTerrainTiles}
         assets={map.asset_catalog?.length ? map.asset_catalog : FALLBACK_ASSET_CATALOG}
         buildings={map.buildings || []}
         setBuildings={ignoreEdit}
