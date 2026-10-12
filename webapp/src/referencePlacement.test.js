@@ -1,4 +1,29 @@
-import { guessReferencePlacement, referenceCorner, resizeReference, referenceForSave, mergeReferenceSave, transformReferenceFromGizmo } from './referencePlacement';
+import { guessReferencePlacement, prepareReferencePreview, referenceCorner, resizeReference, referenceForSave, mergeReferenceSave, transformReferenceFromGizmo } from './referencePlacement';
+
+test('preview uses display-oriented bitmap dimensions and draws matching pixels', async () => {
+  const originalBitmap = global.createImageBitmap;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalCreateElement = document.createElement.bind(document);
+  const close = jest.fn();
+  const drawImage = jest.fn();
+  global.createImageBitmap = jest.fn().mockResolvedValue({ width: 1920, height: 1080, close });
+  URL.createObjectURL = jest.fn().mockReturnValue('blob:oriented');
+  jest.spyOn(document, 'createElement').mockImplementation(name => name === 'canvas'
+    ? { width: 0, height: 0, getContext: () => ({ drawImage }), toBlob: callback => callback(new Blob(['preview'])) }
+    : originalCreateElement(name));
+  try {
+    const file = new File(['jpeg'], 'map.jpg', { type: 'image/jpeg' });
+    const preview = await prepareReferencePreview(file);
+    expect(global.createImageBitmap).toHaveBeenCalledWith(file, { imageOrientation: 'from-image' });
+    expect(preview).toEqual({ url: 'blob:oriented', width: 1920, height: 1080 });
+    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 1920, 1080);
+    expect(close).toHaveBeenCalled();
+  } finally {
+    global.createImageBitmap = originalBitmap;
+    URL.createObjectURL = originalCreateObjectURL;
+    document.createElement.mockRestore();
+  }
+});
 
 test('queued saves retain newly uploaded references and the exact dirty terrain chunk', () => {
   const tile = { layer_type: 'heightmap_tile', tile_x: 1, values: [3, 4] };

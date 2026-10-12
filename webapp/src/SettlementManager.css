@@ -256,6 +256,62 @@
 .build-menu button{display:flex;align-items:center;gap:9px;padding:8px;border:1px solid #3e4f46;border-radius:5px;background:#22332c;color:#e7e0d3;font-size:11px;text-align:left}
 .build-menu button:hover{border-color:#c09a52;background:#2d4037}
 .build-menu svg{font-size:17px;color:#d0ab61}
+
+/* Selected-building inspector: a compact drafting card with actions before details. */
+.building-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid #33443b;
+  padding-top: 12px;
+}
+
+.building-inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #405148;
+  border-radius: 6px;
+  background: linear-gradient(145deg, rgba(31, 51, 43, .72), rgba(18, 35, 29, .78));
+}
+
+.building-inspector-identity { border-color: #6a705e; }
+.building-inspector-eyebrow,
+.building-inspector-heading {
+  color: #e7d6ae;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.building-inspector-summary { color: #aab4ad; font-size: 11px !important; }
+.building-inspector-primary-action,
+.blueprint-levels .blueprint-primary-action {
+  min-height: 38px !important;
+  color: #f2ead9 !important;
+  border-color: #d0a957 !important;
+  background: #213a30 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: .015em;
+  text-transform: none !important;
+}
+.building-inspector-primary-action:hover,
+.blueprint-levels .blueprint-primary-action:hover { background: #345044 !important; }
+.building-dimension-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.building-dimension-control { min-width: 0; }
+.building-dimension-control .MuiSlider-root,
+.building-rotation-control .MuiSlider-root { color: #bd9149; padding: 6px 0 0; }
+.building-rotation-control { display: flex; flex-direction: column; gap: 2px; }
+.building-rotation-control .MuiTypography-root { color: #aab4ad; display: flex; justify-content: space-between; }
+.building-rotation-control strong { color: #e7d6ae; }
+.building-inspector-danger { border-top: 1px solid #5d443f; padding-top: 10px; }
+.building-inspector-danger .MuiButton-root { min-height: 36px; font-size: 12px; font-weight: 700; text-transform: none; }
+
+@media (max-width: 420px) {
+  .building-dimension-grid { grid-template-columns: 1fr; }
+}
 .settlement-tools button:disabled{opacity:.3;cursor:not-allowed}
 .settlement-tools button:disabled:hover{border-color:transparent;background:transparent;color:#89978e}
 .settlement-map-loading{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:radial-gradient(circle at center,#2c4339,#14211c 65%);color:#d9d0bd;text-align:center}
@@ -3327,6 +3383,43 @@
   color: #eee5d7;
   font-size: 9px
 }
+
+.map-view-legend {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  max-width: 280px;
+  max-height: min(440px, calc(100vh - 260px));
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid #526158;
+  border-radius: 6px;
+  background: #14201cf2;
+  box-shadow: 0 8px 22px #07100bbb;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: 'Avenir Next', 'Segoe UI', sans-serif;
+  letter-spacing: normal;
+  text-transform: capitalize;
+}
+
+.map-view-legend span { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
+.map-view-legend i { width: 12px; height: 12px; flex: 0 0 12px; border: 1px solid #ffffff50; border-radius: 2px; }
+.editor-menu.inspect-menu-panel { box-sizing: border-box; width: 330px; max-width: calc(100% - 44px); user-select: text; background: #14201cf5; font-family: 'Avenir Next', 'Segoe UI', sans-serif; }
+.editor-menu.inspect-menu-panel button { min-height: 38px; font-size: 12px; }
+.editor-menu.inspect-menu-panel .inspect-manage-action { border-color: #bd9149; color: #e7d6ae; }
+.editor-menu.inspect-menu-panel .inspect-clear-action { border-color: transparent; background: transparent; color: #acb9b0; }
+.inspect-record { display: flex; flex-direction: column; }
+.inspect-status-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.inspect-status { padding: 5px 8px; border: 1px solid #53645a; border-radius: 4px; color: #afbbb2; font-size: 11px; }
+.inspect-status.is-open, .inspect-status.is-operating { color: #a6dbaf; border-color: #547e5b; background: #263e2c; }
+.inspect-status.is-closed { color: #f1bb9d; border-color: #846047; background: #3d2d22; }
+.inspect-detail-grid { margin: 0 0 12px; border-top: 1px solid #405148; }
+.inspect-detail-grid > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-bottom: 1px solid #33443b; }
+.inspect-detail-grid dt { font-size: 11px; color: #aeb9b0; }
+.inspect-detail-grid dd { margin: 0; color: #ede5d4; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.inspect-menu-panel .inspect-record > .MuiTypography-h6 { font-family: Georgia, serif; font-size: 24px; }
 
 .building-description {
   margin: -7px 0 12px;

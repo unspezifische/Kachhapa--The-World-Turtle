@@ -6,6 +6,7 @@ TARGET_HOST_SHORT="raspberrypi"
 TARGET_HOSTNAME="raspberrypi.local"
 DESTINATION_OVERRIDE="${DESTINATION:-}"
 HOSTNAME_EXPLICITLY_SET=false
+TAILSCALE_IP=""
 
 readonly KACHHAPA_ROOT="/home/ijohnson/Kachhapa"
 readonly MTG_ROOT="/home/ijohnson/MtG-webapp"
@@ -16,20 +17,34 @@ DEPLOY_KACHHAPA=false
 DEPLOY_MTG=false
 DEPLOY_NGINX=false
 DEPLOY_MODULES=false
+DEPLOY_CATALOG=false
+DEPLOY_SOCKET_FIX=false
 CHECK_ONLY=false
 USE_DOCKER=false
+SKIP_FOUNDRY_CHECK=false
+SKIP_TOOLS_TRANSFER=false
 CURRENT_STEP="initialization"
 RENDERED_NGINX_CONFIG=""
 
 usage() {
   cat <<'EOF'
-Usage: ./publish.sh [--hostname NAME] [--kachhapa] [--mtg] [--nginx] [--modules] [--all] [--check]
+Usage: ./publish.sh [--hostname NAME] [--tailscale-ip IPv4] [--kachhapa] [--catalog] [--mtg] [--nginx] [--modules] [--all] [--skip-foundry-check] [--skip-tools-transfer] [--check]
+       ./publish.sh --hostname NAME --tailscale-ip IPv4 --socket-fix [--skip-foundry-check] [--check]
        ./publish.sh --docker [--kachhapa] [--modules] [--check]
 
 With no deployment selection, all components are selected.
 --check performs every local preflight/build check and never contacts the Pi.
 --hostname accepts either a short hostname like raspberrypii or a fully
 qualified name like raspberrypii.local or raspberrypii.lan.
+--tailscale-ip uses the IP for SSH and route probes while --hostname remains
+the Nginx virtual host name. Use --hostname raspberrypii for the dev Pi.
+--catalog transfers bestiary/adventure JSON and imports them into PostgreSQL.
+It requires --kachhapa, whose backup and migrations run first.
+--socket-fix installs only the Socket.IO systemd override and Nginx config;
+it does not transfer app files, build the frontend, or run migrations.
+--skip-foundry-check omits the Foundry VTT route probe for hosts that do not
+run Foundry. All other route checks still run.
+--skip-tools-transfer applies Nginx without resyncing the existing 5etools site.
 Nginx is rendered for NAME plus app.NAME, tools.NAME, mtg.NAME, and maps.NAME.
 Publishing is offline-safe when requirements files are unchanged. Existing
 installations must run scripts/configure-publish-sudo.sh NAME once before
@@ -103,10 +118,24 @@ while [[ $# -gt 0 ]]; do
       HOSTNAME_EXPLICITLY_SET=true
       ;;
     --kachhapa) DEPLOY_KACHHAPA=true ;;
+    --catalog) DEPLOY_CATALOG=true ;;
+    --socket-fix) DEPLOY_SOCKET_FIX=true ;;
     --mtg) DEPLOY_MTG=true ;;
     --nginx) DEPLOY_NGINX=true ;;
     --modules) DEPLOY_MODULES=true ;;
     --docker) USE_DOCKER=true ;;
+    --skip-foundry-check) SKIP_FOUNDRY_CHECK=true ;;
+    --skip-tools-transfer) SKIP_TOOLS_TRANSFER=true ;;
+    --tailscale-ip)
+      shift
+      [[ $# -gt 0 ]] || fail "Missing value for --tailscale-ip"
+      TAILSCALE_IP="$1"
+      python3 - "$TAILSCALE_IP" <<'PY' || fail "Invalid Tailscale IPv4 address: $TAILSCALE_IP"
+import ipaddress, sys
+address = ipaddress.ip_address(sys.argv[1])
+assert address.version == 4 and address in ipaddress.ip_network('100.64.0.0/10')
+PY
+      ;;
     --all)
       DEPLOY_KACHHAPA=true
       DEPLOY_MTG=true
@@ -126,7 +155,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if $HOSTNAME_EXPLICITLY_SET; then
+if [[ -n "$TAILSCALE_IP" ]]; then
+  readonly DESTINATION="${TARGET_USER}@${TAILSCALE_IP}"
+elif $HOSTNAME_EXPLICITLY_SET; then
   readonly DESTINATION="${TARGET_USER}@${TARGET_HOSTNAME}"
 elif [[ -n "$DESTINATION_OVERRIDE" ]]; then
   readonly DESTINATION="$DESTINATION_OVERRIDE"
@@ -136,7 +167,7 @@ fi
 
 # "--check" alone validates everything, matching the no-argument deployment set;
 # "--docker" alone deploys everything the local stack actually runs (no MTG/Nginx).
-if ! $DEPLOY_KACHHAPA && ! $DEPLOY_MTG && ! $DEPLOY_NGINX && ! $DEPLOY_MODULES; then
+if ! $DEPLOY_KACHHAPA && ! $DEPLOY_MTG && ! $DEPLOY_NGINX && ! $DEPLOY_MODULES && ! $DEPLOY_SOCKET_FIX; then
   if $USE_DOCKER; then
     DEPLOY_KACHHAPA=true
     DEPLOY_MODULES=true
@@ -148,13 +179,18 @@ if ! $DEPLOY_KACHHAPA && ! $DEPLOY_MTG && ! $DEPLOY_NGINX && ! $DEPLOY_MODULES; 
   fi
 fi
 
-if ! $DEPLOY_KACHHAPA && ! $DEPLOY_MTG && ! $DEPLOY_NGINX && ! $DEPLOY_MODULES; then
+$DEPLOY_CATALOG && ! $DEPLOY_KACHHAPA && fail "--catalog requires --kachhapa so database backup and migrations run first."
+$DEPLOY_SOCKET_FIX && { $DEPLOY_KACHHAPA || $DEPLOY_MTG || $DEPLOY_NGINX || $DEPLOY_MODULES || $DEPLOY_CATALOG || $USE_DOCKER; } &&
+  fail "--socket-fix is a focused bare-metal deployment; do not combine it with other components."
+
+if ! $DEPLOY_KACHHAPA && ! $DEPLOY_MTG && ! $DEPLOY_NGINX && ! $DEPLOY_MODULES && ! $DEPLOY_SOCKET_FIX; then
   fail "Nothing selected. Choose --kachhapa, --mtg, --nginx, --modules, or --all."
 fi
 
 # The local docker-compose stack only runs postgres/rabbitmq/flask/webapp; the
 # bare-metal Pi is the only target for MTG and the shared Nginx configuration.
 if $USE_DOCKER; then
+  $DEPLOY_CATALOG && fail "--catalog targets the bare-metal Pi; omit --docker."
   $HOSTNAME_EXPLICITLY_SET && fail "--hostname targets the bare-metal Pi over ssh; it doesn't apply with --docker."
   $DEPLOY_MTG && fail "--mtg isn't part of the local Docker stack; omit --mtg with --docker."
   $DEPLOY_NGINX && fail "--nginx isn't part of the local Docker stack; omit --nginx with --docker."
@@ -291,6 +327,21 @@ local_preflight() {
   require_path scripts/kachhapa-publish.sudoers
   bash -n "$0"
 
+  if $DEPLOY_SOCKET_FIX; then
+    require_path kachhapa-backend.service
+    require_path kachhapa-socket-worker.conf
+    require_path scripts/check-socket-deployment-config.py
+    require_path scripts/check-socket-transport.cjs
+    require_path nginx.conf
+    require_path scripts/render-nginx-config.sh
+    prepare_rendered_nginx
+    validate_nginx_structure "$RENDERED_NGINX_CONFIG" "$TARGET_HOSTNAME"
+    python3 scripts/check-socket-deployment-config.py \
+      kachhapa-backend.service "$RENDERED_NGINX_CONFIG"
+    grep -Fq 'GeventWebSocketWorker -w 1 ' kachhapa-socket-worker.conf ||
+      fail "Socket.IO systemd override must run one gevent WebSocket worker."
+  fi
+
   if $DEPLOY_KACHHAPA; then
     require_command npm
     for path in \
@@ -302,8 +353,10 @@ local_preflight() {
     
     grep -qi '^gunicorn==' Flask/requirements.txt ||
       fail "Flask/requirements.txt must pin gunicorn."
-    grep -qi '^eventlet==' Flask/requirements.txt ||
-      fail "Flask/requirements.txt must pin eventlet."
+    grep -qi '^gevent==' Flask/requirements.txt ||
+      fail "Flask/requirements.txt must pin gevent."
+    grep -qi '^gevent-websocket==' Flask/requirements.txt ||
+      fail "Flask/requirements.txt must pin gevent-websocket."
       
     validate_python_syntax Flask/app.py
     validate_python_syntax Flask/module_templates.py
@@ -312,12 +365,25 @@ local_preflight() {
     validate_service_file kachhapa-backend.service
     grep -q '/venv/bin/gunicorn' kachhapa-backend.service ||
       fail "kachhapa-backend.service does not launch Gunicorn from the Kachhapa virtualenv."
+    require_path scripts/check-socket-deployment-config.py
+    # Render even when Nginx is not selected: a later Nginx deploy must retain
+    # the same socket routing contract as this backend service.
+    prepare_rendered_nginx
+    python3 scripts/check-socket-deployment-config.py \
+      kachhapa-backend.service "$RENDERED_NGINX_CONFIG"
   fi
 
 
   if $DEPLOY_MODULES; then
     require_path Flask/modules
     [[ -f Flask/modules/README.md ]] || fail "Flask/modules/README.md is required for module deployment."
+  fi
+
+  if $DEPLOY_CATALOG; then
+    for path in 5etools-src/data/adventures.json 5etools-src/data/adventure 5etools-src/data/bestiary Flask/import_5etools_catalog.py; do
+      require_path "$path"
+    done
+    python3 Flask/import_5etools_catalog.py --preview
   fi
 
   if $DEPLOY_MTG; then
@@ -344,6 +410,8 @@ local_preflight() {
     require_path 5etools-src/index.html
     prepare_rendered_nginx
     validate_nginx_structure "$RENDERED_NGINX_CONFIG" "$TARGET_HOSTNAME"
+    python3 scripts/check-socket-deployment-config.py \
+      kachhapa-backend.service "$RENDERED_NGINX_CONFIG"
     echo "==> Rendered Nginx names for $TARGET_HOSTNAME"
   fi
 }
@@ -378,7 +446,7 @@ remote_preflight() {
   require_command rsync
 
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$DESTINATION" "bash -s" -- \
-    "$DEPLOY_KACHHAPA" "$DEPLOY_MTG" "$DEPLOY_NGINX" "$KACHHAPA_ROOT" "$MTG_ROOT" "$TARGET_HOSTNAME" <<'REMOTE'
+    "$DEPLOY_KACHHAPA" "$DEPLOY_MTG" "$DEPLOY_NGINX" "$KACHHAPA_ROOT" "$MTG_ROOT" "$TARGET_HOSTNAME" "$DEPLOY_SOCKET_FIX" <<'REMOTE'
 set -Eeuo pipefail
 deploy_kachhapa=$1
 deploy_mtg=$2
@@ -386,6 +454,7 @@ deploy_nginx=$3
 kachhapa_root=$4
 mtg_root=$5
 target_hostname=$6
+deploy_socket_fix=$7
 
 for command_name in sudo systemctl cmp; do
   command -v "$command_name" >/dev/null || {
@@ -400,7 +469,7 @@ if ! sudo -n /usr/local/sbin/kachhapa-deploy-root check; then
   exit 1
 fi
 
-if "$deploy_kachhapa"; then
+if "$deploy_kachhapa" || "$deploy_socket_fix"; then
   for command_name in pg_dump file python3; do
     command -v "$command_name" >/dev/null || {
       echo "Missing required remote command for Kachhapa: $command_name" >&2
@@ -425,7 +494,7 @@ if "$deploy_mtg"; then
     { echo "Missing MTG virtualenv; run install.sh while Internet access is available." >&2; exit 1; }
 fi
 
-if "$deploy_nginx"; then
+if "$deploy_nginx" || "$deploy_socket_fix"; then
   if ! command -v nginx >/dev/null && [[ ! -x /usr/sbin/nginx ]]; then
     echo "Missing required remote command for Nginx: nginx (checked PATH and /usr/sbin/nginx)" >&2
     exit 1
@@ -438,12 +507,31 @@ fi
 REMOTE
 }
 
+deploy_socket_fix() {
+  CURRENT_STEP="Socket.IO service override"
+  scp kachhapa-socket-worker.conf "$DESTINATION:/home/ijohnson/kachhapa-socket-worker.conf.new"
+  ssh "$DESTINATION" "sudo -n /usr/local/sbin/kachhapa-deploy-root socket-service"
+  deploy_nginx
+}
+
 deploy_tools() {
   CURRENT_STEP="5etools file transfer"
   echo "==> Deploying 5etools static site"
   ssh "$DESTINATION" "mkdir -p /home/ijohnson/5etools-src"
   rsync -avz --delete --exclude='.git/' 5etools-src/ \
     "$DESTINATION:/home/ijohnson/5etools-src/"
+}
+
+deploy_catalog() {
+  CURRENT_STEP="5etools catalog data transfer"
+  echo "==> Transferring bestiary and adventure JSON"
+  ssh "$DESTINATION" "mkdir -p /home/ijohnson/5etools-src/data/adventure /home/ijohnson/5etools-src/data/bestiary"
+  rsync -avz 5etools-src/data/adventures.json "$DESTINATION:/home/ijohnson/5etools-src/data/"
+  rsync -avz 5etools-src/data/adventure/ "$DESTINATION:/home/ijohnson/5etools-src/data/adventure/"
+  rsync -avz 5etools-src/data/bestiary/ "$DESTINATION:/home/ijohnson/5etools-src/data/bestiary/"
+  CURRENT_STEP="5etools catalog database import"
+  echo "==> Importing creature and adventure catalog"
+  ssh "$DESTINATION" "cd '$KACHHAPA_ROOT/Flask' && '$KACHHAPA_ROOT/venv/bin/python' import_5etools_catalog.py --data-dir /home/ijohnson/5etools-src/data --commit"
 }
 
 backup_kachhapa_database() {
@@ -703,16 +791,21 @@ if $USE_DOCKER; then
 fi
 
 remote_preflight
+$DEPLOY_SOCKET_FIX && deploy_socket_fix
 $DEPLOY_KACHHAPA && deploy_kachhapa
+$DEPLOY_CATALOG && deploy_catalog
 $DEPLOY_MTG && deploy_mtg
 $DEPLOY_MODULES && deploy_modules
 if $DEPLOY_NGINX; then
-  deploy_tools
+  $SKIP_TOOLS_TRANSFER || deploy_tools
   deploy_nginx
 fi
 
 CURRENT_STEP="publisher-side route verification"
-scripts/check-deployment-routes.sh "$TARGET_HOSTNAME"
+route_check_args=("$TARGET_HOSTNAME")
+$SKIP_FOUNDRY_CHECK && route_check_args+=(--skip-foundry)
+[[ -z "$TAILSCALE_IP" ]] || route_check_args+=(--target-ip "$TAILSCALE_IP")
+scripts/check-deployment-routes.sh "${route_check_args[@]}"
 
 CURRENT_STEP="deployment complete"
 echo "Deployment complete."

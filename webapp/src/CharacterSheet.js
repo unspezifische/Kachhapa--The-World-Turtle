@@ -11,6 +11,7 @@ import 'react-resizable/css/styles.css';
 import './CharacterSheet.css'
 
 import EditIcon from '@mui/icons-material/Edit';
+import ImageCropModal from './ImageCropModal';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
@@ -119,6 +120,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
   const [avatarUploadStatus, setAvatarUploadStatus] = useState('');
   const [avatarPreviewVersion, setAvatarPreviewVersion] = useState(0);
   const [avatarPresets, setAvatarPresets] = useState([]);
+  const [avatarCropFile, setAvatarCropFile] = useState(null);
   const avatarPresetAuthorization = headers?.Authorization;
 
   useEffect(() => {
@@ -130,8 +132,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
       .catch(error => console.error('[AvatarPresets] Unable to load presets:', error));
   }, [avatarPresetAuthorization]);
 
-  const handleAvatarUpload = async (event) => {
-    const file = event.target.files?.[0];
+  const handleAvatarUpload = async (file) => {
     if (!file) {
       console.log('[AvatarUpload] No file selected.');
       return;
@@ -183,8 +184,13 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
       setAvatarUploadStatus('Upload failed.');
     } finally {
       setAvatarUploading(false);
-      event.target.value = '';
     }
+  };
+
+  const chooseAvatarFile = event => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) setAvatarCropFile(file);
   };
 
   // console.log('[CharacterSheet] Component rendered with props:', { characterName, headersPresent: !!headers, setCharacterNamePresent: !!setCharacterName });
@@ -2401,9 +2407,10 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
                         <Form.Label>Avatar Image</Form.Label>
                         <Form.Control
                           type="file"
-                          accept="image/png,image/jpeg,image/webp"
-                          onChange={handleAvatarUpload}
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          onChange={chooseAvatarFile}
                         />
+                        <Form.Text muted>PNG, JPEG, WebP, or GIF. Animated GIFs play in the full portrait.</Form.Text>
                         {avatarUploading ? <div className="mt-2">Uploading avatar...</div> : null}
                         {avatarUploadError ? <div className="text-danger mt-2">{avatarUploadError}</div> : null}
                       </Form.Group>
@@ -2883,6 +2890,17 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           </Button>
         </Modal.Footer>
       </Modal>
+      <ImageCropModal
+        file={avatarCropFile}
+        show={Boolean(avatarCropFile)}
+        title="Crop & position character portrait"
+        busy={avatarUploading}
+        onCancel={() => setAvatarCropFile(null)}
+        onConfirm={async file => {
+          await handleAvatarUpload(file);
+          setAvatarCropFile(null);
+        }}
+      />
     </>
   );
 }

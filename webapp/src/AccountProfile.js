@@ -1,565 +1,337 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Modal, Navbar, Container, Row, Col, Form, Carousel, Accordion } from 'react-bootstrap';
-import campaignIcon from './campaign.webp';
-
+import { Modal, Form } from 'react-bootstrap';
 import CreateCharacterModal from './CreateCharacterModal';
+import campaignFallback from './campaign.webp';
+import './AccountProfile.css';
 
-const campaignSystemLabel = (campaign) => (
-  campaign.system === 'D&D' && campaign.ruleset
-    ? `D&D · ${campaign.ruleset}`
-    : campaign.system
-);
+const PLAYER_PROMPTS = [
+  'What is one question your character hopes to ask someone next session?',
+  'What does your character want the party to understand about them?',
+  'Which unfinished promise is on your character’s mind?',
+  'What small comfort would your character seek after the last adventure?',
+];
 
-const AccountProfile = ({ headers, setAccountType, setSelectedCampaign, setCharacterName, dmLandingPath = '/dmTools', primaryOrigin = window.location.origin }) => {
-  const navigate = useNavigate();
+const DM_PROMPTS = [
+  'What rumor will reach the party before they set out again?',
+  'Which place has changed since the characters last saw it?',
+  'What does an important NPC want but hesitate to ask for?',
+  'What local celebration or tradition could complicate the next scene?',
+];
 
-  const [campaigns, setCampaigns] = useState([]);
-  const [characters, setCharacters] = useState([]);
-  const [unaffiliatedCharacters, setUnaffiliatedCharacters] = useState([]);
+const DM_DESTINATIONS = [
+  ['/dmTools', 'DM tools'], ['/settlementManager', 'Settlement map'],
+  ['/worldAtlas', 'World atlas'], ['/calendar', 'Calendar'], ['/library', 'Library'],
+];
 
-  const [showModalCampaign, setShowModalCampaign] = useState(false);
-  const [showModalCharacter, setShowModalCharacter] = useState(false);
-  const [showModalSelectCharacter, setShowModalSelectCharacter] = useState(false);
+const PLAYER_DESTINATIONS = [
+  ['/characterSheet', 'Character sheet'], ['/inventoryView', 'Inventory'],
+  ['/journal', 'Journal'], ['/calendar', 'Calendar'], ['/library', 'Library'],
+];
 
-  const handleCloseModalCampaign = () => setShowModalCampaign(false);
-  const handleCreateCampaign = () => setShowModalCampaign(true);
-
-  const handleCloseModalCharacter = () => setShowModalCharacter(false);
-  const handleCreateCharacter = () => setShowModalCharacter(true);
-
-  const handleCloseModalSelectCharacter = () => setShowModalSelectCharacter(false);
-
-  // Get camapigns and characters
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [campaignsResponse, charactersResponse] = await Promise.all([
-          axios.get('/api/campaigns', { headers }),
-          axios.get('/api/characters', { headers })
-        ]);
-
-        setCampaigns(campaignsResponse.data);
-        setCharacters(charactersResponse.data);
-
-        console.log("AccountProfile- api/characters:", charactersResponse.data);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      }
-    };
-
-    fetchData();
-  }, [headers]);
-
-  // Accepts a character object and sets the character name and ID
-  const handleSelectCharacter = (character) => {
-    if (character) {
-      console.log("AccountProfile- selected character:", character);
-      setAccountType('Player');
-      console.log("AccountProfile- selected character name:", character.name);
-      // Set the character name for downstream pages (Chat/Inventory/Journal)
-      setCharacterName(character.name || character.Name || character.character_name || '');
-
-      // Set the selected campaign with the required format
-      setSelectedCampaign({
-        id: character.campaignID,
-        name: character.campaign,
-        dmId: null,
-        ownerId: null,
-        rulesSystem: character.system,
-      });
-      console.log("AccountProfile- selected campaign:", character.campaign, character.campaignID);
-  
-      navigate('/characterSheet');
-    } else {
-      console.log("Profile- no character selected");
-    }
-  };
-
-  const handleCampaignSelection = (campaign) => {
-    console.log("header- AccountProfile", headers);
-    // Add the Campaign-ID to the headers
-    headers['Campaign-ID'] = campaign.id || 1;
-    setSelectedCampaign({
-      id: campaign.id,
-      name: campaign.name,
-      dmId: campaign.dm_id,
-      ownerId: campaign.owner_id,
-      ruleset: campaign.ruleset,
-      rulesSystem: campaign.rules_system,
-    });
-    if (campaign.dm_id === headers.userID) {
-      axios.get('/api/characters', { headers })
-        .then(response => {
-          console.log("AccountProfile- api/characters:", response.data);
-        })
-      setAccountType('DM');
-      setCharacterName('DM');
-      navigate(dmLandingPath);
-    } 
-    else if (campaign.owner_id === headers.userID) {
-      axios.get('/api/characters', { headers })
-        .then(response => {
-          console.log("AccountProfile- api/characters:", response.data);
-        })
-      setAccountType('DM');
-      setCharacterName('Admin');
-      navigate(dmLandingPath);
-    } else {
-      setAccountType('Player');
-      axios.get('/api/characters', { headers })
-        .then(response => {
-          // console.log("AccountProfile- api/characters:", response.data);
-          // Filter the user's characters for those that are affiliated with the selected campaign
-          const affiliatedCharacters = response.data.filter(character => character.campaignID === campaign.id);
-          console.log("affiliatedCharacters:", affiliatedCharacters);
-          if (affiliatedCharacters.length > 0) {
-            console.log("Selected Character-", affiliatedCharacters[0]);
-            console.log("Selected Character ID-", affiliatedCharacters[0].id);
-            console.log("Selected Character Name-", affiliatedCharacters[0].name || affiliatedCharacters[0].Name || affiliatedCharacters[0].character_name);
-            setCharacterName(affiliatedCharacters[0].name || affiliatedCharacters[0].Name || affiliatedCharacters[0].character_name || '');
-            // setCharacterID(affiliatedCharacters[0].id);
-            navigate('/characterSheet');
-          } else {
-            // Memberships may exist before the player has made a character.
-            // Keep any reusable characters available for a later association
-            // workflow, but open character creation now instead of crashing on
-            // an attempted assignment to the React state setter.
-            setUnaffiliatedCharacters(response.data.filter(character => !character.campaignID && character.system === (campaign.rules_system || campaign.system)));
-            handleCreateCharacter();
-          }
-        })
-        .catch(error => {
-          console.error('Error fetching profile:', error);
-        });
-    }
-
-  };
-
-  const handleWikiSelection = (campaign) => {
-    console.log("header- AccountProfile", headers);
-    // Add the Campaign-ID to the headers
-    headers['Campaign-ID'] = campaign.id || 1;
-    setSelectedCampaign({
-      id: campaign.id,
-      name: campaign.name,
-      dmId: campaign.dm_id,
-      ownerId: campaign.owner_id,
-      ruleset: campaign.ruleset,
-      rulesSystem: campaign.rules_system,
-    });
-
-    console.log("opening wiki for", campaign.name);
-
-    if (campaign.dm_id === headers.userID) {
-      axios.get('/api/characters', { headers })
-        .then(response => {
-          console.log("AccountProfile- api/characters:", response.data);
-        })
-      setAccountType('DM');
-      setCharacterName('DM');
-      navigate(dmLandingPath);
-    }
-    else if (campaign.owner_id === headers.userID) {
-      axios.get('/api/characters', { headers })
-        .then(response => {
-          console.log("AccountProfile- api/characters:", response.data);
-        })
-      setAccountType('DM');
-      setCharacterName('Admin');
-      navigate(dmLandingPath);
-    } else {
-      setAccountType('Player');
-      axios.get('/api/characters', { headers })
-        .then(response => {
-          // console.log("AccountProfile- api/characters:", response.data);
-          // Filter the user's characters for those that are affiliated with the selected campaign
-          const affiliatedCharacters = response.data.filter(character => character.campaignID === campaign.id);
-          console.log("affiliatedCharacters:", affiliatedCharacters);
-          if (affiliatedCharacters.length > 0) {
-            console.log("Selected Character-", affiliatedCharacters[0]);
-            console.log("Selected Character ID-", affiliatedCharacters[0].id);
-            console.log("Selected Character Name-", affiliatedCharacters[0].name);
-            setCharacterName(affiliatedCharacters[0].name);
-            navigate('/characterSheet');
-          } else {
-            setUnaffiliatedCharacters(response.data.filter(character => !character.campaignID && character.system === (campaign.rules_system || campaign.system)));
-            handleCreateCharacter();
-          }
-        })
-        .catch(error => {
-          console.error('Error fetching profile:', error);
-        });
-    }
-
-    // Store headers in local storage
-    localStorage.setItem('userID', headers['userID']);
-    localStorage.setItem('characterName', headers['characterName']);
-    console.log("Stored header in local storage");
-
-    // Construct the destination URL without encoding
-    var destinationURL = primaryOrigin + '/' + encodeURIComponent(campaign.name) + "/Main Page";
-    var destinationPage = encodeURIComponent(campaign.name) + "/Main Page";
-    console.log("Destination URL: " + destinationURL);
-    console.log("Destination Page: " + destinationPage);
-
-    // Encode the entire destination URL
-    var encodedDestination = encodeURIComponent(destinationPage);
-    console.log("Encoded URL: " + encodedDestination);
-
-    // Include the encoded destination URL as a query parameter in the login URL
-    var loginUrl = primaryOrigin + '/login?redirect=/wiki/' + encodedDestination;
-    console.log("URL with Redirect: " + loginUrl);
-
-    // Open the login URL in a new window
-    window.open(loginUrl, '_blank');
-  };
-
-  const [newCampaign, setNewCampaign] = useState({
-    name: '',
-    system: 'D&D',
-    ruleset: '5e',
-    module: '',
-    description: '',
-    calendar_enabled: true,
-    calendar_format: 'harptos',
-    calendar_year: 1,
-    calendar_month: 1,
-    calendar_day: 1,
-  });
-
-  const [newCharacter, setNewCharacter] = useState({
-    name: '',
-    system: 'D&D',
-    class: ''
-  });
-
-  const handleInputChange = (event) => {
-    setNewCampaign({
-      ...newCampaign,
-      [event.target.name]: event.target.type === 'checkbox' ? event.target.checked : event.target.value
-    });
-  };
-
-  const handleFormSubmit = (event) => {
-    event.preventDefault();
-    axios.post('/api/campaigns', newCampaign, { headers })
-      .then(response => {
-        setCampaigns([...campaigns, response.data]);
-        handleCloseModalCampaign();
-      })
-      .catch(error => {
-        console.error('Error creating campaign:', error);
-      });
-  };
-
-  // For the Carousel: className='d-flex flex-column align-items-center'
-  return (
-    <>
-      <Container fluid>
-        <Row>
-          <h1>Account Profile</h1>
-        </Row>
-        {/* Carousel */}
-        <Row >
-          <Carousel>
-            {campaigns.map((campaign, index) => (
-              <Carousel.Item key={campaign.id}>
-                <Carousel.Caption>
-                  <h3 style={{ mixBlendMode: 'difference', color: 'red' }}>{campaign.name}</h3>
-                  <p style={{ mixBlendMode: 'difference', color: 'red' }}>{campaignSystemLabel(campaign)}</p>
-                </Carousel.Caption>
-                <img
-                  className="d-flex justify-content-center align-items-center"
-                  style={{height: '40vh', margin: '0 auto' }}
-                  src={campaign.icon || campaignIcon}
-                  alt={`Campaign ${index}`}
-                />
-              </Carousel.Item>
-            ))}
-            {characters.map((character, index) => (
-              <Carousel.Item key={character.id}>
-                <Carousel.Caption>
-                  <h3 style={{ mixBlendMode: 'difference', color: 'red' }}>{character.name}</h3>
-                  <p style={{ mixBlendMode: 'difference', color: 'red' }}>{character.Class}</p>
-                  <p style={{ mixBlendMode: 'difference', color: 'red' }}>{character.campaign}</p>
-                </Carousel.Caption>
-                <img
-                  className="d-flex justify-content-center align-items-center"
-                  style={{height: '40vh', margin: '0 auto' }}
-                  src={process.env.PUBLIC_URL + '/avatars/' + character.icon || campaignIcon}
-                  alt={`Character ${index}`}
-                />
-              </Carousel.Item>
-            ))}
-          </Carousel>
-        </Row>
-
-        {/* Campaigns, Characters, and Wikis */}
-        <Row>
-          <Accordion defaultActiveKey="0">
-            {/* Campaigns */}
-            <Accordion.Item eventKey="0">
-              <Accordion.Header>
-                <h3>My Campaigns</h3>
-              </Accordion.Header>
-              <Accordion.Body>
-                {campaigns.map((campaign) => (
-                  <Col sm={4} key={campaign.id}>
-                    <Card
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Open campaign ${campaign.name}`}
-                      style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}
-                      onClick={() => handleCampaignSelection(campaign)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') handleCampaignSelection(campaign);
-                      }}
-                    >
-                      <Row>
-                        <Col xs={4}>
-                          <Card.Img variant="top" src={campaign.icon || campaignIcon} />
-                        </Col>
-                        <Col xs={8}>
-                          <Card.Body>
-                            <Card.Title>{campaign.name}</Card.Title>
-                            <Card.Subtitle className="mb-2 text-muted">{campaignSystemLabel(campaign)}</Card.Subtitle>
-                            {/* Add more details here */}
-                          </Card.Body>
-                        </Col>
-                      </Row>
-                    </Card>
-                  </Col>
-                ))}
-                <Col sm={4}>
-                  <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={handleCreateCampaign}>
-                    <Row>
-                      <Col xs={4}>
-                        <Card.Img variant="top" src={campaignIcon} />
-                      </Col>
-                      <Col xs={8}>
-                        <Card.Body>
-                          <Card.Title>Create A New Campaign</Card.Title>
-                        </Card.Body>
-                      </Col>
-                    </Row>
-                  </Card>
-                </Col>
-              </Accordion.Body>
-            </Accordion.Item>
-            {/* Characters */}
-            <Accordion.Item eventKey="1">
-              <Accordion.Header>
-                <h3>My Characters</h3>
-              </Accordion.Header>
-              <Accordion.Body>
-                {characters.map((character) => (
-                  <Card
-                    key={character.id}
-                    style={{ width: '18rem', height: '90px', marginBottom: '1rem' }}
-                    onClick={() => handleSelectCharacter(character)}
-                  >
-                    <Row>
-                      <Col xs={4}>
-                        <Card.Img variant="top" src={character.icon} />
-                      </Col>
-                      <Col xs={8}>
-                        <Card.Body>
-                          <Card.Title>{character.Name}</Card.Title>
-                          <Card.Subtitle className="mb-2 text-muted">{character.Class}</Card.Subtitle>
-                        </Card.Body>
-                      </Col>
-                    </Row>
-                  </Card>
-                ))}
-                <Col sm={4}>
-                  <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={handleCreateCharacter}>
-                    <Row>
-                      <Col xs={4}>
-                        <Card.Img fluid src={campaignIcon} />
-                      </Col>
-                      <Col xs={8}>
-                        <Card.Body>
-                          <Card.Title>Create A New Character</Card.Title>
-                        </Card.Body>
-                      </Col>
-                    </Row>
-                  </Card>
-                </Col>
-              </Accordion.Body>
-            </Accordion.Item>
-            {/* Wikis */}
-            <Accordion.Item eventKey="2">
-              <Accordion.Header>
-                <h3>Campaign Wikis</h3>
-              </Accordion.Header>
-              <Accordion.Body>
-                {campaigns.map((campaign) => (
-                  <Col sm={4} key={campaign.id}>
-                    <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={() => handleWikiSelection(campaign)}>
-                      <Row>
-                        <Col xs={4}>
-                          <Card.Img variant="top" src={campaign.icon || campaignIcon} />
-                        </Col>
-                        <Col xs={8}>
-                          <Card.Body>
-                            <Card.Title>{campaign.name}</Card.Title>
-                            <Card.Subtitle className="mb-2 text-muted">{campaignSystemLabel(campaign)}</Card.Subtitle>
-                            {/* Add more details here */}
-                          </Card.Body>
-                        </Col>
-                      </Row>
-                    </Card>
-                  </Col>
-                ))}
-                <Col sm={4}>
-                  <Card style={{ width: '18rem', height: '90px', marginBottom: '1rem' }} onClick={handleCreateCampaign}>
-                    <Row>
-                      <Col xs={4}>
-                        <Card.Img variant="top" src={campaignIcon} />
-                      </Col>
-                      <Col xs={8}>
-                        <Card.Body>
-                          <Card.Title>Create A New Campaign</Card.Title>
-                        </Card.Body>
-                      </Col>
-                    </Row>
-                  </Card>
-                </Col>
-              </Accordion.Body>
-            </Accordion.Item>
-          </Accordion>
-        </Row>
-      </Container>
-
-      {/* Select Character Modal */}
-      <Modal show={showModalSelectCharacter} onHide={handleCloseModalSelectCharacter}>
-        <Modal.Header closeButton>
-          <Modal.Title>Select Character</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form>
-            <Form.Group controlId="characterSelect">
-              <Form.Label>Character</Form.Label>
-              <Form.Control as="select" name="character" onChange={handleInputChange} required>
-                <option value="">Select a character</option>
-                {unaffiliatedCharacters.map((character) => (
-                  <option key={character.id} value={character.id}>{character.name}</option>
-                ))}
-              </Form.Control>
-            </Form.Group>
-            <Button variant="primary" type="submit">Select Character</Button>
-          </Form>
-        </Modal.Body>
-      </Modal>
-
-      {/* Campaign Creation Modal */}
-      <Modal show={showModalCampaign} onHide={handleCloseModalCampaign}>
-        <Modal.Header closeButton>
-          <Modal.Title>Create New Campaign</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form onSubmit={handleFormSubmit}>
-            <Form.Group controlId="campaignName">
-              <Form.Label>Campaign Name</Form.Label>
-              <Form.Control type="text" name="name" value={newCampaign.name} onChange={handleInputChange} required />
-            </Form.Group>
-            <Form.Group controlId="campaignSystem">
-              <Form.Label>System</Form.Label>
-              <Form.Control as="select" name="system" value={newCampaign.system} onChange={handleInputChange} required>
-                <option>D&D</option>
-                {/* Add more options here as needed */}
-              </Form.Control>
-            </Form.Group>
-            {newCampaign.system === 'D&D' && <Form.Group controlId="campaignRuleset" className="mt-3">
-              <Form.Label>D&amp;D Ruleset</Form.Label>
-              <Form.Control as="select" name="ruleset" value={newCampaign.ruleset} onChange={handleInputChange} required>
-                <option value="3.5e">3.5e</option>
-                <option value="4e">4e</option>
-                <option value="5e">5e</option>
-                <option value="5e (2024)">5e (2024)</option>
-              </Form.Control>
-            </Form.Group>}
-            <Form.Group controlId="campaignModule">
-              <Form.Label>Module</Form.Label>
-              <Form.Control as="select" name="module" value={newCampaign.module} onChange={handleInputChange} >
-                <option value="">Select a module (optional)</option>
-                <option>Lost Mine of Phandelver</option>
-                <option>Waterdeep Dragon Heist</option>
-                {/* TODO- Add more options here as needed. And probably populate this based on "Module" in the "game_element" table of the database */}
-                {/* TODO TODO- create JSON files for modules */}
-              </Form.Control>
-            </Form.Group>
-            <Form.Group controlId="campaignDescription">
-              <Form.Label>Description</Form.Label>
-              <Form.Control as="textarea" name="description" value={newCampaign.description} onChange={handleInputChange} />
-            </Form.Group>
-            <fieldset className="mt-3 border rounded p-3">
-              <legend className="fs-6 mb-2">Campaign Calendar</legend>
-              {newCampaign.module ? (
-                <Form.Text className="d-block mb-2">
-                  This module includes a calendar. Its calendar and starting year will be configured with the campaign.
-                </Form.Text>
-              ) : (
-                <>
-                  <Form.Check
-                    className="mb-3"
-                    type="switch"
-                    id="campaignCalendarEnabled"
-                    name="calendar_enabled"
-                    label="Set up a calendar now"
-                    checked={newCampaign.calendar_enabled}
-                    onChange={handleInputChange}
-                  />
-                  {newCampaign.calendar_enabled && (
-                    <>
-                      <Form.Group controlId="campaignCalendarFormat" className="mb-2">
-                        <Form.Label>Calendar System</Form.Label>
-                        <Form.Select name="calendar_format" value={newCampaign.calendar_format} onChange={handleInputChange}>
-                          <option value="harptos">Calendar of Harptos</option>
-                          <option value="gregorian">Gregorian Calendar</option>
-                        </Form.Select>
-                      </Form.Group>
-                      <Row>
-                        <Col sm={6}>
-                          <Form.Group controlId="campaignCalendarYear">
-                            <Form.Label>Starting Year</Form.Label>
-                            <Form.Control type="number" name="calendar_year" value={newCampaign.calendar_year} onChange={handleInputChange} required />
-                          </Form.Group>
-                        </Col>
-                        <Col sm={3}>
-                          <Form.Group controlId="campaignCalendarMonth">
-                            <Form.Label>Month</Form.Label>
-                            <Form.Control type="number" min="1" max="12" name="calendar_month" value={newCampaign.calendar_month} onChange={handleInputChange} required />
-                          </Form.Group>
-                        </Col>
-                        <Col sm={3}>
-                          <Form.Group controlId="campaignCalendarDay">
-                            <Form.Label>Day</Form.Label>
-                            <Form.Control type="number" min="1" max="31" name="calendar_day" value={newCampaign.calendar_day} onChange={handleInputChange} required />
-                          </Form.Group>
-                        </Col>
-                      </Row>
-                    </>
-                  )}
-                </>
-              )}
-            </fieldset>
-            <Button variant="primary" type="submit">Create Campaign</Button>
-          </Form>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={handleCloseModalCampaign}>
-            Close
-          </Button>
-        </Modal.Footer>
-      </Modal>
-
-      {/* Character Creation Modal */}
-      <CreateCharacterModal show={showModalCharacter} setShow={setShowModalCharacter} onHide={handleCloseModalCharacter} headers={headers} />
-    </>
-  );
+const characterName = (character) => character?.Name || character?.name || character?.character_name || '';
+const dateKey = (item) => [item.year || 0, item.month_index || 0, item.day || 0, item.hour || 0, item.minute || 0];
+const compareDate = (left, right) => {
+  const a = dateKey(left);
+  const b = dateKey(right);
+  for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) return a[index] - b[index];
+  return 0;
 };
 
-export default AccountProfile;
+export default function AccountProfile({ headers, setAccountType, setSelectedCampaign, setCharacterName, dmLandingPath = '/dmTools', primaryOrigin = window.location.origin }) {
+  const navigate = useNavigate();
+  const authorization = headers?.Authorization;
+  const userId = Number(headers?.userID);
+  const apiHeaders = useMemo(() => ({ Authorization: authorization }), [authorization]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [characters, setCharacters] = useState([]);
+  const [profile, setProfile] = useState(null);
+  const [preferences, setPreferences] = useState({});
+  const [activeId, setActiveId] = useState(() => Number(localStorage.getItem('dashboardCampaignId')) || null);
+  const [notes, setNotes] = useState([]);
+  const [calendar, setCalendar] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [promptAnswer, setPromptAnswer] = useState('');
+  const [promptIndex, setPromptIndex] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [createCampaignOpen, setCreateCampaignOpen] = useState(false);
+  const [createCharacterOpen, setCreateCharacterOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedPassword, setAdvancedPassword] = useState('');
+  const [advancedUnlocked, setAdvancedUnlocked] = useState(false);
+  const [advancedBusy, setAdvancedBusy] = useState(false);
+  const [advancedError, setAdvancedError] = useState('');
+  const [campaignDraft, setCampaignDraft] = useState({ name: '', system: 'D&D', ruleset: '5e', module: '', description: '', calendar_enabled: true, calendar_format: 'harptos', calendar_year: 1, calendar_month: 1, calendar_day: 1 });
+
+  useEffect(() => {
+    if (!authorization) return;
+    let alive = true;
+    Promise.all([
+      axios.get('/api/campaigns', { headers: apiHeaders }),
+      axios.get('/api/characters', { headers: apiHeaders }),
+      axios.get('/api/profile', { headers: apiHeaders }),
+      axios.get('/api/dashboard/preferences', { headers: apiHeaders }),
+    ]).then(([campaignResponse, characterResponse, profileResponse, preferenceResponse]) => {
+      if (!alive) return;
+      const loaded = campaignResponse.data || [];
+      setCampaigns(loaded);
+      setCharacters(characterResponse.data || []);
+      setProfile(profileResponse.data);
+      setPreferences(preferenceResponse.data || {});
+      setActiveId(current => loaded.some(item => item.id === current) ? current : loaded[0]?.id || null);
+    }).catch(() => { if (alive) setError('Unable to load your dashboard. Try refreshing the page.'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [authorization, apiHeaders]);
+
+  const activeCampaign = campaigns.find(campaign => campaign.id === activeId) || null;
+  const isDM = Boolean(activeCampaign && (Number(activeCampaign.dm_id) === userId || Number(activeCampaign.owner_id) === userId));
+  const activeCharacter = characters.find(character => Number(character.campaignID) === Number(activeId)) || null;
+  const characterHeaders = useMemo(() => ({
+    ...headers,
+    CampaignID: activeId,
+    campaignID: activeId,
+    ...(activeCampaign?.rules_system ? { System: activeCampaign.rules_system } : {}),
+  }), [headers, activeId, activeCampaign?.rules_system]);
+  const prompts = isDM ? DM_PROMPTS : PLAYER_PROMPTS;
+  const prompt = prompts[promptIndex % prompts.length];
+
+  useEffect(() => {
+    if (!activeId || !authorization) { setNotes([]); setCalendar(null); return; }
+    localStorage.setItem('dashboardCampaignId', String(activeId));
+    setNotes([]);
+    setCalendar(null);
+    setDraft('');
+    setEditingId(null);
+    setPromptAnswer('');
+    setPromptIndex(0);
+    let alive = true;
+    Promise.allSettled([
+      axios.get(`/api/campaigns/${activeId}/quick-notes`, { headers: apiHeaders }),
+      axios.get(`/api/calendar/${activeId}`, { headers: apiHeaders }),
+    ]).then(([noteResult, calendarResult]) => {
+      if (!alive) return;
+      if (noteResult.status === 'fulfilled') setNotes(noteResult.value.data.notes || []);
+      if (calendarResult.status === 'fulfilled' && calendarResult.value.data.configured !== false) setCalendar(calendarResult.value.data);
+    });
+    return () => { alive = false; };
+  }, [activeId, authorization, apiHeaders]);
+
+  const destinationsFor = campaign => {
+    const dm = Number(campaign.dm_id) === userId || Number(campaign.owner_id) === userId;
+    if (dm) return DM_DESTINATIONS;
+    const hasCharacter = characters.some(character => Number(character.campaignID) === Number(campaign.id));
+    return hasCharacter ? PLAYER_DESTINATIONS : PLAYER_DESTINATIONS.filter(([path]) => !['/characterSheet', '/inventoryView', '/journal'].includes(path));
+  };
+
+  const enterCampaign = (campaign, requestedPath) => {
+    const dm = Number(campaign.dm_id) === userId || Number(campaign.owner_id) === userId;
+    const character = characters.find(item => Number(item.campaignID) === Number(campaign.id));
+    if (!dm && !character && !requestedPath) {
+      setActiveId(campaign.id);
+      setCreateCharacterOpen(true);
+      return;
+    }
+    const allowed = destinationsFor(campaign).map(([path]) => path);
+    const defaultPath = dm ? dmLandingPath : '/characterSheet';
+    const path = requestedPath || preferences[String(campaign.id)] || defaultPath;
+    setSelectedCampaign({ id: campaign.id, name: campaign.name, dmId: campaign.dm_id, ownerId: campaign.owner_id, ruleset: campaign.ruleset, rulesSystem: campaign.rules_system });
+    setAccountType(dm ? 'DM' : 'Player');
+    setCharacterName(dm ? 'DM' : characterName(character));
+    navigate(allowed.includes(path) ? path : defaultPath);
+  };
+
+  const saveLanding = async (campaign, path) => {
+    setError('');
+    try {
+      await axios.patch(`/api/campaigns/${campaign.id}/landing`, { landing_path: path }, { headers: apiHeaders });
+      setPreferences(current => ({ ...current, [String(campaign.id)]: path }));
+      setNotice(`${campaign.name} will open to ${destinationsFor(campaign).find(([key]) => key === path)?.[1] || 'your chosen page'}.`);
+    } catch (reason) { setError(reason.response?.data?.message || 'Unable to save the landing page.'); }
+  };
+
+  const saveNote = async (content = draft, resetPrompt = false) => {
+    if (!activeCampaign || !content.trim()) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const response = editingId && !resetPrompt
+        ? await axios.patch(`/api/quick-notes/${editingId}`, { content }, { headers: apiHeaders })
+        : await axios.post(`/api/campaigns/${activeId}/quick-notes`, { content }, { headers: apiHeaders });
+      const saved = response.data.note;
+      setNotes(current => [saved, ...current.filter(note => note.id !== saved.id)]);
+      if (resetPrompt) setPromptAnswer(''); else { setDraft(''); setEditingId(null); }
+      setNotice(resetPrompt ? 'Your answer was saved as a private note.' : 'Note saved.');
+    } catch (reason) { setError(reason.response?.data?.message || 'Unable to save your note.'); }
+    finally { setBusy(false); }
+  };
+
+  const deleteNote = async () => {
+    if (!editingId || !window.confirm('Delete this note?')) return;
+    setBusy(true); setError('');
+    try {
+      await axios.delete(`/api/quick-notes/${editingId}`, { headers: apiHeaders });
+      setNotes(current => current.filter(note => note.id !== editingId));
+      setDraft(''); setEditingId(null); setNotice('Note deleted.');
+    } catch (reason) { setError(reason.response?.data?.message || 'Unable to delete your note.'); }
+    finally { setBusy(false); }
+  };
+
+  const createCampaign = async event => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      const response = await axios.post('/api/campaigns', campaignDraft, { headers: apiHeaders });
+      const campaign = response.data;
+      setCampaigns(current => [...current, campaign]);
+      setActiveId(campaign.id);
+      setCreateCampaignOpen(false);
+      setNotice('Campaign created.');
+    } catch (reason) { setError(reason.response?.data?.message || 'Unable to create the campaign.'); }
+    finally { setBusy(false); }
+  };
+
+  const finishCharacterCreation = async () => {
+    setCreateCharacterOpen(false);
+    try {
+      const response = await axios.get('/api/characters', { headers: apiHeaders });
+      setCharacters(response.data || []);
+    } catch (_reason) {
+      setError('Character created, but the list could not refresh. Reload the dashboard to see it.');
+    }
+  };
+
+  const logOut = async () => {
+    try {
+      await axios.post('/api/logout', {}, { withCredentials: true });
+    } catch (_reason) {
+      // Local credentials still need clearing when the shared cookie is unavailable.
+    } finally {
+      localStorage.clear();
+      window.location.assign('/login');
+    }
+  };
+
+  const openAdvanced = () => {
+    setAdvancedError('');
+    setAdvancedPassword('');
+    setAdvancedOpen(true);
+  };
+
+  const unlockAdvanced = async event => {
+    event.preventDefault();
+    setAdvancedBusy(true);
+    setAdvancedError('');
+    try {
+      await axios.post('/api/profile/verify-password', { password: advancedPassword }, { headers: apiHeaders });
+      setAdvancedUnlocked(true);
+      setAdvancedPassword('');
+    } catch (reason) {
+      setAdvancedError(reason.response?.data?.message || 'Unable to verify your password.');
+    } finally {
+      setAdvancedBusy(false);
+    }
+  };
+
+  const events = useMemo(() => {
+    if (!calendar?.current_date) return [];
+    return (calendar.events || []).filter(event => compareDate(event, calendar.current_date) >= 0)
+      .sort(compareDate).slice(0, 4);
+  }, [calendar]);
+  const nextHolidays = useMemo(() => {
+    if (!calendar?.current_date) return [];
+    const date = calendar.current_date;
+    return (calendar.holidays || []).filter(holiday => !holiday.leap_only || date.year % 4 === 0)
+      .map(holiday => ({ ...holiday, year: date.year + (compareDate({ year: date.year, month_index: holiday.month_index, day: holiday.day }, date) < 0 ? 1 : 0) }))
+      .sort(compareDate).slice(0, 2);
+  }, [calendar]);
+  const wikiUrl = campaign => `${primaryOrigin}/wiki/${encodeURIComponent(campaign.name)}/${encodeURIComponent('Main Page')}`;
+  const primary = new URL(primaryOrigin);
+  const mtgUrl = process.env.REACT_APP_MTG_SANDBOX_URL || (/^(localhost|127\.0\.0\.1)$/.test(primary.hostname)
+    ? `${primaryOrigin}/mtg/` : `${primary.protocol}//mtg.${primary.hostname}${primary.port ? `:${primary.port}` : ''}/`);
+
+  return <main className="dashboard-page">
+    <header className="dashboard-hero">
+      <div className="dashboard-hero-copy"><span className="dashboard-eyebrow">Kachhapa · your adventure desk</span>
+        <h1>Welcome back{profile?.real_name ? `, ${profile.real_name.split(' ')[0]}` : ''}.</h1>
+        <p>Pick up a campaign, capture a thought, or find your next thread.</p>
+      </div>
+      <div className="dashboard-hero-actions">
+        <button type="button" className="dashboard-button dashboard-button-light" onClick={() => navigate('/profile')}>User profile</button>
+        <button type="button" className="dashboard-button dashboard-button-outline" onClick={openAdvanced}>Advanced</button>
+        <a className="dashboard-button dashboard-button-outline" href={mtgUrl} target="_blank" rel="noopener noreferrer">MTG Sandbox ↗</a>
+        <button type="button" className="dashboard-button dashboard-button-logout" onClick={logOut}>Log out</button>
+      </div>
+    </header>
+
+    {error && <div className="dashboard-alert dashboard-error" role="alert">{error}</div>}
+    {notice && <div className="dashboard-alert" role="status">{notice}</div>}
+
+    <section className="dashboard-section dashboard-campaign-section" aria-labelledby="campaign-heading">
+      <div className="dashboard-section-heading"><div><span className="dashboard-kicker">01 / YOUR WORLDS</span><h2 id="campaign-heading">Campaigns</h2></div><button type="button" className="dashboard-text-action" onClick={() => setCreateCampaignOpen(true)}>+ Create campaign</button></div>
+      {loading ? <p>Loading your campaigns…</p> : campaigns.length ? <div className="dashboard-campaign-grid" tabIndex={0} aria-label="Your campaigns">
+        {campaigns.map(campaign => {
+          const dm = Number(campaign.dm_id) === userId || Number(campaign.owner_id) === userId;
+          const options = destinationsFor(campaign);
+          const storedLanding = preferences[String(campaign.id)];
+          const displayedLanding = options.some(([path]) => path === storedLanding) ? storedLanding : (dm ? dmLandingPath : options[0]?.[0]);
+          const selected = activeId === campaign.id;
+          return <article className={`dashboard-campaign-card${selected ? ' is-selected' : ''}`} key={campaign.id}>
+            <div className="dashboard-campaign-image" style={{ backgroundImage: `linear-gradient(90deg, rgba(10,20,30,.12), rgba(10,20,30,.72)), url("${campaign.icon || campaignFallback}")` }} aria-hidden="true" />
+            <div className="dashboard-campaign-content"><div className="dashboard-card-topline"><span>{dm ? 'Dungeon Master' : 'Player'}</span><span>{campaign.system === 'D&D' ? `D&D · ${campaign.ruleset || '5e'}` : campaign.system}</span></div>
+              <h3>{campaign.name}</h3>
+              <div className="dashboard-card-actions"><button type="button" className="dashboard-enter" aria-label={`Open campaign ${campaign.name}`} onClick={() => enterCampaign(campaign)}>Enter campaign <span aria-hidden="true">↗</span></button><a href={wikiUrl(campaign)} target="_blank" rel="noopener noreferrer">Wiki ↗</a></div>
+              <div className="dashboard-card-links">{options.filter(([path]) => path !== '/settlementManager' && path !== '/worldAtlas').slice(0, 3).map(([path, label]) => <button type="button" key={path} onClick={() => enterCampaign(campaign, path)}>{label}</button>)}</div>
+              <label className="dashboard-landing-label">Open to <select aria-label={`Landing page for ${campaign.name}`} value={displayedLanding} onChange={event => saveLanding(campaign, event.target.value)}>{options.map(([path, label]) => <option key={path} value={path}>{label}</option>)}</select></label>
+            </div>
+          </article>;
+        })}
+      </div> : <div className="dashboard-empty">Your first campaign starts here. Create one to bring characters, notes, and a world calendar together.</div>}
+    </section>
+
+    <div className="dashboard-context-bar"><div><span className="dashboard-kicker">02 / BETWEEN SESSIONS</span><h2>At your table</h2></div><span className="dashboard-scroll-cue">Scroll widgets for more ↓</span><label>Showing <select aria-label="Dashboard campaign" value={activeId || ''} onChange={event => setActiveId(Number(event.target.value))} disabled={!campaigns.length}>{campaigns.map(campaign => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label></div>
+    {activeCampaign ? <div className="dashboard-widget-grid" tabIndex={0} aria-label="Dashboard widgets">
+      <section className="dashboard-widget dashboard-notes" aria-labelledby="notes-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">✎</span><h3 id="notes-heading">Quick notes</h3></div><span className="dashboard-widget-tag">Only you can see these</span></div>
+        {!isDM && !activeCharacter ? <div className="dashboard-empty-inline">Create a character to keep private notes for this campaign. <button type="button" onClick={() => setCreateCharacterOpen(true)}>Create character</button></div> : <>
+          <p className="dashboard-widget-intro">{isDM ? 'A private place for plans, hooks, and everything between sessions.' : `Thoughts and questions for ${characterName(activeCharacter)}.`}</p>
+          <textarea aria-label="Quick note" placeholder={isDM ? 'What should happen next?' : 'What does your character want to remember?'} value={draft} onChange={event => setDraft(event.target.value)} maxLength={10000} rows={4} />
+          <div className="dashboard-note-actions"><button type="button" className="dashboard-button dashboard-button-gold" disabled={!draft.trim() || busy} onClick={() => saveNote()}>{editingId ? 'Save changes' : 'Save note'}</button>{editingId && <><button type="button" onClick={() => { setEditingId(null); setDraft(''); }}>New note</button><button type="button" onClick={deleteNote} disabled={busy}>Delete</button></>}</div>
+          <div className="dashboard-recent-notes"><h4>Recent notes</h4>{notes.length ? notes.slice(0, 5).map(note => <button type="button" key={note.id} className={editingId === note.id ? 'is-active' : ''} onClick={() => { setEditingId(note.id); setDraft(note.content); }}><span>{note.content.split('\n')[0].slice(0, 74)}</span><small>{new Date(note.updated_at).toLocaleDateString()}</small></button>) : <p>Nothing written yet. Start with a thought you want to bring to the next session.</p>}</div>
+        </>}</section>
+      <section className="dashboard-widget dashboard-calendar" aria-labelledby="calendar-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">◷</span><h3 id="calendar-heading">In-world calendar</h3></div><button type="button" className="dashboard-text-action" onClick={() => enterCampaign(activeCampaign, '/calendar')}>Open calendar ↗</button></div>
+        {calendar ? <><div className="dashboard-date"><span>Current day</span><strong>{calendar.current_date?.month_name || `Month ${(calendar.current_date?.month_index ?? 0) + 1}`} {calendar.current_date?.day}</strong><small>Year {calendar.current_date?.year}{calendar.time_period ? ` · ${calendar.time_period}` : ''}</small></div><h4>On the horizon</h4>{events.length ? <ul className="dashboard-event-list">{events.map(event => <li key={event.id}><span>{(calendar.months || [])[event.month_index]?.name || `Month ${event.month_index + 1}`} {event.day}</span><strong>{event.name}</strong></li>)}</ul> : <p className="dashboard-muted">No upcoming events are on the calendar.</p>}{nextHolidays.length > 0 && <div className="dashboard-holidays"><span>Seasonal markers</span>{nextHolidays.map(holiday => <small key={`${holiday.name}-${holiday.year}`}>{holiday.name} · {(calendar.months || [])[holiday.month_index]?.name || 'Month'} {holiday.day}</small>)}</div>}</> : <div className="dashboard-empty-inline">No calendar is configured for this campaign yet.{isDM ? ' Set one up to track in-world days and events.' : ''}</div>}
+      </section>
+      <section className="dashboard-widget dashboard-prompt" aria-labelledby="prompt-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">✦</span><h3 id="prompt-heading">{isDM ? 'Worldbuilding prompt' : 'In-character prompt'}</h3></div><button type="button" className="dashboard-text-action" onClick={() => { setPromptIndex(index => index + 1); setPromptAnswer(''); }}>Another prompt ↻</button></div><blockquote>{prompt}</blockquote><textarea aria-label="Prompt answer" placeholder="Catch your first thought…" value={promptAnswer} onChange={event => setPromptAnswer(event.target.value)} rows={3} maxLength={9000} disabled={!isDM && !activeCharacter} /><button type="button" className="dashboard-button dashboard-button-subtle" disabled={!promptAnswer.trim() || busy || (!isDM && !activeCharacter)} onClick={() => saveNote(`${prompt}\n\n${promptAnswer}`, true)}>Save answer as note</button></section>
+      <section className="dashboard-widget dashboard-characters" aria-labelledby="characters-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">♟</span><h3 id="characters-heading">Your characters</h3></div><button type="button" className="dashboard-text-action" onClick={() => setCreateCharacterOpen(true)}>+ Create</button></div>{characters.length ? <div className="dashboard-character-list">{characters.map(character => { const relatedCampaign = campaigns.find(item => item.id === character.campaignID); return <button type="button" key={character.id} disabled={!relatedCampaign} onClick={() => relatedCampaign && enterCampaign(relatedCampaign, '/characterSheet')}><span className="dashboard-character-avatar">{character.avatar?.image_url || character.icon ? <img src={character.avatar?.image_url || character.icon} alt="" /> : characterName(character).slice(0, 2).toUpperCase()}</span><span><strong>{characterName(character)}</strong><small>{relatedCampaign?.name || 'Unassigned character'}</small></span><span aria-hidden="true">↗</span></button>; })}</div> : <p className="dashboard-muted">No characters yet. Create one when you’re ready to join a story.</p>}</section>
+    </div> : null}
+    <footer className="dashboard-footer"><span>Kachhapa</span><span>Every adventure begins between sessions.</span></footer>
+
+    <Modal show={createCampaignOpen} onHide={() => setCreateCampaignOpen(false)}><Modal.Header closeButton><Modal.Title>Create campaign</Modal.Title></Modal.Header><Form onSubmit={createCampaign}><Modal.Body><Form.Group className="mb-3"><Form.Label>Name</Form.Label><Form.Control required value={campaignDraft.name} onChange={event => setCampaignDraft(current => ({ ...current, name: event.target.value }))} /></Form.Group><Form.Group className="mb-3"><Form.Label>System</Form.Label><Form.Select value={campaignDraft.system} onChange={event => setCampaignDraft(current => ({ ...current, system: event.target.value }))}><option>D&D</option></Form.Select></Form.Group><Form.Group className="mb-3"><Form.Label>Ruleset</Form.Label><Form.Select value={campaignDraft.ruleset} onChange={event => setCampaignDraft(current => ({ ...current, ruleset: event.target.value }))}>{['3.5e', '4e', '5e', '5e (2024)'].map(value => <option key={value}>{value}</option>)}</Form.Select></Form.Group><Form.Group className="mb-3"><Form.Label>Module</Form.Label><Form.Select value={campaignDraft.module} onChange={event => setCampaignDraft(current => ({ ...current, module: event.target.value }))}><option value="">None</option><option>Lost Mine of Phandelver</option><option>Waterdeep Dragon Heist</option></Form.Select></Form.Group><Form.Group className="mb-3"><Form.Label>Description</Form.Label><Form.Control as="textarea" value={campaignDraft.description} onChange={event => setCampaignDraft(current => ({ ...current, description: event.target.value }))} /></Form.Group><Form.Check type="switch" label="Set up a calendar now" checked={campaignDraft.calendar_enabled} onChange={event => setCampaignDraft(current => ({ ...current, calendar_enabled: event.target.checked }))} disabled={Boolean(campaignDraft.module)} />{campaignDraft.calendar_enabled && !campaignDraft.module && <><Form.Select className="my-2" aria-label="Calendar system" value={campaignDraft.calendar_format} onChange={event => setCampaignDraft(current => ({ ...current, calendar_format: event.target.value }))}><option value="harptos">Calendar of Harptos</option><option value="gregorian">Gregorian calendar</option></Form.Select><div className="dashboard-date-inputs"><Form.Control aria-label="Starting year" type="number" value={campaignDraft.calendar_year} onChange={event => setCampaignDraft(current => ({ ...current, calendar_year: event.target.value }))} /><Form.Control aria-label="Starting month" type="number" min="1" max="12" value={campaignDraft.calendar_month} onChange={event => setCampaignDraft(current => ({ ...current, calendar_month: event.target.value }))} /><Form.Control aria-label="Starting day" type="number" min="1" max="31" value={campaignDraft.calendar_day} onChange={event => setCampaignDraft(current => ({ ...current, calendar_day: event.target.value }))} /></div></>}</Modal.Body><Modal.Footer><button type="button" className="btn btn-secondary" onClick={() => setCreateCampaignOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>Create campaign</button></Modal.Footer></Form></Modal>
+    <CreateCharacterModal show={createCharacterOpen} setShow={setCreateCharacterOpen} onHide={finishCharacterCreation} headers={characterHeaders} />
+    <Modal show={advancedOpen} onHide={() => setAdvancedOpen(false)} centered>
+      <Modal.Header closeButton><Modal.Title>Advanced access</Modal.Title></Modal.Header>
+      <Modal.Body>
+        {advancedUnlocked ? (
+          <div className="dashboard-advanced-links">
+            <p>Administrative tools are opened separately so the regular navigation stays focused on play.</p>
+            <a className="dashboard-button dashboard-button-gold" href={`${primaryOrigin}/dashboard/`} target="_blank" rel="noopener noreferrer">Open Flask Dashboard ↗</a>
+            <a className="dashboard-button dashboard-button-subtle" href={`${primaryOrigin}/admin/`} target="_blank" rel="noopener noreferrer">Open Flask Admin ↗</a>
+          </div>
+        ) : (
+          <form onSubmit={unlockAdvanced}>
+            <p>Confirm your password to reveal the Flask Dashboard and Flask Admin links.</p>
+            <Form.Group>
+              <Form.Label>Your password</Form.Label>
+              <Form.Control aria-label="Advanced access password" type="password" autoComplete="current-password" value={advancedPassword} onChange={event => setAdvancedPassword(event.target.value)} required autoFocus />
+            </Form.Group>
+            {advancedError && <div className="dashboard-alert dashboard-error mt-3 mb-0" role="alert">{advancedError}</div>}
+            <div className="dashboard-advanced-actions"><button type="button" className="dashboard-button dashboard-button-subtle" onClick={() => setAdvancedOpen(false)}>Cancel</button><button type="submit" className="dashboard-button dashboard-button-gold" disabled={advancedBusy}>{advancedBusy ? 'Checking…' : 'Continue'}</button></div>
+          </form>
+        )}
+      </Modal.Body>
+    </Modal>
+  </main>;
+}

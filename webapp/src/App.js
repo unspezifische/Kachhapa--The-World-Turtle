@@ -19,6 +19,7 @@ import Journal from './Journal';
 import Library from './Library';
 import Calendar from './Calendar';
 import AccountProfile from './AccountProfile';
+import UserProfile from './UserProfile';
 import Chat from './Chat';
 import ChatIcon from '@mui/icons-material/Chat';
 import { DMSoundPlayerBar, DMSoundPlayerProvider } from './DMSoundPlayer';
@@ -53,7 +54,7 @@ function isSettlementPath(pathname) {
 function CampaignLayout({ menuProps, children }) {
   const location = useLocation();
   const isMapPage = isSettlementPath(location.pathname);
-  const hideMenu = isMapPage || location.pathname === '/accountProfile';
+  const hideMenu = isMapPage || ['/accountProfile', '/profile'].includes(location.pathname);
 
   return (
     <div className={`app-layout${isMapPage ? ' map-page-layout' : ''}`}>
@@ -69,7 +70,7 @@ function CampaignLayout({ menuProps, children }) {
 
 function HideOnSettlementRoutes({ children }) {
   const location = useLocation();
-  return isSettlementPath(location.pathname) || location.pathname === '/accountProfile' ? null : children;
+  return isSettlementPath(location.pathname) || ['/accountProfile', '/profile'].includes(location.pathname) ? null : children;
 }
 
 function SoundPlayerCornerBar({ workspaceActive, onOpen }) {
@@ -270,13 +271,6 @@ function App() {
     const handleConnect = () => {
       setSocketConnected(true);
       setSocketLoading(false);
-
-      if (username && selectedCampaign?.id) {
-        socket.emit('join_room', {
-          username,
-          campaign_id: selectedCampaign.id,
-        });
-      }
     };
 
     const handleConnectError = (error) => {
@@ -473,7 +467,7 @@ function App() {
                   )}
 
                   <Routes>
-                    <Route path="/" element={<Navigate to={dmLandingPath} />} />
+                    <Route path="/" element={<Navigate to="/accountProfile" replace />} />
                     <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} setCharacterName={setCharacterName} />} />
                     <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} accountType={accountType} onSoundWorkspaceChange={setSoundWorkspaceActive} soundPlayerOpenRequest={soundPlayerOpenRequest} />} />
                     <Route
@@ -492,6 +486,7 @@ function App() {
                     <Route path="/calendar" element={<Calendar headers={headers} socket={socketRef.current} characterName={characterName} username={username} accountType={accountType} campaignID={selectedCampaign.id} />} />
                     <Route path="/campaignSettings" element={<Navigate to={accountType === 'DM' ? '/dmTools' : '/characterSheet'} replace />} />
                     <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} dmLandingPath={dmLandingPath} primaryOrigin={primaryOrigin} />} />
+                    <Route path="/profile" element={<UserProfile headers={headers} />} />
                     <Route path="*" element={<Navigate to={accountType === 'DM' ? dmLandingPath : '/characterSheet'} replace />} />
                   </Routes>
               </CampaignLayout>
@@ -569,6 +564,7 @@ function App() {
                   />
                 }
               />
+              <Route path="/profile" element={<UserProfile headers={headers} />} />
               <Route path="*" element={<Navigate to="/accountProfile" replace />} />
             </Routes>
           )

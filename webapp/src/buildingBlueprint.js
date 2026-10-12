@@ -7,6 +7,51 @@ export const blueprintId = () =>
 
 export const DEFAULT_EXTERIOR_WALL_THICKNESS = 2;
 export const DEFAULT_INTERIOR_WALL_THICKNESS = 0.5;
+export const WALL_FINISHES = ['existing', 'stone', 'wood', 'brick', 'plaster'];
+export const FLOOR_FINISHES = [...WALL_FINISHES, 'packed-earth'];
+
+export function constructionFinish(value, choices, fallback = 'existing') {
+  return choices.includes(value) ? value : fallback;
+}
+
+export function exteriorFootprint(level, extra = 0) {
+  const points = openCorners(level);
+  if (points.length < 3) return points;
+  const distance = (Number(level.exterior_wall_thickness) || DEFAULT_EXTERIOR_WALL_THICKNESS) / 2 + extra;
+  const area = points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0);
+  const direction = area >= 0 ? 1 : -1;
+  return points.map((point, index) => {
+    const previous = points[(index + points.length - 1) % points.length];
+    const next = points[(index + 1) % points.length];
+    const before = normalizeVector(point.x - previous.x, point.y - previous.y);
+    const after = normalizeVector(next.x - point.x, next.y - point.y);
+    const normal = normalizeVector((before.y + after.y) * direction, -(before.x + after.x) * direction);
+    const dot = normal.x * after.y * direction - normal.y * after.x * direction;
+    const scale = Math.min(distance * 4, distance / Math.max(0.25, dot));
+    return { x: point.x + normal.x * scale, y: point.y + normal.y * scale };
+  });
+}
+
+// The base uses the ground-floor outline, including sampled arcs, and follows
+// terrain independently of the building's center elevation.
+export function foundationPerimeter(building, groundLevel, centerGround, sampleGround) {
+  if (!groundLevel) return [];
+  const rotation = Number(building.rotation) || 0;
+  const cosine = Math.cos(rotation), sine = Math.sin(rotation);
+  const rootHeight = centerGround + (Number(building.elevation) || 0);
+  const top = (Number(groundLevel.elevation_feet) || 0) + (Number(building.foundation_height_feet) || 0);
+  const points = exteriorFootprint(groundLevel);
+  const unique = points.length > 1 && pointDistance(points[0], points[points.length - 1]) < 0.001
+    ? points.slice(0, -1) : points;
+  return unique.map(point => {
+    const x = (Number(building.x) || 0) + point.x * cosine - point.y * sine;
+    const y = (Number(building.y) || 0) + point.x * sine + point.y * cosine;
+    return { x: point.x, y: point.y, top, bottom: Math.min(top - 0.01, sampleGround(x, y) - rootHeight) };
+  });
+}
 export const BLUEPRINT_ROOF_TYPES = [
   'flat',
   'shed',
@@ -484,6 +529,165 @@ export function openCorners(level) {
   )
     ? points.slice(0, -1)
     : points;
+}
+
+
+const scaledBlueprintPoint = (point, building, scaleX, scaleY) => {
+  if (!point) return point;
+
+  if (building.coordinate_space === 'local') {
+    return {
+      ...point,
+      x: Number(point.x) * scaleX,
+      y: Number(point.y) * scaleY,
+    };
+  }
+
+  return {
+    ...point,
+    x: Number(building.x || 0) + (Number(point.x) - Number(building.x || 0)) * scaleX,
+    y: Number(building.y || 0) + (Number(point.y) - Number(building.y || 0)) * scaleY,
+  };
+};
+
+
+const scaledWall = (wall, building, scaleX, scaleY) => ({
+  ...wall,
+  start: scaledBlueprintPoint(wall.start, building, scaleX, scaleY),
+  end: scaledBlueprintPoint(wall.end, building, scaleX, scaleY),
+  ...(wall.center ? { center: scaledBlueprintPoint(wall.center, building, scaleX, scaleY) } : {}),
+  ...(wall.through ? { through: scaledBlueprintPoint(wall.through, building, scaleX, scaleY) } : {}),
+});
+
+
+const axisScale = (angle, scaleX, scaleY) => Math.hypot(
+  Math.cos(angle) * scaleX,
+  Math.sin(angle) * scaleY
+);
+
+
+const openingScale = (level, opening, scaleX, scaleY) => {
+  const walls = blueprintWalls(level);
+  const wall = walls.find(item => item.id === opening.wall_id) || walls[opening.wall_index];
+  const angle = wall
+    ? Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x)
+    : Math.PI / 4;
+  const scale = axisScale(angle, scaleX, scaleY);
+
+  return {
+    ...opening,
+    distance_from_start: Number.isFinite(Number(opening.distance_from_start))
+      ? Number(opening.distance_from_start) * scale
+      : opening.distance_from_start,
+    width: Number.isFinite(Number(opening.width))
+      ? Number(opening.width) * scale
+      : opening.width,
+  };
+};
+
+
+/**
+ * Proportionally resizes every local plan element from the building origin.
+ * Dimensions are derived from the ground footprint so metadata cannot drift
+ * away from the editable plan geometry.
+ */
+export function resizeBlueprintFootprint(building, targetWidth, targetDepth) {
+  const ground = building?.levels?.find(level => level.elevation_feet === 0)
+    || building?.levels?.[0];
+  const footprint = (ground?.corners || []).length >= 3
+    ? openCorners({ corners: ground.corners })
+    : openCorners(ground || {});
+
+  if (footprint.length < 2) return building;
+
+  const currentWidth = Math.max(...footprint.map(point => point.x)) - Math.min(...footprint.map(point => point.x));
+  const currentDepth = Math.max(...footprint.map(point => point.y)) - Math.min(...footprint.map(point => point.y));
+  const nextWidth = Math.max(1, Number(targetWidth) || currentWidth);
+  const nextDepth = Math.max(1, Number(targetDepth) || currentDepth);
+
+  if (currentWidth <= 0 || currentDepth <= 0) return building;
+
+  const scaleX = nextWidth / currentWidth;
+  const scaleY = nextDepth / currentDepth;
+  const scaleLevel = level => ({
+    ...level,
+    corners: (level.corners || []).map(point => scaledBlueprintPoint(point, building, scaleX, scaleY)),
+    outline: (level.outline || []).map(wall => scaledWall(wall, building, scaleX, scaleY)),
+    walls: (level.walls || []).map(wall => scaledWall(wall, building, scaleX, scaleY)),
+    openings: (level.openings || []).map(opening => openingScale(level, opening, scaleX, scaleY)),
+    doors: (level.doors || []).map(opening => openingScale(level, opening, scaleX, scaleY)),
+    windows: (level.windows || []).map(opening => openingScale(level, opening, scaleX, scaleY)),
+    stairs: (level.stairs || []).map(stair => {
+      const direction = Number(stair.direction) || 0;
+      const runScale = axisScale(direction, scaleX, scaleY);
+      const crossScale = axisScale(direction + Math.PI / 2, scaleX, scaleY);
+      return {
+        ...stair,
+        start_x: Number(stair.start_x) * scaleX,
+        start_y: Number(stair.start_y) * scaleY,
+        direction: Math.atan2(Math.sin(direction) * scaleY, Math.cos(direction) * scaleX),
+        width: Number.isFinite(Number(stair.width)) ? Number(stair.width) * crossScale : stair.width,
+        length: Number.isFinite(Number(stair.length)) ? Number(stair.length) * runScale : stair.length,
+        landing_depth: Number.isFinite(Number(stair.landing_depth)) ? Number(stair.landing_depth) * runScale : stair.landing_depth,
+        curve_radius: Number.isFinite(Number(stair.curve_radius)) ? Number(stair.curve_radius) * (runScale + crossScale) / 2 : stair.curve_radius,
+      };
+    }),
+    hatches: (level.hatches || []).map(item => ({
+      ...item,
+      ...scaledBlueprintPoint(item, building, scaleX, scaleY),
+      width: Number.isFinite(Number(item.width)) ? Number(item.width) * scaleX : item.width,
+      depth: Number.isFinite(Number(item.depth)) ? Number(item.depth) * scaleY : item.depth,
+    })),
+    ladders: (level.ladders || []).map(item => ({
+      ...item,
+      ...scaledBlueprintPoint(item, building, scaleX, scaleY),
+      width: Number.isFinite(Number(item.width)) ? Number(item.width) * scaleX : item.width,
+      depth: Number.isFinite(Number(item.depth)) ? Number(item.depth) * scaleY : item.depth,
+    })),
+    floor_voids: (level.floor_voids || []).map(item => ({
+      ...item,
+      points: (item.points || []).map(point => scaledBlueprintPoint(point, building, scaleX, scaleY)),
+    })),
+    platforms: (level.platforms || []).map(item => ({
+      ...item,
+      points: (item.points || []).map(point => scaledBlueprintPoint(point, building, scaleX, scaleY)),
+    })),
+    floor_map: level.floor_map ? {
+      ...level.floor_map,
+      ...scaledBlueprintPoint(level.floor_map, building, scaleX, scaleY),
+      width_feet: Number.isFinite(Number(level.floor_map.width_feet))
+        ? Number(level.floor_map.width_feet) * scaleX
+        : level.floor_map.width_feet,
+      height_feet: Number.isFinite(Number(level.floor_map.height_feet))
+        ? Number(level.floor_map.height_feet) * scaleY
+        : level.floor_map.height_feet,
+    } : level.floor_map,
+    fireplaces: (level.fireplaces || []).map(fireplace => ({
+      ...fireplace,
+      width: Number.isFinite(Number(fireplace.width))
+        ? Number(fireplace.width) * (['north', 'south'].includes(fireplace.side) ? scaleX : scaleY)
+        : fireplace.width,
+    })),
+  });
+
+  return {
+    ...building,
+    width_feet: nextWidth,
+    depth_feet: nextDepth,
+    levels: (building.levels || []).map(scaleLevel),
+    chimneys: (building.chimneys || []).map(chimney => ({
+      ...chimney,
+      ...scaledBlueprintPoint(chimney, building, scaleX, scaleY),
+      width: Number.isFinite(Number(chimney.width)) ? Number(chimney.width) * scaleX : chimney.width,
+      depth: Number.isFinite(Number(chimney.depth)) ? Number(chimney.depth) * scaleY : chimney.depth,
+    })),
+    roofs: (building.roofs || []).map(roof => ({
+      ...roof,
+      footprint: (roof.footprint || []).map(point => scaledBlueprintPoint(point, building, scaleX, scaleY)),
+      holes: (roof.holes || []).map(hole => hole.map(point => scaledBlueprintPoint(point, building, scaleX, scaleY))),
+      overhang: Number.isFinite(Number(roof.overhang)) ? Number(roof.overhang) * (scaleX + scaleY) / 2 : roof.overhang,
+    })),
+  };
 }
 
 export function exposedRoofFootprints(lowerLevel, upperLevel) {
@@ -2606,7 +2810,7 @@ export function normalizeBlueprint(building) {
             ...(
               rawLevel.doors ||
               []
-            ).map(
+            ).filter(Boolean).map(
               opening => ({
                 ...opening,
 
@@ -2619,7 +2823,7 @@ export function normalizeBlueprint(building) {
             ...(
               rawLevel.windows ||
               []
-            ).map(
+            ).filter(Boolean).map(
               opening => ({
                 ...opening,
 
@@ -2630,7 +2834,7 @@ export function normalizeBlueprint(building) {
           ];
 
       const openings =
-        rawOpenings.map(
+        rawOpenings.filter(Boolean).map(
           opening =>
             normalizeOpening(
               opening,
@@ -2790,6 +2994,9 @@ export function normalizeBlueprint(building) {
 
       const level = {
         ...rawLevel,
+
+        exterior_material: constructionFinish(rawLevel.exterior_material, WALL_FINISHES),
+        floor_material: constructionFinish(rawLevel.floor_material, FLOOR_FINISHES),
 
         id:
           levelId,
@@ -2998,6 +3205,9 @@ export function addBuildingLevel(
 
     exterior_wall_thickness:
       source.exterior_wall_thickness,
+
+    exterior_material: source.exterior_material,
+    floor_material: elevation < 0 ? 'packed-earth' : source.floor_material,
 
     interior_wall_thickness:
       source.interior_wall_thickness,

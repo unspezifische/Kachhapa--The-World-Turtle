@@ -48,9 +48,14 @@ campaign_members = db.Table('campaign_members',
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True)
-    password = db.Column(db.String(100))
+    # Scrypt hashes are longer than the legacy salted SHA-256 hashes.
+    password = db.Column(db.String(255))
     is_online = db.Column(db.Boolean, default=False) ## Tracks if a user is currently signed in or not
     sid = db.Column(db.String(100), nullable=True)  ## Stores the web socket ID a user is connected from
+    real_name = db.Column(db.String(120), nullable=True)
+    bio = db.Column(db.String(600), nullable=True)
+    profile_photo = db.Column(db.LargeBinary, nullable=True)
+    profile_photo_updated = db.Column(db.DateTime, nullable=True)
     campaigns = db.relationship('Campaign', secondary=campaign_members, backref=db.backref('members', lazy='dynamic'))
 
     def to_dict(self):
@@ -60,6 +65,34 @@ class User(db.Model):
             'is_online': self.is_online,
             'sid': self.sid,
             'campaigns': [campaign.to_dict() for campaign in self.campaigns]
+        }
+
+
+class UserCampaignPreference(db.Model):
+    __tablename__ = 'user_campaign_preference'
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), primary_key=True)
+    landing_path = db.Column(db.String(80), nullable=False)
+
+
+class QuickNote(db.Model):
+    __tablename__ = 'quick_note'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    character_id = db.Column(db.Integer, db.ForeignKey('character.id'), nullable=True)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'campaign_id': self.campaign_id,
+            'character_id': self.character_id,
+            'content': self.content,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
         }
 
 class Character(db.Model):
@@ -662,6 +695,41 @@ class NPC(db.Model):
             'actions': self.actions,
             'description': self.description,
         }
+
+
+class CreatureCatalog(db.Model):
+    """Source keyed 5etools stat blocks, independent of campaign NPC edits."""
+    id = db.Column(db.Integer, primary_key=True)
+    source = db.Column(db.String(80), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+    is_adventure = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    is_named = db.Column(db.Boolean, nullable=False, default=False)
+    challenge = db.Column(db.String(50))
+    ac = db.Column(db.String(80))
+    hp = db.Column(db.String(80))
+    dexterity = db.Column(db.Integer)
+    data = db.Column(JSONB, nullable=False)
+    __table_args__ = (UniqueConstraint('source', 'name', name='uq_creature_catalog_source_name'),)
+
+    def summary(self):
+        return {key: getattr(self, key) for key in (
+            'id', 'source', 'name', 'is_adventure', 'is_named',
+            'challenge', 'ac', 'hp', 'dexterity',
+        )}
+
+
+class AdventureCatalog(db.Model):
+    """Adventure metadata and complete source document, shared across campaigns."""
+    id = db.Column(db.Integer, primary_key=True)
+    source = db.Column(db.String(80), nullable=False, unique=True)
+    name = db.Column(db.String(200), nullable=False)
+    metadata_json = db.Column(JSONB, nullable=False)
+    content = db.Column(JSONB, nullable=False)
+
+    def summary(self):
+        return {'source': self.source, 'name': self.name,
+                'level': (self.metadata_json or {}).get('level'),
+                'description': (self.metadata_json or {}).get('storyline') or '5etools adventure'}
 
 class GameElement(db.Model):
     id = db.Column(db.Integer, primary_key=True)

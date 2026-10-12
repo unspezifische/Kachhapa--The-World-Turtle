@@ -47,6 +47,35 @@ install_nginx_config() {
   fi
 }
 
+install_socket_service() {
+  local source_file="/home/ijohnson/kachhapa-socket-worker.conf.new"
+  local override_dir="/etc/systemd/system/kachhapa-backend.service.d"
+  local active="$override_dir/10-socket-worker.conf"
+  local previous="$override_dir/10-socket-worker.conf.previous"
+
+  test -f "$source_file"
+  grep -Fxq 'ExecStart=' "$source_file"
+  grep -Fq 'GeventWebSocketWorker -w 1 ' "$source_file"
+  install -d -o root -g root -m 0755 "$override_dir"
+  if [[ -f "$active" ]]; then
+    cp -a "$active" "$previous"
+  fi
+  install -o root -g root -m 0644 "$source_file" "$active"
+  systemctl daemon-reload
+  if ! systemctl restart "$KACHHAPA_SERVICE" || ! systemctl is-active --quiet "$KACHHAPA_SERVICE"; then
+    if [[ -f "$previous" ]]; then
+      mv "$previous" "$active"
+    else
+      rm -f "$active"
+    fi
+    systemctl daemon-reload
+    systemctl restart "$KACHHAPA_SERVICE" || true
+    echo "Socket.IO service restart failed; the previous unit configuration was restored." >&2
+    exit 1
+  fi
+  rm -f "$previous" "$source_file"
+}
+
 case "${1:-}" in
   check)
     [[ $# -eq 1 ]]
@@ -62,6 +91,10 @@ case "${1:-}" in
   nginx)
     [[ $# -eq 1 ]]
     install_nginx_config
+    ;;
+  socket-service)
+    [[ $# -eq 1 ]]
+    install_socket_service
     ;;
   *)
     echo "Unsupported deployment operation." >&2

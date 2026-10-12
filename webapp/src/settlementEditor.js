@@ -167,7 +167,9 @@ export function referenceLayerUv(layer, xFeet, yFeet) {
   const dy = yFeet - (Number(layer?.origin_y) || 0);
 
   const localX = dx * cos + dy * sin;
-  const localY = dx * sin - dy * cos;
+  // World north maps to the top edge of the source image. This is the
+  // inverse rotation paired with the layer's world-space placement.
+  const localY = -dx * sin + dy * cos;
 
   return {
     u: localX / Math.max(1, Number(layer?.width_feet) || 1) + 0.5,
@@ -1105,7 +1107,7 @@ export function insertRoadControlPoint(road, point) {
 }
 
 
-export function insertOpenSplineControlPoint(item, point) {
+export function insertOpenSplineControlPoint(item, point, pointProperties = {}) {
   const points = item?.points || [];
 
   if (
@@ -1139,7 +1141,8 @@ export function insertOpenSplineControlPoint(item, point) {
 
   const controlPoint = {
     x: Math.round(nearestPoint.x),
-    y: Math.round(nearestPoint.y)
+    y: Math.round(nearestPoint.y),
+    ...pointProperties
   };
 
   return {
@@ -1153,6 +1156,26 @@ export function insertOpenSplineControlPoint(item, point) {
     },
     index: insertAt
   };
+}
+
+
+/**
+ * Older saved walls inferred towers from point position. New edits persist the
+ * role on each point, while this fallback keeps existing maps looking the same
+ * until a point is explicitly changed.
+ */
+export function isFortificationTowerPoint(wall, index) {
+  const points = wall?.points || [];
+  const point = points[index];
+
+  if (!point) return false;
+  if (typeof point.tower === 'boolean') return point.tower;
+
+  return (
+    index === 0 ||
+    index === points.length - 1 ||
+    index % 2 === 0
+  );
 }
 
 
@@ -1648,22 +1671,20 @@ export function resizeBuildingFromCorner(
   let newX = x;
   let newY = y;
 
-  if (cornerOffset.x > 0) newWidth += dx * 2;
-  else newWidth -= dx * 2;
+  if (cornerOffset.x > 0) newWidth += dx;
+  else newWidth -= dx;
 
-  if (cornerOffset.y > 0) newDepth += dy * 2;
-  else newDepth -= dy * 2;
+  if (cornerOffset.y > 0) newDepth += dy;
+  else newDepth -= dy;
 
   newWidth = Math.max(10, newWidth);
   newDepth = Math.max(10, newDepth);
 
-  newX +=
-    cornerOffset.x * halfWidth -
-    cornerOffset.x * newWidth / 2;
+  const anchoredX = x - cornerOffset.x * halfWidth;
+  const anchoredY = y - cornerOffset.y * halfDepth;
 
-  newY +=
-    cornerOffset.y * halfDepth -
-    cornerOffset.y * newDepth / 2;
+  newX = anchoredX + cornerOffset.x * newWidth / 2;
+  newY = anchoredY + cornerOffset.y * newDepth / 2;
 
   if (building.front_road_id && roads.length > 0) {
     return snapBuildingPlacement(

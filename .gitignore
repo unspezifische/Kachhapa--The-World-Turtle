@@ -5,6 +5,9 @@ Flask/migrations/*
 !Flask/migrations/versions/
 Flask/migrations/versions/*
 !Flask/migrations/versions/7c1d2e3f4a5b_normalize_settlement_terrain_tiles.py
+!Flask/migrations/versions/a81c92d4e6f7_widen_user_password_hash.py
+!Flask/migrations/versions/b93e2d51a70c_dashboard_profile.py
+!Flask/migrations/versions/c64f0e2a198b_5etools_catalog.py
 Flask/static/
 Flask/buildDB.py
 Flask/campaign.py

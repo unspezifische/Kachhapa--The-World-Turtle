@@ -89,6 +89,10 @@ function Register({ setIsLoggedIn, setToken, setAppUsername, setUserID }) {
 
   const register = (e) => {
     e.preventDefault();
+    if (password.length < 8) {
+      setErrorMessage('Password must be at least 8 characters');
+      return;
+    }
     if (password !== confirmPassword) {
       setErrorMessage('Passwords do not match');
       return;
@@ -100,7 +104,6 @@ function Register({ setIsLoggedIn, setToken, setAppUsername, setUserID }) {
       character: character,
       CampaignID: 1,  // Defaults to Adventures in Neverwinter
     }).then(response => {
-      console.log(response);
       if (response.data.access_token) {
         setToken(response.data.access_token);
         setUserID(response.data.user_id);
@@ -111,7 +114,7 @@ function Register({ setIsLoggedIn, setToken, setAppUsername, setUserID }) {
         setIsLoggedIn(true); // Update isLoggedIn state in App.js
         setToken(response.data.access_token); // Update token state in App.js
 
-        navigate("/accoutProfile");
+        navigate("/accountProfile");
       } else {
         setErrorMessage('Registration Failed');
       }
@@ -132,16 +135,21 @@ function Register({ setIsLoggedIn, setToken, setAppUsername, setUserID }) {
         <input
           type="text"
           placeholder="Username"
+          autoComplete="username"
           onChange={e => setUsername(e.target.value)}
         />
         <input
           type="password"
           placeholder="Password"
+          autoComplete="new-password"
+          minLength={8}
           onChange={e => setPassword(e.target.value)}
         />
         <input
           type="password"
           placeholder="Confirm Password"
+          autoComplete="new-password"
+          minLength={8}
           onChange={e => setConfirmPassword(e.target.value)}
         />
         {password !== confirmPassword && confirmPassword !== '' && (

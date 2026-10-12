@@ -1,12 +1,12 @@
 import { NullEngine, Scene } from '@babylonjs/core';
 import { createBlueprintBuilding, addBlueprintCorner, closeBlueprintFootprint } from './settlementEditor';
-import { addBuildingLevel, arcFromThreePoints, exposedRoofFootprints, isRoofVisible, normalizeBlueprint, levelConnectionGuides, snapOpening, snapPointToLevelBelow, snapPointToRightAngle, stairGeometry, stairOpeningsForLevel, wallPanels } from './buildingBlueprint';
+import { addBuildingLevel, arcFromThreePoints, exposedRoofFootprints, foundationPerimeter, isRoofVisible, normalizeBlueprint, levelConnectionGuides, resizeBlueprintFootprint, snapOpening, snapPointToLevelBelow, snapPointToRightAngle, stairGeometry, stairOpeningsForLevel, wallPanels } from './buildingBlueprint';
 import { createBlueprintMesh } from './blueprintMesh';
 
 const house = () => {
   let b = createBlueprintBuilding({ x: 1000, y: -500 });
   for (const p of [{ x: 1040, y: -500 }, { x: 1040, y: -470 }, { x: 1000, y: -470 }]) b = addBlueprintCorner(b, p);
-  return closeBlueprintFootprint(b);
+  return normalizeBlueprint(closeBlueprintFootprint(b));
 };
 
 test('blueprints store local coordinates and close without duplicate corners or mutation', () => {
@@ -32,13 +32,48 @@ test('upper floors and basements retain ground elevation and independent geometr
   expect(b.levels).toHaveLength(1);
 });
 
+test('blueprint footprint resizing scales every attached local plan element', () => {
+  const building = {
+    id: 'resizable', coordinate_space: 'local', x: 100, y: 200,
+    width_feet: 40, depth_feet: 20,
+    levels: [{
+      id: 'ground', elevation_feet: 0,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 20 }, { x: 0, y: 20 }],
+      outline: [{ id: 'south', start: { x: 0, y: 0 }, end: { x: 40, y: 0 } }],
+      openings: [{ wall_id: 'south', distance_from_start: 10, width: 4 }],
+      stairs: [{ start_x: 10, start_y: 5, direction: 0, width: 4, length: 10, landing_depth: 3 }],
+      hatches: [{ x: 20, y: 10, width: 4, depth: 3 }],
+      platforms: [{ points: [{ x: 2, y: 2 }, { x: 8, y: 2 }] }],
+    }, {
+      id: 'upper', elevation_feet: 10,
+      corners: [{ x: 5, y: 5 }, { x: 35, y: 5 }, { x: 35, y: 15 }],
+    }],
+    chimneys: [{ id: 'chimney', x: 20, y: 10, width: 4, depth: 3 }],
+    roofs: [{ id: 'roof', footprint: [{ x: 0, y: 0 }, { x: 40, y: 0 }], holes: [[{ x: 10, y: 5 }]], overhang: 2 }],
+  };
+
+  const resized = resizeBlueprintFootprint(building, 80, 60);
+  expect(resized).not.toBe(building);
+  expect(resized).toMatchObject({ width_feet: 80, depth_feet: 60 });
+  expect(resized.levels[0].corners[2]).toEqual({ x: 80, y: 60 });
+  expect(resized.levels[1].corners[0]).toEqual({ x: 10, y: 15 });
+  expect(resized.levels[0].openings[0]).toMatchObject({ distance_from_start: 20, width: 8 });
+  expect(resized.levels[0].stairs[0]).toMatchObject({ start_x: 20, start_y: 15, width: 12, length: 20, landing_depth: 6 });
+  expect(resized.levels[0].hatches[0]).toMatchObject({ x: 40, y: 30, width: 8, depth: 9 });
+  expect(resized.chimneys[0]).toMatchObject({ x: 40, y: 30, width: 8, depth: 9 });
+  expect(resized.roofs[0]).toMatchObject({ footprint: [{ x: 0, y: 0 }, { x: 80, y: 0 }], holes: [[{ x: 20, y: 15 }]], overhang: 5 });
+  expect(building.levels[0].corners[2]).toEqual({ x: 40, y: 20 });
+});
+
 test('connection guides represent landings and follow source stair edits', () => {
   const b = house();
   b.levels[0].stairs.push({ start_x: 5, start_y: 5, length: 12, direction: 0 });
   b.levels[0].hatches.push({ x: 20, y: 20, has_ladder: true });
   const result = addBuildingLevel(addBuildingLevel(b), -1);
   expect(levelConnectionGuides(result, result.levels[2])[0]).toMatchObject({ x: 17, y: 5, kind: 'stairs' });
-  expect(levelConnectionGuides(result, result.levels[0])[0]).toMatchObject({ x: 20, y: 20, kind: 'ladder' });
+  expect(levelConnectionGuides(result, result.levels[2])).toEqual(expect.arrayContaining([
+    expect.objectContaining({ x: 20, y: 20, kind: 'ladder' })
+  ]));
   result.levels[1].stairs[0].start_x = 8;
   expect(levelConnectionGuides(result, result.levels[2])[0].x).toBe(20);
   expect(result.levels[2].stairs).toEqual([]);
@@ -222,8 +257,10 @@ test('foundation raises the ground floor and renders its stone perimeter', () =>
   const floor = root.getChildMeshes().find(mesh => mesh.name === 'floor-ground');
   const firstStair = root.getChildMeshes().find(mesh => mesh.name.startsWith('stair-0-0-'));
 
-  expect(foundation).toHaveLength(4);
-  expect(foundation[0].position.y).toBeCloseTo(0.03);
+  expect(foundation).toHaveLength(2);
+  const heights = foundation[0].getVerticesData('position').filter((_, index) => index % 3 === 1);
+  expect(Math.min(...heights)).toBeCloseTo(0);
+  expect(Math.max(...heights)).toBeCloseTo(0.06);
   expect(foundation[0].material.name).toContain('foundation-stone');
   expect(floor.position.y).toBeCloseTo(0.06);
   expect(firstStair.position.y).toBeLessThan(floor.position.y);
@@ -236,10 +273,51 @@ test('foundation raises the ground floor and renders its stone perimeter', () =>
 test('doors snap onto walls without overlapping existing openings', () => {
   const level = house().levels[0];
   const door = snapOpening(level, { x: 10, y: 1 }, 'door', 3, 7);
-  expect(door).toMatchObject({ wall_index: 0, distance_from_start: 10, height_from_floor: 0 });
-  level.doors = [door];
+  expect(door).toMatchObject({ wall_id: level.outline[0].id, distance_from_start: 10, height_from_floor: 0 });
+  level.openings = [door];
   expect(snapOpening(level, { x: 10, y: 0 }, 'window', 3, 4, 3)).toBeNull();
   expect(snapOpening(level, { x: 20, y: 15 }, 'door')).toBeNull();
+});
+
+test('a raised building base follows terrain and uses the whole ground footprint with a smaller basement', () => {
+  let building = house();
+  building.elevation = 7;
+  building.foundation_height_feet = 3;
+  building = addBuildingLevel(building, -1);
+  building.level_view = 'all';
+  building.levels[0].outline = [];
+  building.levels[0].corners = [{ x: 5, y: 5 }, { x: 15, y: 5 }, { x: 15, y: 15 }, { x: 5, y: 15 }];
+  const ground = building.levels.find(level => level.elevation_feet === 0);
+  const sample = (x, y) => 100 + (x - building.x) * 0.1 + (y - building.y) * 0.05;
+  const base = foundationPerimeter(building, ground, 100, sample);
+  expect(Math.max(...base.map(point => point.x)) - Math.min(...base.map(point => point.x))).toBeCloseTo(42);
+  expect(base.every(point => point.top === 3)).toBe(true);
+  expect(new Set(base.map(point => point.bottom)).size).toBeGreaterThan(1);
+  const engine = new NullEngine(), scene = new Scene(engine);
+  const root = createBlueprintMesh(scene, building, 100, sample);
+  const meshes = root.getChildMeshes();
+  expect(meshes.filter(mesh => mesh.name.startsWith('foundation-'))).toHaveLength(2);
+  expect(meshes.some(mesh => mesh.name.startsWith('basement-earth-'))).toBe(true);
+  expect(root.position.y).toBeCloseTo(107 / 50);
+  root.dispose(false, true);
+  const basementOnly = createBlueprintMesh(scene, { ...building, level_view: 'level', visible_level_id: building.levels[0].id }, 100, sample);
+  expect(basementOnly.getChildMeshes().some(mesh => mesh.name.startsWith('foundation-'))).toBe(false);
+  basementOnly.dispose(false, true); scene.dispose(); engine.dispose();
+});
+
+test('level finishes and individual wall overrides survive persistence and render independently', () => {
+  const building = house();
+  building.levels[0].exterior_material = 'stone';
+  building.levels[0].floor_material = 'wood';
+  building.levels[0].outline[0].material = 'brick';
+  const loaded = normalizeBlueprint(JSON.parse(JSON.stringify(building)));
+  const engine = new NullEngine(), scene = new Scene(engine);
+  const root = createBlueprintMesh(scene, loaded);
+  const meshes = root.getChildMeshes();
+  expect(meshes.find(mesh => mesh.name === 'floor-ground').material.name).toContain('finish-wood');
+  expect(meshes.find(mesh => mesh.name === 'wall-ground-0-0').material.name).toContain('finish-brick');
+  expect(meshes.find(mesh => mesh.name === 'wall-ground-1-0').material.name).toContain('finish-stone');
+  root.dispose(false, true); scene.dispose(); engine.dispose();
 });
 
 test('wall panels leave real openings for doors and windows', () => {

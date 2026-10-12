@@ -13,7 +13,7 @@ test('terrain drag stages placement, releases off terrain, and never calibrates 
     onPointerObservable: { add: fn => { listener = fn; return fn; }, remove: jest.fn() },
     pick: (x, y, predicate) => {
       if (predicate({ name: 'terrain' })) return { hit: !!ground, pickedPoint: ground };
-      if (predicate({ isPickable: true, metadata: { referencePlacement: true } })) return { hit: true };
+      if (predicate({ isPickable: true, metadata: { referenceGizmoMode: 'move' } })) return { hit: true, pickedMesh: { metadata: { referenceGizmoMode: 'move' } } };
       return { hit: false };
     },
   };
@@ -29,4 +29,22 @@ test('terrain drag stages placement, releases off terrain, and never calibrates 
   expect(state.setReferencePlacement).toHaveBeenCalledTimes(1);
   expect(state.onReferencePoint).not.toHaveBeenCalled(); expect(state.onSculptStroke).not.toHaveBeenCalled();
   dispose(); expect(canvas.style.cursor).toBe('');
+});
+
+test('calibration mode records terrain points without moving the draft image', () => {
+  let listener;
+  const canvas = document.createElement('canvas');
+  const state = { activeTool: 'reference', referenceCalibrationMode: true,
+    referencePlacement: { id: 'preview' }, setReferencePlacement: jest.fn(), onReferencePoint: jest.fn() };
+  const scene = {
+    getEngine: () => ({ getRenderingCanvas: () => canvas }),
+    onPointerObservable: { add: fn => { listener = fn; return fn; }, remove: jest.fn() },
+    pick: (x, y, predicate) => predicate({ name: 'terrain' })
+      ? { hit: true, pickedPoint: { x: 2, y: 0, z: 3 } } : { hit: false },
+  };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 } });
+  expect(state.onReferencePoint).toHaveBeenCalledWith(expect.objectContaining({ x: 100, y: 150 }));
+  expect(state.setReferencePlacement).not.toHaveBeenCalled();
+  dispose();
 });

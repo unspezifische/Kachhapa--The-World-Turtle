@@ -3,17 +3,17 @@
   "name": "Create React App Sample",
   "icons": [
     {
-      "src": "turtle.svg",
-      "sizes": "64x64 32x32 24x24 16x16",
+      "src": "sea_turtle_icon.ico",
+      "sizes": "128x128",
       "type": "image/x-icon"
     },
     {
-      "src": "turtle.png",
+      "src": "sea_turtle_icon_128.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "128x128"
     },
     {
-      "src": "turtle.png",
+      "src": "sea_turtle_icon_512.png",
       "type": "image/png",
       "sizes": "512x512"
     }

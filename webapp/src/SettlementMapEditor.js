@@ -70,6 +70,7 @@ import {
   insertRoadControlPoint,
   insertOpenSplineControlPoint,
   deleteSplineControlPoint,
+  isFortificationTowerPoint,
 } from './settlementEditor';
 
 import {
@@ -83,6 +84,9 @@ import {
 } from './settlementTiles';
 
 import HeightmapImportTool from './HeightmapImportTool';
+import { ValidatedNumberField } from './ValidatedNumberInput';
+import { buildingOpenStatus, linkedBusinessForBuilding } from './settlementInspection';
+import { resolveLinkedRegion } from './settlementRegionLinks';
 
 import './SettlementPresentation.css';
 import './SettlementToolPanels.css';
@@ -132,7 +136,7 @@ function editorBounds(referenceLayers, tileStore) {
   return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
 }
 
-function ToolWorkflow({
+export function ToolWorkflow({
   state,
   activeTool,
   assets,
@@ -183,6 +187,8 @@ function ToolWorkflow({
   setWallMode,
   wallDraft,
   setWallDraft,
+  wallPointRole,
+  setWallPointRole,
   finishWall,
 
   regionMode,
@@ -190,6 +196,7 @@ function ToolWorkflow({
   regionDraft,
   setRegionDraft,
   finishRegion,
+  saveStatus,
   waterType,
   setWaterType,
   waterDraft,
@@ -233,41 +240,96 @@ function ToolWorkflow({
 
   // Inside your activeTool === 'inspect' condition block:
   if (activeTool === 'inspect') {
+    const inspectedBuilding = inspectSelection?.entityKind === 'building' ? inspectSelection.item : null;
+    const inspectedAsset = assets.find(asset => asset.key === inspectedBuilding?.asset_key);
+    const linkedBusiness = inspectedBuilding
+      ? linkedBusinessForBuilding(inspectedBuilding, state.businesses, state.buildings)
+      : null;
+    const openStatus = inspectedBuilding
+      ? buildingOpenStatus(inspectedBuilding, state.time)
+      : null;
+    const details = inspectedBuilding ? [
+      ['Building type', inspectedBuilding.building_type || inspectedAsset?.category],
+      ['Business type', inspectedBuilding.business_type || linkedBusiness?.business_type],
+      ['Owner', inspectedBuilding.owner_name || inspectedBuilding.owner],
+      ['Affiliation', inspectedBuilding.owner_affiliation || inspectedBuilding.affiliation],
+      ['District', inspectedBuilding.district_key?.replace(/[_-]+/g, ' ')],
+      ['Factions', Array.isArray(inspectedBuilding.factions) ? inspectedBuilding.factions.join(', ') : inspectedBuilding.factions],
+      ['Tags', Array.isArray(inspectedBuilding.tags) ? inspectedBuilding.tags.join(', ') : inspectedBuilding.tags],
+      ['Rooms', Array.isArray(inspectedBuilding.rooms || inspectedAsset?.rooms)
+        ? (inspectedBuilding.rooms || inspectedAsset.rooms).map(room => typeof room === 'string' ? room : room?.name).filter(Boolean).join(', ')
+        : inspectedBuilding.rooms],
+    ].filter(([, value]) => value) : [];
+
     return (
-      <aside className="editor-menu inspect-menu-panel">
+      <aside className="editor-menu inspect-menu-panel" aria-label="Inspector">
         <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
           INSPECTOR OVERVIEW
         </Typography>
 
         {inspectSelection ? (
-          <Box className="road-metadata" sx={{ display: 'flex', flexDirection: 'column' }}>
+          <Box className="inspect-record">
             <Typography variant="caption" sx={{ color: '#7ce6ff', fontWeight: 'bold', letterSpacing: '1px', mb: 0.5, fontSize: '10px' }}>
-              FEATURE SELECTION
+              {inspectedBuilding ? 'BUILDING RECORD' : 'FEATURE SELECTION'}
             </Typography>
 
             <Typography variant="h6" sx={{ fontSize: '1.2rem', color: '#fff', fontWeight: 700, lineHeight: 1.2, mb: 0.5 }}>
-              {inspectSelection.name || 'Unnamed Landmark'}
+              {inspectedBuilding?.name || inspectSelection.name || 'Unnamed Landmark'}
             </Typography>
 
             <Typography variant="caption" sx={{ display: 'inline-block', fontSize: '11px', textTransform: 'uppercase', color: '#ffe08a', mb: 1.5 }}>
-              Type: {inspectSelection.kind || 'Point of Interest'}
+              {inspectedBuilding
+                ? inspectedBuilding.business_type || linkedBusiness?.business_type || inspectedBuilding.building_type || inspectedAsset?.category || 'Mapped building'
+                : inspectSelection.kind || 'Point of Interest'}
             </Typography>
+
+            {inspectedBuilding && (
+              <Box className="inspect-status-row">
+                <span className={`inspect-status is-${openStatus.key}`}>
+                  {openStatus.label}
+                  {openStatus.hours ? ` · ${openStatus.hours}` : ''}
+                </span>
+                <span className={`inspect-status is-${typeof linkedBusiness?.closed === 'boolean' ? (linkedBusiness.closed ? 'closed' : 'operating') : 'unknown'}`}>
+                  {typeof linkedBusiness?.closed === 'boolean' ? (linkedBusiness.closed ? 'Business closed' : 'Business operating') : 'Business status unknown'}
+                </span>
+              </Box>
+            )}
 
             <Typography variant="body2" sx={{ fontSize: '0.9rem', lineHeight: 1.4, color: '#cbd5e1', mb: 1.5 }}>
-              {inspectSelection.public_description || inspectSelection.description || 'No additional architectural records or historical summary notes are unrolled for this quadrant selection.'}
+              {inspectedBuilding?.public_description || inspectedBuilding?.description
+                || inspectSelection.public_description
+                || inspectSelection.description
+                || 'No description has been recorded for this location.'}
             </Typography>
 
-            {inspectSelection.points && (
-              <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '11px' }}>
-                Structural Nodes: {inspectSelection.points.length} coordinates mapped
-              </Typography>
+            {details.length > 0 && (
+              <dl className="inspect-detail-grid">
+                {details.map(([label, value]) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+
+            {inspectedBuilding && (
+              <Button
+                className="inspect-manage-action"
+                variant="outlined"
+                fullWidth
+                onClick={state.onManageInspectedBuilding}
+                sx={{ mt: 1, textTransform: 'none', fontWeight: 'bold', color: '#e7d6ae', borderColor: '#bd9149' }}
+              >
+                {inspectedBuilding.is_blueprint ? 'Building details & levels' : 'Manage building'}
+              </Button>
             )}
 
             <Button
-              variant="contained"
-              color="error"
+              className="inspect-clear-action"
+              variant="text"
               fullWidth
-              onClick={() => setInspectSelection(null)}
+              onClick={() => { setInspectSelection(null); setSelected(null); }}
               sx={{ mt: 2, textTransform: 'none', fontWeight: 'bold' }}
             >
               Clear Selection
@@ -340,7 +402,7 @@ function ToolWorkflow({
           <ToggleButton value="draw-new"><AddIcon fontSize="small" /> Draw</ToggleButton>
         </ToggleButtonGroup>
 
-        {['refine', 'move-spline'].includes(roadMode) && (
+        {['draw-new', 'refine', 'move-spline'].includes(roadMode) && (
           <Box sx={{ mb: 1.5, px: 0.5 }}>
             <FormControlLabel
               control={
@@ -423,14 +485,19 @@ function ToolWorkflow({
         </Box>
 
         {/* Real-time draft spline builder buttons using CSS Grid on Box */}
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
+        <Box className="spline-draft-actions" sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
           <Button variant="outlined" size="small" disabled={!roadDraft.length} onClick={() => setRoadDraft(p => p.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a' }}>
             Undo Point
           </Button>
           <Button variant="contained" size="small" disabled={roadDraft.length < 2} onClick={finishRoad} sx={{ backgroundColor: '#bd9149', color: '#17211c' }}>
-            Finish Road
+            Save Road
           </Button>
         </Box>
+        {roadMode === 'draw-new' && <Box sx={{ mb: 2, color: '#aabfb2', fontSize: 12 }}>
+          {roadDraft.length} points · Click the map to add points.
+          <Button size="small" onClick={() => { setRoadDraft([]); setRoadMode('select'); }}>Cancel draft</Button>
+        </Box>}
+        <p role="status" className="spline-save-status">{saveStatus}</p>
 
         <TextField
           type="search"
@@ -501,13 +568,12 @@ function ToolWorkflow({
                 onChange={e => state.setRoads(v => v.map(old => old.id === selectedRoad.id ? { ...old, name: e.target.value } : old))}
               />
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-                <TextField
+                <ValidatedNumberField
                   label="Base Width (ft)"
-                  type="number"
                   size="small"
                   value={selectedRoad.width_feet ?? 30}
-                  inputProps={{ min: 4, max: 200, step: 1 }}
-                  onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, width_feet: Math.max(4, Number(e.target.value) || 4) } : road))}
+                  min={4} max={200} inputProps={{ step: 1 }}
+                  onCommit={value => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, width_feet: value } : road))}
                 />
                 <Button
                   size="small"
@@ -546,24 +612,22 @@ function ToolWorkflow({
               {/* Node Coordinates editor Row inputs */}
               {selectedPoint && (
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-                  <TextField
+                  <ValidatedNumberField
                     label="Coordinate X"
-                    type="number"
                     size="small"
                     value={Math.round(selectedPoint.x)}
-                    onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
+                    onCommit={value => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
                       ...r,
-                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
+                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, x: value } : pt)
                     } : r))}
                   />
-                  <TextField
+                  <ValidatedNumberField
                     label="Coordinate Y"
-                    type="number"
                     size="small"
                     value={Math.round(selectedPoint.y)}
-                    onChange={e => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
+                    onCommit={value => state.setRoads(v => v.map(r => r.id === selectedRoad.id ? {
                       ...r,
-                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
+                      points: r.points.map((pt, pi) => pi === state.selectedRoadPointIndex ? { ...pt, y: value } : pt)
                     } : r))}
                   />
                 </Box>
@@ -571,15 +635,14 @@ function ToolWorkflow({
 
               {selectedPoint && (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <TextField
+                  <ValidatedNumberField
                     label="Point Width (ft)"
-                    type="number"
                     size="small"
                     value={selectedPoint.width_feet ?? selectedRoad.width_feet ?? roadWidth}
-                    inputProps={{ min: 4, max: 200, step: 1 }}
-                    onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? {
+                    min={4} max={200} inputProps={{ step: 1 }}
+                    onCommit={value => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? {
                       ...road,
-                      points: road.points.map((point, pointIndex) => pointIndex === state.selectedRoadPointIndex ? { ...point, width_feet: Math.max(4, Number(e.target.value) || 4) } : point)
+                      points: road.points.map((point, pointIndex) => pointIndex === state.selectedRoadPointIndex ? { ...point, width_feet: value } : point)
                     } : road))}
                   />
                   <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
@@ -721,12 +784,11 @@ function ToolWorkflow({
               <Typography variant="caption" sx={{ color: '#aab4ad' }}>
                 Brush Strength {['flatten', 'smooth'].includes(terrainMode) ? '(%)' : '(ft)'}
               </Typography>
-              <TextField
-                type="number"
+              <ValidatedNumberField
                 size="small"
                 value={brushStrength}
-                inputProps={{ min: 1, max: 100 }}
-                onChange={event => setBrushStrength(Math.max(1, Math.min(100, Number(event.target.value) || 1)))}
+                min={1} max={100}
+                onCommit={setBrushStrength}
                 sx={{
                   width: '75px',
                   '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: '#fff', fontSize: '12px' }
@@ -823,8 +885,29 @@ function ToolWorkflow({
 
         {wallMode === 'refine' && selectedWall && (
           <Typography variant="caption" sx={{ display: 'block', color: '#94a3b8', lineHeight: 1.4, mb: 1.5 }}>
-            Drag a control point above the wall to reshape it. Click the selected wall between control points to add a new point.
+            Drag a point above the wall to reshape it. Tower points permit a corner; direction points keep the wall smooth.
           </Typography>
+        )}
+
+        {wallMode === 'draw-new' && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.75 }}>
+              Next point type
+            </Typography>
+            <ToggleButtonGroup
+              value={wallPointRole}
+              exclusive
+              fullWidth
+              size="small"
+              onChange={(event, value) => value && setWallPointRole(value)}
+            >
+              <ToggleButton value="direction" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Direction</ToggleButton>
+              <ToggleButton value="tower" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Tower</ToggleButton>
+            </ToggleButtonGroup>
+            <Typography variant="caption" sx={{ color: '#7f9187', display: 'block', mt: 0.75, lineHeight: 1.35 }}>
+              Direction points bend smoothly. Tower points can form a sharp turn. Wall ends always begin as towers.
+            </Typography>
+          </Box>
         )}
 
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
@@ -927,34 +1010,54 @@ function ToolWorkflow({
                     '&:hover': { backgroundColor: '#a87e3e' }
                   }}
                 >
-                  {idx + 1}
+                  {isFortificationTowerPoint(selectedWall, idx) ? `T${idx + 1}` : idx + 1}
                 </Button>
               ))}
             </Box>
 
             {/* Point Coordinate Transforms Row (Box Grid replacing legacy layouts) */}
             {selectedPoint && (
-              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-                <TextField
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <ToggleButtonGroup
+                  value={isFortificationTowerPoint(selectedWall, state.selectedFortificationPointIndex) ? 'tower' : 'direction'}
+                  exclusive
+                  fullWidth
+                  size="small"
+                  onChange={(event, role) => {
+                    if (!role) return;
+                    state.recordSplineUndo('wall', selectedWall);
+                    state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? {
+                      ...wall,
+                      points: wall.points.map((point, index) => index === state.selectedFortificationPointIndex ? {
+                        ...point,
+                        tower: role === 'tower'
+                      } : point)
+                    } : wall));
+                  }}
+                >
+                  <ToggleButton value="direction" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Direction Point</ToggleButton>
+                  <ToggleButton value="tower" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Tower Point</ToggleButton>
+                </ToggleButtonGroup>
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                <ValidatedNumberField
                   label="Coordinate X"
-                  type="number"
                   size="small"
                   value={Math.round(selectedPoint.x)}
-                  onChange={e => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
+                  onCommit={value => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
                     ...w,
-                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, x: Number(e.target.value) } : pt)
+                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, x: value } : pt)
                   } : w))}
                 />
-                <TextField
+                <ValidatedNumberField
                   label="Coordinate Y"
-                  type="number"
                   size="small"
                   value={Math.round(selectedPoint.y)}
-                  onChange={e => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
+                  onCommit={value => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
                     ...w,
-                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, y: Number(e.target.value) } : pt)
+                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, y: value } : pt)
                   } : w))}
                 />
+                </Box>
               </Box>
             )}
 
@@ -1018,12 +1121,13 @@ function ToolWorkflow({
 
         <ToggleButtonGroup
           value={drawing.mode}
+          className={activeTool === 'region' ? 'region-mode-controls' : undefined}
           exclusive
           fullWidth
           size="small"
           onChange={(e, nextMode) => {
             if (nextMode !== null) {
-              if (nextMode === 'draw-new') drawing.setDraft([]);
+              if (nextMode === 'draw-new' || nextMode === 'trace') drawing.setDraft([]);
               drawing.setMode(nextMode);
             }
           }}
@@ -1041,6 +1145,9 @@ function ToolWorkflow({
         >
           <ToggleButton value="select">Select</ToggleButton>
           <ToggleButton value="draw-new">Draw</ToggleButton>
+          {activeTool === 'region' && <ToggleButton value="trace">Trace roads / walls</ToggleButton>}
+          {activeTool === 'region' && <ToggleButton value="refine"
+            disabled={!state.selectedRegionId || !!state.regions.find(region => region.id === state.selectedRegionId)?.boundary_anchors?.length}>Refine</ToggleButton>}
         </ToggleButtonGroup>
 
         {activeTool === 'road' && (
@@ -1060,14 +1167,68 @@ function ToolWorkflow({
           </Box>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+        <Box className="spline-draft-actions" sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
           <Button variant="outlined" size="small" disabled={!drawing.draft.length} onClick={() => drawing.setDraft(points => points.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
             Undo point
           </Button>
           <Button variant="contained" size="small" disabled={drawing.draft.length < drawing.minimum} onClick={drawing.finish} sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold' }}>
-            Finish
+            {activeTool === 'region' ? 'Save Region' : 'Save Wall'}
           </Button>
         </Box>
+        {['draw-new', 'trace'].includes(drawing.mode) && <Box sx={{ mt: 1, color: '#aabfb2', fontSize: 12 }}>
+          {drawing.draft.length} points · {drawing.mode === 'trace' ? 'Click a road or wall, then another near their crossing.' : 'Click the map to add points.'}
+          <Button size="small" onClick={() => { drawing.setDraft([]); drawing.setMode('select'); }}>Cancel draft</Button>
+        </Box>}
+        <p role="status" className="spline-save-status">{saveStatus}</p>
+        {activeTool === 'region' && <Box className="region-settings">
+          <Typography variant="subtitle2">Region Settings</Typography>
+          <Box className="region-settings-list">
+            {(state.regions || []).map(region => <button key={region.id} type="button"
+              aria-pressed={region.id === state.selectedRegionId}
+              onClick={() => state.setSelectedRegionId(region.id)}>{region.name || region.id}</button>)}
+          </Box>
+          {(() => {
+            const region = (state.regions || []).find(value => value.id === state.selectedRegionId);
+            if (!region) return <p>Select a region to set future building defaults.</p>;
+            const defaults = region.construction_defaults || {};
+            const patch = changes => state.setRegions(values => values.map(value => value.id === region.id
+              ? { ...value, construction_defaults: { ...(value.construction_defaults || {}), ...changes } } : value));
+            const choices = ['existing', 'stone', 'wood', 'brick', 'plaster'];
+            return <>
+              {region.boundary_needs_repair && <p role="alert">Boundary link needs repair; the last valid outline is retained.
+                {(region.boundary_edges || []).filter(edge => edge.needs_repair && edge.source_id).map(edge => ` ${edge.kind}: ${edge.source_id}`).join(' · ')}
+              </p>}
+              {!!region.boundary_anchors?.length && <button type="button" onClick={() => {
+                state.recordSplineUndo?.('region', region);
+                state.setRegions(values => values.map(value => {
+                  if (value.id !== region.id) return value;
+                  const { boundary_anchors, boundary_edges, boundary_needs_repair, ...freeRegion } = value;
+                  return freeRegion;
+                }));
+              }}>Detach boundary links</button>}
+              <Button size="small" disabled={!canUndoSplineEdit} onClick={undoSplineEdit}>Undo boundary edit</Button>
+              <TextField label="Region name" size="small" value={region.name || ''}
+                onChange={event => state.setRegions(values => values.map(value => value.id === region.id
+                  ? { ...value, name: event.target.value } : value))} />
+              {['ground_wall', 'upper_wall', 'ground_floor', 'upper_floor'].map(key => <label key={key}>
+                {key.replaceAll('_', ' ')}
+                <select value={defaults[key] || 'existing'} onChange={event => patch({ [key]: event.target.value })}>
+                  {[...choices, ...(key.includes('floor') ? ['packed-earth'] : [])].map(choice =>
+                    <option key={choice} value={choice}>{choice.replace('-', ' ')}</option>)}
+                </select>
+              </label>)}
+              <ValidatedNumberField label="Preferred stories" size="small" min={1} max={8}
+                value={defaults.preferred_stories || 2} onCommit={value => patch({ preferred_stories: value })} />
+              {['ground_use', 'upper_use'].map(key => <label key={key}>{key.replace('_', ' ')}
+                <select value={defaults[key] || 'residential'} onChange={event => patch({ [key]: event.target.value })}>
+                  {['residential', 'shop', 'workshop', 'storage', 'mixed'].map(choice =>
+                    <option key={choice} value={choice}>{choice}</option>)}
+                </select>
+              </label>)}
+              <p>Defaults guide future fill-in buildings; existing buildings stay as designed.</p>
+            </>;
+          })()}
+        </Box>}
       </aside>
     );
   }
@@ -1740,6 +1901,8 @@ export default function SettlementMapEditor({
   inspectSelection,
   setInspectSelection = () => { },
   buildingViewMode = 'satellite',
+  businesses = [],
+  onManageInspectedBuilding = () => { },
   roads = [],
   setRoads = () => { },
   strokes = [],
@@ -1759,12 +1922,14 @@ export default function SettlementMapEditor({
   onWaypoint = () => { },
   referenceLayers = [],
   referencePlacement = null,
+  referenceCalibrationMode = false,
   setReferencePlacement = () => { },
   onReferencePoint = () => { },
   calibrationPoints = [],
   fitRequest = 0,
   onMapContext = () => { },
   onCameraChange = null,
+  saveStatus = '',
 
   viewCommand = null,
   labelState = { ids: [], showAll: false },
@@ -1785,11 +1950,13 @@ export default function SettlementMapEditor({
   const [roadWidth, setRoadWidth] = useState(ROAD_CLASS_DEFAULTS.street.width);
   const [roadClass, setRoadClass] = useState('street');
   const [roadSurface, setRoadSurface] = useState(ROAD_CLASS_DEFAULTS.street.surface);
-  const [roadSnapEnabled, setRoadSnapEnabled] = useState(false);
+  const [roadSnapEnabled, setRoadSnapEnabled] = useState(true);
+  const [splineHoverPoint, setSplineHoverPoint] = useState(null);
 
   const [wallMode, setWallMode] = useState('select')
   const [wallDraft, setWallDraft] = useState([]);
   const [wallWidth, setWallWidth] = useState(36);
+  const [wallPointRole, setWallPointRole] = useState('direction');
 
   const [regionMode, setRegionMode] = useState('select')
   const [regionDraft, setRegionDraft] = useState([]);
@@ -1828,9 +1995,13 @@ export default function SettlementMapEditor({
       setSelectedFortificationId(entry.id);
       setSelectedFortificationPointIndex(null);
       setSelected(entry.before);
+    } else if (entry.kind === 'region') {
+      setMapEnvironment(value => ({ ...value, regions: (value.regions || []).map(region =>
+        region.id === entry.id ? entry.before : region) }));
+      setSelectedRegionId(entry.id);
     }
     setSplineHistoryVersion(value => value + 1);
-  }, [setRoads, setFortifications, setSelected]);
+  }, [setRoads, setFortifications, setSelected, setMapEnvironment]);
 
 
   const [virtualKeys, setVirtualKeys] = useState(new Set());
@@ -1930,7 +2101,17 @@ export default function SettlementMapEditor({
   const brushMeshRef = useRef(null);
 
   const regions = useMemo(() => mapEnvironment.regions || [], [mapEnvironment.regions]);
-  const fortifications = mapEnvironment.fortifications || [];
+  const fortifications = useMemo(() => mapEnvironment.fortifications || [], [mapEnvironment.fortifications]);
+
+  useEffect(() => {
+    if (!regions.some(region => region.boundary_anchors?.length)) return;
+    setMapEnvironment(current => {
+      const next = (current.regions || []).map(region => resolveLinkedRegion(region, roads,
+        current.fortifications || []));
+      return JSON.stringify(next) === JSON.stringify(current.regions || [])
+        ? current : { ...current, regions: next };
+    });
+  }, [roads, mapEnvironment.fortifications, regions, setMapEnvironment]);
 
   const deleteSelectedSplinePoint = useCallback((kind) => {
     if (kind === 'road') {
@@ -1987,7 +2168,7 @@ export default function SettlementMapEditor({
             const selectedPoint = wall.points[menu.index];
             insertionPoint = { x: (selectedPoint.x + neighbor.x) / 2, y: (selectedPoint.y + neighbor.y) / 2 };
           }
-          const result = insertOpenSplineControlPoint(wall, insertionPoint);
+          const result = insertOpenSplineControlPoint(wall, insertionPoint, { tower: false });
           setFortifications(values => values.map(value => value.id === wall.id ? result.item : value));
           setSelectedFortificationId(wall.id);
           setSelectedFortificationPointIndex(result.index);
@@ -2248,22 +2429,37 @@ export default function SettlementMapEditor({
 
   const finishRoad = () => {
     if (roadDraft.length < 2) return;
-    setRoads(values => [...values, { id: `road-${Date.now()}`, name: `New road ${values.length + 1}`, road_class: roadClass, surface_type: roadSurface, width_feet: roadWidth, opacity: .78, visible: true, points: roadDraft }]);
+    const id = `road-${Date.now()}`;
+    setRoads(values => [...values, { id, name: `New road ${values.length + 1}`, road_class: roadClass, surface_type: roadSurface, width_feet: roadWidth, opacity: .78, visible: true, points: roadDraft }]);
+    setSelectedRoadId(id);
     setRoadDraft([]);
+    setSplineHoverPoint(null);
     setRoadMode('select');
   };
 
   const finishWall = () => {
     if (wallDraft.length < 2) return;
-    setFortifications(values => [...values, { id: `wall-${Date.now()}`, name: `New wall ${values.length + 1}`, wall_type: 'city_wall', width_feet: 24, height_feet: 35, visible: true, points: wallDraft }]);
+    const points = wallDraft.map((point, index) => ({
+      ...point,
+      tower: index === 0 || index === wallDraft.length - 1 ? true : point.tower === true
+    }));
+    setFortifications(values => [...values, { id: `wall-${Date.now()}`, name: `New wall ${values.length + 1}`, wall_type: 'city_wall', width_feet: wallWidth, height_feet: 35, visible: true, points }]);
     setWallDraft([]);
     setWallMode('select');
   };
 
   const finishRegion = () => {
     if (regionDraft.length < 3) return;
-    setRegions(values => [...values, { id: `region-${Date.now()}`, name: `New region ${values.length + 1}`, region_type: 'grassland', visible: true, points: regionDraft }]);
+    const id = `region-${Date.now()}`;
+    setRegions(values => {
+      const region = { id, name: `New region ${values.length + 1}`, region_type: 'grassland', visible: true,
+        points: regionDraft.map(({ x, y }) => ({ x, y })),
+        ...(regionMode === 'trace' ? { boundary_anchors: regionDraft } : {}) };
+      return [...values, regionMode === 'trace' ? resolveLinkedRegion(region, roads, fortifications) : region];
+    });
+    setSelectedRegionId(id);
     setRegionDraft([]);
+    setSplineHoverPoint(null);
     setRegionMode('select');
   };
 
@@ -2282,7 +2478,7 @@ export default function SettlementMapEditor({
   }, [firstPerson]);
 
   useEffect(() => {
-    if (activeTool !== 'build') setSelected?.(null);
+    if (!['build', 'inspect', 'player'].includes(activeTool)) setSelected?.(null);
     setSelectedRoadId(null);
     setSelectedFortificationId(null);
     setSelectedRegionId(null);
@@ -2324,6 +2520,8 @@ export default function SettlementMapEditor({
     inspectSelection,
     setInspectSelection,
     buildingViewMode,
+    businesses,
+    onManageInspectedBuilding,
     roads,
     setRoads,
     strokes,
@@ -2363,14 +2561,18 @@ export default function SettlementMapEditor({
     setRoadDraft,
     fortificationDraft: wallDraft,
     setFortificationDraft: setWallDraft,
+    fortificationPointRole: wallPointRole,
     regionDraft,
     setRegionDraft,
+    splineHoverPoint,
+    setSplineHoverPoint,
     waterDraft,
     setWaterDraft,
     seaLevelPicking: false,
     onWaypoint,
     onReferencePoint,
     referencePlacement,
+    referenceCalibrationMode,
     setReferencePlacement,
     onMapContext,
     onInspectSelection: setInspectSelection,
@@ -2450,34 +2652,6 @@ export default function SettlementMapEditor({
         </strong>
       </div>
 
-      {['inspect', 'player'].includes(activeTool) && inspectSelection && (
-        <aside className="inspect-map-selection">
-          <button
-            type="button"
-            className="inspect-selection-close"
-            onClick={() => setInspectSelection(null)}
-            aria-label="Close"
-          >
-            x
-          </button>
-
-          <span>
-            {inspectSelection.kind}
-          </span>
-
-          <h3>
-            {inspectSelection.name || 'Mapped feature'}
-          </h3>
-
-          <p>
-            {inspectSelection.public_description
-              || inspectSelection.description
-              || inspectSelection.summary
-              || 'Known settlement feature.'}
-          </p>
-        </aside>
-      )}
-
       {splineContextMenu && (
         <Box
           onContextMenu={event => event.preventDefault()}
@@ -2547,6 +2721,7 @@ export default function SettlementMapEditor({
       <ToolWorkflow
         state={state}
         activeTool={activeTool}
+        saveStatus={saveStatus}
         viewCommand={activeViewCommand}
 
         bounds={bounds}
@@ -2618,6 +2793,8 @@ export default function SettlementMapEditor({
         setWallWidth={setWallWidth}
         wallDraft={wallDraft}
         setWallDraft={setWallDraft}
+        wallPointRole={wallPointRole}
+        setWallPointRole={setWallPointRole}
         finishWall={finishWall}
 
         regionMode={regionMode}

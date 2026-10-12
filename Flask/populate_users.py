@@ -1,8 +1,8 @@
 import os
 import json
-from werkzeug.security import generate_password_hash
 from sqlalchemy.exc import IntegrityError
 from app import app, db, User, Character, Campaign, campaign_members
+from password_security import hash_password
 
 # Push the application context
 app.app_context().push()
@@ -17,7 +17,7 @@ users = [
 admin_user = None
 user_user = None
 for user_data in users:
-    hashed_password = generate_password_hash(user_data['password'], method='sha256')
+    hashed_password = hash_password(user_data['password'])
     new_user = User(username=user_data['username'], password=hashed_password)
     try:
         db.session.add(new_user)

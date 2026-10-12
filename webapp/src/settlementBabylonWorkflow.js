@@ -15,6 +15,7 @@ import {
 
 import { babylonToWorld, pointInsideRegion } from './settlementBabylon';
 import { transformReferenceFromGizmo } from './referencePlacement';
+import { appendTracedBoundaryPoint, nearestSplinePoint } from './settlementRegionLinks';
 
 
 function findDistrictKey(point, regions) {
@@ -209,18 +210,13 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
     // -------------------------------------------------------------------------
 
     else if (state.activeTool === 'road' && state.roadMode === 'draw-new') {
+      const snapped = state.roadSnapEnabled
+        ? nearestSplinePoint(point, state.roads, [], state.roadSnapToleranceFeet, point._source?.kind === 'road' ? point._source : null)
+        : null;
       state.setRoadDraft(values => [
         ...values,
-        snapRoadNetworkPoint(
-          {
-            ...point,
-            width_feet: state.roadWidth
-          },
-          state.roads,
-          {
-            tolerance: state.roadSnapToleranceFeet
-          }
-        )
+        { x: snapped?.x ?? Math.round(point.x), y: snapped?.y ?? Math.round(point.y),
+          width_feet: state.roadWidth }
       ]);
     }
 
@@ -237,7 +233,8 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
         ...values,
         {
           x: Math.round(point.x),
-          y: Math.round(point.y)
+          y: Math.round(point.y),
+          tower: state.fortificationPointRole === 'tower'
         }
       ]);
     }
@@ -266,6 +263,11 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
     // Region drafting
     // -------------------------------------------------------------------------
 
+    else if (state.activeTool === 'region' && state.regionMode === 'trace') {
+      state.setRegionDraft(values => appendTracedBoundaryPoint(values, point,
+        state.roads, state.fortifications, state.roadSnapToleranceFeet));
+    }
+
     else if (state.activeTool === 'region' && state.regionMode === 'draw-new') {
       state.setRegionDraft(values => {
         const targets = values.length > 2
@@ -278,14 +280,16 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
           ]
           : state.regions;
 
+        const spline = nearestSplinePoint(point, state.roads, state.fortifications,
+          state.roadSnapToleranceFeet, point._source);
         return [
           ...values,
-          snapRegionBoundaryPoint(
+          spline ? { x: spline.x, y: spline.y } : snapRegionBoundaryPoint(
             point,
             targets,
-            state.roads,
+            [],
             {
-              fortifications: state.fortifications
+              fortifications: []
             }
           )
         ];
@@ -587,7 +591,10 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
   const selectMesh = (metadata, point, event) => {
     const state = getState();
-    const item = metadata?.item;
+    const isBuilding = metadata?.kind === 'building' || metadata?.kind === 'building-roof';
+    const item = isBuilding
+      ? state.buildings?.find(building => String(building.id) === String(metadata.item?.id)) || metadata?.item
+      : metadata?.item;
 
 
     // -------------------------------------------------------------------------
@@ -642,8 +649,8 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
     // Building / POI
     // -------------------------------------------------------------------------
 
-    if (metadata.kind === 'building' || metadata.kind === 'poi') {
-      if (state.activeTool === 'build' && state.buildMode === 'move-selected') {
+    if (isBuilding || metadata.kind === 'poi') {
+      if (isBuilding && state.activeTool === 'build' && state.buildMode === 'move-selected') {
         if (event.button === 0 && item.id === state.selected?.id) {
           interaction = {
             type: 'building',
@@ -654,27 +661,21 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
         return true;
       }
 
-      state.setSelected(item);
+      state.setSelected?.(isBuilding ? item : null);
 
       if (['inspect', 'player'].includes(state.activeTool)) {
-        state.setInspectSelection({
-          kind:
-            item.building_type ||
-            item.business_type ||
-            'Point of Interest',
-
-          name:
-            item.name ||
-            'Unnamed Structure',
-
-          description:
-            item.description ||
-            'Mapped POI structural footprint located at coordinate boundaries.'
+        state.setInspectSelection?.({
+          entityKind: isBuilding ? 'building' : 'poi',
+          id: item.id,
+          item,
+          kind: isBuilding ? 'Building' : item.point_type || 'Point of Interest',
+          name: item.name || (isBuilding ? 'Unnamed Structure' : 'Unnamed Landmark'),
+          description: item.public_description || item.description || '',
         });
       }
 
       if (
-        state.activeTool === 'build' &&
+        isBuilding && state.activeTool === 'build' &&
         ['refine', 'select-placed'].includes(state.buildMode) &&
         event.button === 0
       ) {
@@ -724,6 +725,7 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
       if (['inspect', 'player'].includes(state.activeTool)) {
         state.setInspectSelection({
+          entityKind: 'road', id: item.id, item,
           kind: 'Street / Highway',
           name: item.name || 'Unnamed Roadway',
           description:
@@ -758,6 +760,7 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
       if (['inspect', 'player'].includes(state.activeTool)) {
         state.setInspectSelection({
+          entityKind: 'wall', id: item.id, item,
           kind: 'Wall / Fortification',
           name: item.name || 'Unnamed Perimeter Wall',
           description:
@@ -816,6 +819,7 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
         state.setSelected?.(item);
 
         state.setInspectSelection({
+          entityKind: 'water', id: item.id, item,
           kind: 'Waterway / River',
           name: item.name || 'Local Stream',
           description:
@@ -871,6 +875,14 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
         if (state.activeTool === 'reference' && state.referencePlacement) {
           const placement = state.referencePlacement;
+
+          if (state.referenceCalibrationMode) {
+            if (info.type === PointerEventTypes.POINTERDOWN && info.event.button === 0) {
+              const ground = pickTerrain(scene);
+              if (ground?.pickedPoint) state.onReferencePoint(babylonToWorld(ground.pickedPoint));
+            }
+            return;
+          }
 
           if (
             info.type === PointerEventTypes.POINTERUP ||
@@ -1297,6 +1309,30 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
           }
         }
 
+
+        const drafting = (state.activeTool === 'road' && state.roadMode === 'draw-new') ||
+          (state.activeTool === 'region' && ['draw-new', 'trace'].includes(state.regionMode)) ||
+          (state.activeTool === 'fortification' && state.fortificationMode === 'draw-new');
+        const sourceMetadata = normalPick?.pickedMesh?.metadata;
+        const sourceKind = sourceMetadata?.kind === 'road' ? 'road'
+          : ['wall', 'fortification'].includes(sourceMetadata?.kind) ? 'wall' : null;
+        const pickedSource = sourceKind && sourceMetadata.item &&
+          (state.activeTool === 'region' || (state.activeTool === 'road' && sourceKind === 'road'))
+          ? { kind: sourceKind, id: sourceMetadata.item.id } : null;
+        const draftPoint = () => {
+          if (pickedSource && normalPick?.pickedPoint) return { ...babylonToWorld(normalPick.pickedPoint), _source: pickedSource };
+          const terrain = pickTerrain(scene);
+          return terrain?.pickedPoint ? babylonToWorld(terrain.pickedPoint) : null;
+        };
+        if (drafting && info.type === PointerEventTypes.POINTERMOVE && info.event.buttons === 0) {
+          state.setSplineHoverPoint?.(draftPoint());
+        }
+
+        if (drafting && info.type === PointerEventTypes.POINTERDOWN && event.button === 0) {
+          const point = draftPoint();
+          if (point) addTerrainPoint(point);
+          return;
+        }
 
         if (!pickedPoint) return;
 

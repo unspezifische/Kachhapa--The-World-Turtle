@@ -57,11 +57,15 @@ import {
   settlementCameraPanSpeed,
   featureIntersectsBounds,
   polylinePartsInBounds,
+  sampleRoadCenterline,
+  sampleFortificationCenterline,
 } from './settlementBabylon';
+import { appendTracedBoundaryPoint, nearestSplinePoint, tracedDraftPolyline } from './settlementRegionLinks';
 
 import {
   createTerrainHeightSampler,
   FEET_PER_SCENE_UNIT,
+  isFortificationTowerPoint,
   terrainHeightAt
 } from './settlementEditor';
 
@@ -74,10 +78,13 @@ import {
 
 import { createSettlementBabylonWorkflow } from './settlementBabylonWorkflow';
 import { calculateTerrainFog } from './terrainFog';
+import { calculateSettlementLighting } from './settlementLighting';
 import { createBlueprintMesh } from './blueprintMesh';
 import { createReferenceOverlay, createReferenceGizmo } from './referenceOverlay';
 import { planTerrainView, referenceCameraFrame, terrainSampleOrder } from './terrainView';
 import { EDITOR_ACCENT_HEX } from './editorAppearance';
+import { buildingViewColor } from './settlementInspection';
+import { applyBuildingMapColor, createBuildingInspectOutline } from './settlementBuildingPresentation';
 
 
 // Babylon's PolygonMeshBuilder looks for earcut on the global window object.
@@ -236,7 +243,7 @@ function waterMaterial(scene, name, hex, animate, state) {
 }
 
 
-function createBabylonRegionMesh(scene, region, state) {
+function createBabylonRegionMesh(scene, region, state, heightSampler) {
   const points = region.points || [];
   if (!points.length) return [];
 
@@ -252,12 +259,8 @@ function createBabylonRegionMesh(scene, region, state) {
 
   const centerX = totalX / Math.max(1, pointCount);
   const centerY = totalY / Math.max(1, pointCount);
-  const centerElevation = terrainHeightAt(
-    state.strokes,
-    centerX,
-    centerY,
-    state.heightMap
-  );
+  const sample = heightSampler || ((x, y) => terrainHeightAt(state.strokes, x, y, state.heightMap));
+  const centerElevation = sample(centerX, centerY);
 
 
   // ---------------------------------------------------------------------------
@@ -268,12 +271,7 @@ function createBabylonRegionMesh(scene, region, state) {
     worldToBabylon(
       point.x,
       point.y,
-      terrainHeightAt(
-        state.strokes,
-        point.x,
-        point.y,
-        state.heightMap
-      ) + 2.5
+      sample(point.x, point.y) + 2.5
     )
   );
 
@@ -469,7 +467,7 @@ function createBabylonWaterMesh(scene, body, state, bounds, heightSampler) {
 }
 
 
-function createBabylonExternalAssetModel(scene, buildingMesh, asset, building) {
+function createBabylonExternalAssetModel(scene, buildingMesh, asset, building, mapColor) {
   if (!asset.model_url) return;
 
   SceneLoader.ImportMeshAsync('', '', asset.model_url, scene)
@@ -490,6 +488,7 @@ function createBabylonExternalAssetModel(scene, buildingMesh, asset, building) {
           item: building
         };
       });
+      applyBuildingMapColor(buildingMesh, mapColor, result.meshes);
     })
     .catch(() => { });
 }
@@ -539,7 +538,11 @@ function createBabylonBuiltInBuilding(scene, building, asset, state, heightSampl
     item: building
   };
 
-  createBabylonExternalAssetModel(scene, buildingMesh, asset, building);
+  const mapColor = state.buildingViewMode !== 'satellite'
+    ? buildingViewColor(building, asset, state.buildingViewMode, state.businesses, state.buildings)
+    : null;
+  applyBuildingMapColor(buildingMesh, mapColor);
+  createBabylonExternalAssetModel(scene, buildingMesh, asset, building, mapColor);
 
   return buildingMesh;
 }
@@ -636,6 +639,7 @@ function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement ||
+    target?.closest?.('[role="combobox"], [role="listbox"]') ||
     target?.isContentEditable;
 
   const key = event =>
@@ -1274,11 +1278,19 @@ function SceneContent({
       const delta = scene.getEngine().getDeltaTime() / 1000;
       const volumeScale = config.masterVolume ?? 0.5;
 
-      const absoluteHour = safeHour + safeMinute / 60;
-      const celestialAngle = ((absoluteHour - 6) / 24) * Math.PI * 2;
+      const lighting = calculateSettlementLighting({
+        hour: safeHour,
+        minute: safeMinute,
+        sunIntensity: atmos.sunIntensity,
+        moonIntensity: atmos.moonIntensity,
+        cloudCover: config.cloudCover,
+      });
 
-      const cosAngle = Math.cos(celestialAngle);
-      const sinAngle = Math.sin(celestialAngle);
+      const {
+        cosAngle,
+        sinAngle,
+        daylightStrength,
+      } = lighting;
 
       const sunLightNode = scene.getLightByName('settlement-sun');
 
@@ -1289,24 +1301,15 @@ function SceneContent({
           0.2
         ).normalize();
 
-        if (sinAngle > 0) {
-          const zenithMultiplier = sinAngle;
-          const targetSunIntensity = atmos.sunIntensity ?? 2.2;
+        sunLightNode.intensity = lighting.sunIntensity;
 
-          sunLightNode.intensity =
-            zenithMultiplier *
-            targetSunIntensity *
-            (1 - config.cloudCover * 0.45);
+        if (daylightStrength > 0) {
 
           sunLightNode.diffuse = Color3.Lerp(
             new Color3(1, 0.78, 0.58),
             new Color3(1, 0.98, 0.95),
-            zenithMultiplier
+            daylightStrength
           );
-        }
-
-        else {
-          sunLightNode.intensity = 0;
         }
       }
 
@@ -1420,33 +1423,18 @@ function SceneContent({
 
       // Babylon's physical atmosphere assumes different world scale units.
       // Linear fog is more stable for the editor's feet-based terrain scale.
-      if (sinAngle <= 0) {
-        const moonStrength =
-          Math.abs(sinAngle) *
-          (Number(atmos.moonIntensity) || 0.15);
-
-        ambientSky.intensity = 0.35 + moonStrength;
-        ambientSky.diffuse = new Color3(0.45, 0.52, 0.68);
-        ambientSky.groundColor = new Color3(0.12, 0.14, 0.2);
-        topDownKey.intensity = 0.18 + moonStrength * 0.7;
-      }
-
-      else {
-        ambientSky.intensity =
-          0.85 +
-          Math.max(0, sinAngle) * 0.4;
-
-        ambientSky.diffuse = Color3.Lerp(
-          new Color3(0.72, 0.67, 0.62),
-          new Color3(0.92, 0.96, 1),
-          Math.max(0, sinAngle)
-        );
-
-        ambientSky.groundColor = new Color3(0.25, 0.25, 0.28);
-        topDownKey.intensity =
-          0.45 +
-          Math.max(0, sinAngle) * 0.3;
-      }
+      ambientSky.intensity = lighting.ambientIntensity;
+      ambientSky.diffuse = Color3.Lerp(
+        new Color3(0.45, 0.52, 0.68),
+        new Color3(0.92, 0.96, 1),
+        daylightStrength
+      );
+      ambientSky.groundColor = Color3.Lerp(
+        new Color3(0.12, 0.14, 0.2),
+        new Color3(0.25, 0.25, 0.28),
+        daylightStrength
+      );
+      topDownKey.intensity = lighting.topDownIntensity;
 
 
       // -----------------------------------------------------------------------
@@ -2301,6 +2289,68 @@ function SceneContent({
     state.heightmapPlacement
   ]);
 
+  // Draft geometry lives outside the committed mesh rebuild so every new point
+  // and cursor move is visible immediately, even above projected map images.
+  useEffect(() => {
+    if (!scene || !worldSamplerRef.current) return undefined;
+    const current = stateRef.current;
+    const kind = current.activeTool;
+    const drawing = (kind === 'road' && current.roadMode === 'draw-new')
+      || (kind === 'region' && ['draw-new', 'trace'].includes(current.regionMode))
+      || (kind === 'fortification' && current.fortificationMode === 'draw-new');
+    if (!drawing) return undefined;
+    const draft = kind === 'road' ? current.roadDraft
+      : kind === 'region' ? current.regionDraft : current.fortificationDraft;
+    if (!draft?.length && !current.splineHoverPoint) return undefined;
+    const hover = current.splineHoverPoint;
+    const snap = hover && kind !== 'fortification'
+      ? nearestSplinePoint(hover, current.roads, kind === 'region' ? current.fortifications : [], current.roadSnapToleranceFeet, hover._source)
+      : null;
+    const nextPoint = snap && (kind === 'region' || current.roadSnapEnabled) ? { x: snap.x, y: snap.y } : hover;
+    const last = draft[draft.length - 1];
+    const previewDraft = nextPoint && last && Math.hypot(nextPoint.x - last.x, nextPoint.y - last.y) > 0.01
+      ? [...draft, nextPoint] : draft;
+    const path = kind === 'road' && previewDraft.length > 1
+      ? sampleRoadCenterline({ points: previewDraft })
+      : kind === 'fortification' && draft.length > 1
+        ? sampleFortificationCenterline({ points: previewDraft })
+        : kind === 'region' && current.regionMode === 'trace'
+          ? tracedDraftPolyline(hover ? appendTracedBoundaryPoint(draft, hover, current.roads,
+            current.fortifications, current.roadSnapToleranceFeet) : draft, current.roads, current.fortifications)
+          : previewDraft;
+    const displayPath = path.filter((point, index) => index === 0 ||
+      Math.hypot(point.x - path[index - 1].x, point.y - path[index - 1].y) > 0.001);
+    const groundAt = point => Math.max(worldSamplerRef.current(point.x, point.y) + 1.5,
+      (Number(current.terrainMaterial?.sea_level_feet) || 0) + 1.5);
+    const meshes = [];
+    const material = new StandardMaterial(`draft-${kind}-points`, scene);
+    material.disableLighting = true;
+    material.emissiveColor = Color3.FromHexString('#50e6e0');
+    if (displayPath.length > 1) {
+      const line = MeshBuilder.CreateTube(`draft-${kind}-line`, {
+        path: displayPath.map(point => worldToBabylon(point.x, point.y, groundAt(point))),
+        radius: Math.max(0.3, Math.min(4, current.roadSnapToleranceFeet / 10 || 0.8)) / FEET_PER_SCENE_UNIT,
+        tessellation: 6 }, scene);
+      line.material = material;
+      line.isPickable = false;
+      line.renderingGroupId = 3;
+      meshes.push(line);
+    }
+    draft.forEach((point, index) => {
+      const marker = MeshBuilder.CreateSphere(`draft-${kind}-${index}`,
+        { diameter: Math.max(1.5, Math.min(30, current.roadSnapToleranceFeet / 3 || 9)) / FEET_PER_SCENE_UNIT, segments: 12 }, scene);
+      marker.position = worldToBabylon(point.x, point.y, groundAt(point));
+      marker.material = material;
+      marker.isPickable = false;
+      marker.renderingGroupId = 3;
+      meshes.push(marker);
+    });
+    return () => { meshes.forEach(mesh => mesh.dispose()); material.dispose(); };
+  }, [scene, state.activeTool, state.roadMode, state.regionMode, state.fortificationMode,
+    state.roadDraft, state.regionDraft, state.fortificationDraft, state.splineHoverPoint,
+    state.roadSnapEnabled, state.roadSnapToleranceFeet,
+    state.roads, state.fortifications, terrainWindowKey, tileStoreVersion]);
+
 
   // ===========================================================================
   // EFFECT 8. REFERENCE OVERLAYS
@@ -2488,8 +2538,13 @@ function SceneContent({
           Number(wall.width_feet) || 24
         ) / 2;
 
+        const pointsWithRoles = (wall.points || []).map((point, index) => ({
+          ...point,
+          tower: isFortificationTowerPoint(wall, index)
+        }));
+
         polylinePartsInBounds(
-          wall.points,
+          pointsWithRoles,
           visibleTerrainBounds,
           halfWidth
         ).forEach((points, partIndex) => {
@@ -2523,12 +2578,12 @@ function SceneContent({
         });
 
         (wall.points || [])
-          .filter((point, index) => (
-            index === 0 ||
-            index === wall.points.length - 1 ||
-            index % 2 === 0
-          ) && featureIntersectsBounds(point, visibleTerrainBounds))
-          .forEach((point, index) => {
+          .map((point, index) => ({ point, index }))
+          .filter(({ point, index }) => (
+            isFortificationTowerPoint(wall, index) &&
+            featureIntersectsBounds(point, visibleTerrainBounds)
+          ))
+          .forEach(({ point, index }) => {
             const base = heightSampler(point.x, point.y);
             const wallHeight = Number(wall.height_feet) || 35;
             const radiusFeet = ((Number(wall.width_feet) || 24) * 1.65) / 2;
@@ -2581,7 +2636,8 @@ function SceneContent({
           ...createBabylonRegionMesh(
             scene,
             region,
-            currentState
+            currentState,
+            heightSampler
           )
         );
       });    // -------------------------------------------------------------------------
@@ -2692,6 +2748,7 @@ function SceneContent({
 
     else if (
       currentState.activeTool === 'region' &&
+      currentState.regionMode === 'refine' &&
       currentState.selectedRegionId
     ) {
       activeSpline = (currentState.regions || []).find(
@@ -2718,13 +2775,25 @@ function SceneContent({
           ? groundElevation + (Number(activeSpline.height_feet) || 35) + 5
           : Math.max(groundElevation + 2, seaLevel + 4);
 
-        const handleDiameterFeet = isWallHandle ? 16 : 12;
+        const isTowerHandle = isWallHandle &&
+          isFortificationTowerPoint(activeSpline, index);
+        const handleDiameterFeet = isTowerHandle ? 20 : isWallHandle ? 12 : 12;
 
-        const handle = MeshBuilder.CreateSphere(
-          `spline-handle-${activeSpline.id}-${index}`,
-          { diameter: handleDiameterFeet / FEET_PER_SCENE_UNIT },
-          scene
-        );
+        const handle = isTowerHandle
+          ? MeshBuilder.CreateCylinder(
+            `spline-handle-${activeSpline.id}-${index}`,
+            {
+              diameter: handleDiameterFeet / FEET_PER_SCENE_UNIT,
+              height: 10 / FEET_PER_SCENE_UNIT,
+              tessellation: 12
+            },
+            scene
+          )
+          : MeshBuilder.CreateSphere(
+            `spline-handle-${activeSpline.id}-${index}`,
+            { diameter: handleDiameterFeet / FEET_PER_SCENE_UNIT },
+            scene
+          );
 
         handle.position = worldToBabylon(
           point.x,
@@ -2835,18 +2904,21 @@ function SceneContent({
         );
       })
       .forEach(building => {
+        const asset = assets[building.asset_key] || {};
         if (building.is_blueprint && building.levels) {
           const mesh = createBlueprintMesh(
             scene,
             building,
-            heightSampler(building.x, building.y)
+            heightSampler(building.x, building.y),
+            heightSampler
           );
+          if (currentState.buildingViewMode !== 'satellite') {
+            applyBuildingMapColor(mesh, buildingViewColor(building, asset, currentState.buildingViewMode, currentState.businesses, currentState.buildings));
+          }
 
           transientMeshes.push(mesh);
           return;
         }
-
-        const asset = assets[building.asset_key] || {};
 
         const mesh = createBabylonBuiltInBuilding(
           scene,
@@ -2985,8 +3057,29 @@ function SceneContent({
     state.selectedRoadPointIndex,
     state.selectedFortificationId,
     state.selectedFortificationPointIndex,
-    state.selectedRegionId
+    state.selectedRegionId,
+    state.regionMode,
+    state.buildingViewMode,
+    state.businesses
   ]);
+
+  useEffect(() => {
+    if (!scene || !['inspect', 'player'].includes(state.activeTool)
+      || state.inspectSelection?.entityKind !== 'building') return undefined;
+    const building = meshState.buildings.find(item => String(item.id) === String(state.inspectSelection.id));
+    if (!building || building.visible === false || !featureIntersectsBounds(building, terrainWindowBoundsRef.current || bounds)) {
+      return undefined;
+    }
+    const asset = meshState.assets.find(item => item.key === building.asset_key) || {};
+    const sampler = worldSamplerRef.current || createTerrainHeightSampler(state.strokes, state.heightMap);
+    const outlines = createBuildingInspectOutline(scene, building, asset, sampler);
+    return () => outlines.forEach(outline => outline.dispose(false, true));
+  }, [scene, state.activeTool, state.inspectSelection?.entityKind, state.inspectSelection?.id,
+    meshState.buildings, meshState.assets, terrainWindowKey, bounds, state.buildingViewMode,
+    meshState.roads, meshState.fortifications, meshState.regions, meshState.waterBodies,
+    meshState.pointsOfInterest, state.blueprintDraft, state.fortificationMode, state.businesses,
+    state.selectedRoadId, state.selectedRoadPointIndex, state.selectedFortificationId,
+    state.selectedFortificationPointIndex, state.selectedRegionId, state.strokes, state.heightMap]);
 
 
   // ===========================================================================

@@ -102,7 +102,10 @@ WATERDEEP_DRAGON_HEIST_NPCS = (
 )
 
 
-MODULE_NPCS = {"Waterdeep Dragon Heist": WATERDEEP_DRAGON_HEIST_NPCS}
+MODULE_NPCS = {
+    "waterdeep dragon heist": WATERDEEP_DRAGON_HEIST_NPCS,
+    "waterdeep_dragon_heist": WATERDEEP_DRAGON_HEIST_NPCS,
+}
 
 
 def module_npc_presets(identifier) -> list[dict]:

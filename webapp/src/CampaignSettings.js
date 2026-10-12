@@ -5,6 +5,19 @@ import { Alert, Badge, Button, Card, Form, Modal, Spinner } from 'react-bootstra
 import IconEditorModal from './IconEditorModal';
 import './CampaignSettings.css';
 
+const adventureText = (value, output = []) => {
+  if (typeof value === 'string') {
+    output.push(value.replace(/\{@(?:\w+)\s+([^}|]+)(?:\|[^}]*)?\}/g, '$1'));
+  } else if (Array.isArray(value)) {
+    value.forEach(item => adventureText(item, output));
+  } else if (value && typeof value === 'object') {
+    if (value.name) output.push(value.name);
+    if (value.entries) adventureText(value.entries, output);
+    if (value.items) adventureText(value.items, output);
+  }
+  return output;
+};
+
 export default function CampaignSettings({ campaignID, headers, embedded = false }) {
   const [settings,setSettings] = useState(null)
   const [loading,setLoading]=useState(true)
@@ -23,6 +36,23 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
   const [campaignName,setCampaignName] = useState('')
   const [nameSaving,setNameSaving]=useState(false);
   const [refreshingModule,setRefreshingModule] = useState('');
+  const [adventureView,setAdventureView] = useState(null);
+  const [adventureSection,setAdventureSection] = useState(null);
+  const [adventureError,setAdventureError] = useState('');
+
+  const openAdventure=async(module)=>{
+    setAdventureError('');setAdventureSection(null);
+    try{
+      const response=await axios.get(`/api/campaigns/${campaignID}/modules/${module.module_key}/adventure`,{headers});
+      setAdventureView({...response.data,moduleKey:module.module_key});
+    }catch(requestError){setError(requestError.response?.data?.message||'Unable to open adventure');}
+  };
+  const openAdventureSection=async(index)=>{
+    try{
+      const response=await axios.get(`/api/campaigns/${campaignID}/modules/${adventureView.moduleKey}/adventure`,{headers,params:{section:index}});
+      setAdventureSection(response.data.section);
+    }catch(requestError){setAdventureError(requestError.response?.data?.message||'Unable to open section');}
+  };
 
   const loadSettings=useCallback(async()=>{
     setLoading(true);setError('');
@@ -42,7 +72,7 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
       const response=await axios.post(`/api/campaigns/${campaignID}/modules/preview`,{module_key:moduleKey},{headers});
       setPreview(response.data);
       setSettlementStrategy('merge');
-      setCalendarStrategy(response.data.calendar.exists?'keep_current':'use_module');
+      setCalendarStrategy(response.data.calendar.exists||!response.data.module.calendar?'keep_current':'use_module');
     }catch(requestError){setError(requestError.response?.data?.message||'Unable to preview module');}
   },[campaignID,headers]);
 
@@ -59,7 +89,7 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
       const response=await axios.post(`/api/campaigns/${campaignID}/modules`,{
         module_key:selectedKey,settlement_strategy:settlementStrategy,calendar_strategy:calendarStrategy,
       },{headers});
-      setNotice(`${response.data.installation.module_name} installed. Settlement: ${response.data.settlement_result}.`);
+      setNotice(`${response.data.installation.module_name} installed${response.data.settlement_result!=='none'?`. Settlement: ${response.data.settlement_result}`:''}.`);
       setShowAdd(false);setPreview(null);setSelectedKey('');await loadSettings();
     }catch(requestError){setError(requestError.response?.data?.message||'Unable to install module');}
     finally{setInstalling(false);}
@@ -88,7 +118,7 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
       }
 
       // 3. Process Settlement Map breakdown
-      if (settlement_result && settlement_result !== 'none') {
+      if (settlement_name && settlement_result && settlement_result !== 'none') {
         const actionMap = {
           created: 'imported',
           merged: 'merged',
@@ -100,6 +130,9 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
 
       // 4. Construct the final announcement notice sentence
       if (summaryParts.length > 0) {
+        if (npcs_added > 0 && summaryParts.length === 1) {
+          setNotice(`${module.module_name} refreshed. ${npcs_added} new NPC${npcs_added === 1 ? '' : 's'} added to the library.`);
+        } else {
         // Formats nicely: "Item A, Item B, and Item C added/updated."
         const lastPart = summaryParts.pop();
         const localizedList = summaryParts.length > 0
@@ -107,6 +140,7 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
           : lastPart;
 
         setNotice(`${module.module_name} refreshed. Changes applied: ${localizedList}.`);
+        }
       } else {
         setNotice(`${module.module_name} refreshed. Everything was already up to date!`);
       }
@@ -229,7 +263,7 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
         {!settings?.installed_modules?.length?<p className="settings-empty">No module installation history is recorded yet.</p>:
           <div className="module-list">{settings.installed_modules.map(module=><article key={module.id}>
             <div><strong>{module.module_name}</strong><small>{module.setting_key?.replaceAll('_',' ')} · module year {module.starting_year??'unspecified'}</small></div>
-            <div className="module-list-actions"><Badge bg="secondary">{module.settlement_strategy}</Badge><Button variant="outline-secondary" size="sm" onClick={()=>refreshModule(module)} disabled={!!refreshingModule}>{refreshingModule===module.module_key?'Refreshing…':'Refresh content'}</Button></div>
+            <div className="module-list-actions"><Badge bg="secondary">{module.settlement_strategy}</Badge><Button variant="outline-primary" size="sm" onClick={()=>openAdventure(module)}>Read adventure</Button><Button variant="outline-secondary" size="sm" onClick={()=>refreshModule(module)} disabled={!!refreshingModule}>{refreshingModule===module.module_key?'Refreshing…':'Refresh content'}</Button></div>
           </article>)}</div>}
         {!installable.length&&<small>All currently available modules are installed.</small>}
       </Card.Body></Card>
@@ -249,15 +283,15 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
         {!preview&&selectedKey&&<div className="campaign-settings-state"><Spinner size="sm"/> Checking campaign conflicts…</div>}
         {preview&&<>
           <p>{preview.module.description}</p>
-          <div className="module-facts"><span>{preview.module.setting_name}</span><span>{preview.module.starting_year_label||`Year ${preview.module.starting_year}`}</span><span>{preview.module.calendar?.name}</span></div>
+          <div className="module-facts"><span>{preview.module.setting_name}</span>{preview.module.starting_year!=null&&<span>{preview.module.starting_year_label||`Year ${preview.module.starting_year}`}</span>}{preview.module.calendar?.name&&<span>{preview.module.calendar.name}</span>}{preview.module.creature_count!=null&&<span>{preview.module.creature_count} creatures</span>}</div>
           {preview.calendar.year_mismatch&&<Alert variant="warning">
             You are currently in year <strong>{preview.calendar.current_year}</strong>, but this module is set in year <strong>{preview.calendar.module_year}</strong>. How should the timeline be reconciled?
           </Alert>}
           {preview.calendar.format_mismatch&&<Alert variant="warning">The campaign currently uses <strong>{preview.calendar.current_format}</strong>, while this module uses <strong>{preview.calendar.module_format}</strong>.</Alert>}
-          <Form.Group><Form.Label>Calendar</Form.Label><Form.Select value={calendarStrategy} onChange={event=>setCalendarStrategy(event.target.value)}>
+          {preview.module.calendar&&<Form.Group><Form.Label>Calendar</Form.Label><Form.Select value={calendarStrategy} onChange={event=>setCalendarStrategy(event.target.value)}>
             <option value="keep_current" disabled={!preview.calendar.exists}>Keep the current campaign date</option>
             <option value="use_module">Use the module calendar and move to year {preview.calendar.module_year}</option>
-          </Form.Select></Form.Group>
+          </Form.Select></Form.Group>}
           {!!preview.settlement_conflicts.length&&<Alert variant="info">This module includes {preview.settlement_conflicts.map(conflict=>conflict.incoming_name).join(', ')}, which already exists in the campaign.</Alert>}
           {preview.settlement_template_available?<Form.Group><Form.Label>Existing settlements</Form.Label><Form.Select value={settlementStrategy} onChange={event=>setSettlementStrategy(event.target.value)}>
             <option value="merge">Merge additions into the current maps</option>
@@ -267,6 +301,14 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
         </>}
       </Modal.Body>
       <Modal.Footer><Button variant="secondary" onClick={()=>setShowAdd(false)} disabled={installing}>Cancel</Button><Button onClick={installModule} disabled={!preview||installing}>{installing?'Installing…':'Install module'}</Button></Modal.Footer>
+    </Modal>
+    <Modal show={!!adventureView} onHide={()=>{setAdventureView(null);setAdventureSection(null);}} size="xl" centered scrollable>
+      <Modal.Header closeButton><Modal.Title>{adventureView?.name}</Modal.Title></Modal.Header>
+      <Modal.Body>
+        {adventureError&&<Alert variant="danger">{adventureError}</Alert>}
+        {adventureView?.sections?.map(section=><Button key={section.index} variant="outline-secondary" size="sm" className="m-1" onClick={()=>openAdventureSection(section.index)}>{section.name}</Button>)}
+        {adventureSection&&<div className="adventure-section"><h3>{adventureSection.name}</h3>{adventureText(adventureSection.entries||[]).map((paragraph,index)=><p key={index}>{paragraph}</p>)}</div>}
+      </Modal.Body>
     </Modal>
   </section>;
 }

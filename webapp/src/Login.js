@@ -36,7 +36,6 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
     setIsLoading(true); // Set loading to true when starting authentication
     axios.post('/api/verify', { token: token })
       .then(response => {
-        console.log("Response from verify:", response.data);
         if (response.data.success) {
           console.log("Token is valid");
           setIsLoggedIn(true);
@@ -123,8 +122,6 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
       password
     })
     .then(response => {
-      console.log("Response from login:", response);
-      console.log("LOGIN-", response.data);
       const redirectTarget = requestedRedirect();
       const redirectCampaign = redirectTarget ? new URL(redirectTarget, window.location.origin).searchParams.get('campaignID') : null;
       if (!redirectCampaign) resetCampaignSelection?.();
@@ -137,7 +134,7 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
       
       setIsLoggedIn(true);
       finishAuthentication('/accountProfile');
-      console.log("Navigating to requested entry point or accountProfile");
+      console.log("Navigating to requested entry point or dashboard");
     })
       .catch(error => {
         const serverMessage = error.response?.data?.message || error.response?.data?.error;
@@ -160,12 +157,14 @@ function Login({ setIsLoggedIn, setToken, setUserID, setIsLoading, setAppUsernam
         <input
           type="text"
           placeholder="Username"
+          autoComplete="username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
         />
         <input
           type="password"
           placeholder="Password"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />

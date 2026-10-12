@@ -1,16 +1,11 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import axios from 'axios';
+import io from 'socket.io-client';
 import App from './App';
 
 jest.mock('axios');
-jest.mock('socket.io-client', () => () => ({
-  on: jest.fn(),
-  off: jest.fn(),
-  emit: jest.fn(),
-  connect: jest.fn(),
-  disconnect: jest.fn(),
-}));
+jest.mock('socket.io-client', () => jest.fn());
 
 jest.mock('./Menu', () => () => <div data-testid="campaign-menu">Menu</div>);
 jest.mock('./AccountProfile', () => () => <div>Campaign picker</div>);
@@ -40,6 +35,13 @@ function storeCampaignSession() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  io.mockImplementation(() => ({
+    on: jest.fn(),
+    off: jest.fn(),
+    emit: jest.fn(),
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+  }));
   localStorage.clear();
   window.history.replaceState({}, '', '/login');
   axios.get.mockResolvedValue({ data: {} });
@@ -56,6 +58,54 @@ test('a valid restored session cannot leave the campaign shell blank at /login',
   expect(await screen.findByText('DM tools')).toBeInTheDocument();
   expect(screen.getByTestId('campaign-menu')).toBeInTheDocument();
   expect(window.location.pathname).toBe('/dmTools');
+});
+
+test('refreshing a valid session keeps the current campaign page', async () => {
+  storeCampaignSession();
+  window.history.replaceState({}, '', '/journal');
+  axios.post.mockResolvedValue({ data: { success: true, username: 'dm', id: 42 } });
+
+  render(<App />);
+
+  expect(await screen.findByText('Journal')).toBeInTheDocument();
+  expect(window.location.pathname).toBe('/journal');
+});
+
+test('the socket keeps polling fallback and rejoins its campaign once per connection', async () => {
+  storeCampaignSession();
+  window.history.replaceState({}, '', '/journal');
+  axios.post.mockResolvedValue({ data: { success: true, username: 'dm', id: 42 } });
+
+  render(<App />);
+  expect(await screen.findByText('Journal')).toBeInTheDocument();
+  await waitFor(() => expect(io).toHaveBeenCalledWith(window.location.origin, expect.objectContaining({
+    path: '/socket.io/',
+    transports: ['polling', 'websocket'],
+    query: { token: 'stored-token', campaignID: 7 },
+  })));
+
+  const socket = io.mock.results[io.mock.results.length - 1].value;
+  const handler = (event) => socket.on.mock.calls.find(([name]) => name === event)[1];
+  await act(async () => handler('connect')());
+  await waitFor(() => expect(socket.emit).toHaveBeenCalledWith('join_room', {
+    username: 'dm', campaign_id: 7,
+  }));
+  expect(socket.emit.mock.calls.filter(([event]) => event === 'join_room')).toHaveLength(1);
+
+  await act(async () => handler('disconnect')('transport error'));
+  await act(async () => handler('connect')());
+  await waitFor(() => expect(socket.emit.mock.calls.filter(([event]) => event === 'join_room')).toHaveLength(2));
+});
+
+test('the signed-in root opens the dashboard', async () => {
+  storeCampaignSession();
+  window.history.replaceState({}, '', '/');
+  axios.post.mockResolvedValue({ data: { success: true, username: 'dm', id: 42 } });
+
+  render(<App />);
+
+  expect(await screen.findByText('Campaign picker')).toBeInTheDocument();
+  expect(window.location.pathname).toBe('/accountProfile');
 });
 
 test('the campaign picker never renders inside the campaign sidebar', async () => {

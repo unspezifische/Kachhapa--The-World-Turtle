@@ -40,11 +40,16 @@ import {
   nearestChimney,
   fireplacePosition,
   platformEdgeMode,
+  WALL_FINISHES,
+  FLOOR_FINISHES,
 } from './buildingBlueprint';
 
 import BlueprintRoofs from './BlueprintRoofs';
 
 import './BlueprintLevels.css';
+
+const finishLabel = finish => ({ existing: 'Existing appearance', stone: 'Stone', wood: 'Wood',
+  brick: 'Brick', plaster: 'Plaster', 'packed-earth': 'Packed earth' })[finish] || finish;
 
 const OPENING_TOOLS = {
   door: 'door',
@@ -1468,12 +1473,6 @@ export default function BlueprintLevels({
         if (tool === 'footprint') {
           setDraft(current => {
             if (!current.length) return [snappedPoint];
-            if (points.length === 2) {
-              const last = current[current.length - 1];
-              if (Math.hypot(last.x - snappedPoint.x, last.y - snappedPoint.y) > 0.001) {
-                return [...current, snappedPoint];
-              }
-            }
             return current;
           });
         } else {
@@ -2146,6 +2145,76 @@ export default function BlueprintLevels({
     </label>
   );
 
+  const rangeField = (
+    label,
+    value,
+    change,
+    min,
+    max,
+    step = 0.5
+  ) => {
+    const current = Math.max(
+      min,
+      Math.min(max, Number.isFinite(value) ? value : min)
+    );
+    const update = raw => {
+      if (raw === '') return;
+      const number = Number(raw);
+      if (!Number.isFinite(number)) return;
+      change(Math.max(min, Math.min(max, number)));
+    };
+
+    return (
+      <label key={label} className="blueprint-range-field">
+        <span>{label}</span>
+        <div className="blueprint-range-control">
+          <input
+            aria-label={label}
+            type="number"
+            value={current}
+            min={min}
+            max={max}
+            step={step}
+            onChange={event => update(event.target.value)}
+          />
+          <input
+            aria-label={`${label} slider`}
+            type="range"
+            value={current}
+            min={min}
+            max={max}
+            step={step}
+            onChange={event => update(event.target.value)}
+          />
+        </div>
+      </label>
+    );
+  };
+
+  const imageRangeField = (
+    label,
+    key,
+    min,
+    max,
+    step = 0.5
+  ) => rangeField(
+    label,
+    map?.[key] ?? (key === 'opacity' ? 0.6 : key.includes('feet') ? 1 : 0),
+    value =>
+      updateLevel(
+        {
+          floor_map: {
+            ...map,
+            [key]: value,
+          },
+        },
+        false
+      ),
+    min,
+    max,
+    step
+  );
+
   const chooseTool = value => {
     setTool(value);
     setDraft([]);
@@ -2395,6 +2464,13 @@ export default function BlueprintLevels({
             {' · '}
             {selected.type}
           </p>
+
+          {isOutline && <label>Exterior material
+            <select value={selected.material || level.exterior_material || 'existing'}
+              onChange={event => updateSelection({ material: event.target.value })}>
+              {WALL_FINISHES.map(finish => <option key={finish} value={finish}>{finishLabel(finish)}</option>)}
+            </select>
+          </label>}
 
           {numberField(
             'Thickness (ft)',
@@ -3481,11 +3557,136 @@ export default function BlueprintLevels({
       </>
     ) : null;
 
+  const activeToolControls = (
+    <>
+      {tool !== 'select' &&
+        tool !== 'stairs' &&
+        tool !== 'arc' &&
+        tool !== 'circle' &&
+        tool !== 'roof' &&
+        numberField(
+          'Opening width (ft)',
+          width,
+          setWidth,
+          1,
+          30,
+          0.5
+        )}
+
+      {tool === 'circle' && (
+        <label>
+          Circle destination
+          <select
+            value={circleDestination}
+            onChange={event => setCircleDestination(event.target.value)}
+          >
+            <option value="footprint">Replace footprint</option>
+            <option value="wall">Add interior wall</option>
+          </select>
+        </label>
+      )}
+
+      {stairCreationControls}
+
+      {tool === 'platform' && (
+        <>
+          <label>
+            Platform type
+            <select
+              value={platformStyle}
+              onChange={event => setPlatformStyle(event.target.value)}
+            >
+              <option value="porch">Porch</option>
+              <option value="deck">Deck</option>
+              <option value="balcony">Balcony</option>
+            </select>
+          </label>
+          {numberField('Platform thickness (ft)', platformThickness, setPlatformThickness, 0.1, 4, 0.1)}
+          <label className="blueprint-inline-checkbox">
+            <input
+              type="checkbox"
+              checked={platformRailing}
+              onChange={event => setPlatformRailing(event.target.checked)}
+            />
+            Add railings to free edges
+          </label>
+        </>
+      )}
+
+      {tool === 'fireplace' && (
+        <>
+          {numberField('New chimney width (ft)', chimneyWidth, setChimneyWidth, 1, 20, 0.5)}
+          {numberField('New chimney depth (ft)', chimneyDepth, setChimneyDepth, 1, 20, 0.5)}
+          {numberField('Fireplace opening width (ft)', fireplaceWidth, setFireplaceWidth, 1, 20, 0.5)}
+          {numberField('Fireplace opening height (ft)', fireplaceOpeningHeight, setFireplaceOpeningHeight, 1, level.floor_height, 0.5)}
+          <label>
+            Fireplace face
+            <select value={fireplaceSide} onChange={event => setFireplaceSide(event.target.value)}>
+              <option value="north">North</option>
+              <option value="south">South</option>
+              <option value="east">East</option>
+              <option value="west">West</option>
+            </select>
+          </label>
+          <p>Click an existing chimney to add another fireplace opening. Click empty space to create a new chimney stack and its first fireplace.</p>
+        </>
+      )}
+
+      {(tool === 'door' || tool === 'double-door') && (
+        <>
+          <label>
+            Door operation
+            <select value={doorOperation} onChange={event => setDoorOperation(event.target.value)}>
+              <option value="hinged">Hinged</option>
+              <option value="sliding">Sliding</option>
+            </select>
+          </label>
+          {tool === 'door' && (
+            <label>
+              {doorOperation === 'sliding' ? 'Slides' : 'Hinge side'}
+              <select value={hingeSide} onChange={event => setHingeSide(event.target.value)}>
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+              </select>
+            </label>
+          )}
+          {doorOperation === 'hinged' && (
+            <label>
+              Opens
+              <select value={swingSide} onChange={event => setSwingSide(event.target.value)}>
+                <option value="inward">Inward</option>
+                <option value="outward">Outward</option>
+              </select>
+            </label>
+          )}
+        </>
+      )}
+    </>
+  );
+
   return (
     <section className="blueprint-levels">
       <h3>
         Levels
       </h3>
+
+      <button
+        className="blueprint-primary-action"
+        onClick={() => {
+          fit();
+          setOpen(true);
+          setHistory([]);
+          setDraft([]);
+          setSelection(null);
+          onChange({
+            ...building,
+            visible_level_id: level.id,
+            level_view: 'level',
+          });
+        }}
+      >
+        Edit floor plan &amp; walls
+      </button>
 
       <label>
         Active level
@@ -3542,6 +3743,34 @@ export default function BlueprintLevels({
         </select>
       </label>
 
+      <div className="blueprint-row">
+        <button
+          onClick={() =>
+            onChange(
+              addBuildingLevel(
+                building,
+                1
+              )
+            )
+          }
+        >
+          Add above
+        </button>
+
+        <button
+          onClick={() =>
+            onChange(
+              addBuildingLevel(
+                building,
+                -1
+              )
+            )
+          }
+        >
+          Add basement
+        </button>
+      </div>
+
       {numberField(
         'Foundation height (ft)',
         building.foundation_height_feet,
@@ -3585,59 +3814,11 @@ export default function BlueprintLevels({
         }}
       />
 
-      <div className="blueprint-row">
-        <button
-          onClick={() =>
-            onChange(
-              addBuildingLevel(
-                building,
-                1
-              )
-            )
-          }
-        >
-          Add above
-        </button>
-
-        <button
-          onClick={() =>
-            onChange(
-              addBuildingLevel(
-                building,
-                -1
-              )
-            )
-          }
-        >
-          Add basement
-        </button>
-      </div>
-
-      <button
-        onClick={() => {
-          fit();
-
-          setOpen(true);
-          setHistory([]);
-          setDraft([]);
-          setSelection(null);
-
-          onChange({
-            ...building,
-            visible_level_id:
-              level.id,
-            level_view:
-              'level',
-          });
-        }}
-      >
-        Edit floor plan & walls
-      </button>
-
       <Dialog
         open={open}
-        onClose={() => {
-          if (!busy) {
+        disableEscapeKeyDown
+        onClose={(_, reason) => {
+          if (!busy && reason !== 'backdropClick') {
             setOpen(false);
             setRoofDraftTemplate(null);
             setDraft([]);
@@ -3722,6 +3903,27 @@ export default function BlueprintLevels({
                 8,
                 100
               )}
+
+              <div className="blueprint-material-controls">
+                <strong>Construction materials</strong>
+                <label>Floor material
+                  <select value={level.floor_material || 'existing'}
+                    onChange={event => updateLevel({ floor_material: event.target.value })}>
+                    {FLOOR_FINISHES.map(finish => <option key={finish} value={finish}>{finishLabel(finish)}</option>)}
+                  </select>
+                </label>
+                <label>Exterior wall material
+                  <select value={level.exterior_material || 'existing'}
+                    onChange={event => updateLevel({ exterior_material: event.target.value })}>
+                    {WALL_FINISHES.map(finish => <option key={finish} value={finish}>{finishLabel(finish)}</option>)}
+                  </select>
+                </label>
+                <button type="button" onClick={() => updateLevel({ outline: level.outline.map(wall => ({ ...wall,
+                  material: level.exterior_material || 'existing' })) })}>
+                  Apply to all exterior walls
+                </button>
+                <p>Select an exterior wall on the plan to give it a different material.</p>
+              </div>
 
               {numberField(
                 'New wall thickness (ft)',
@@ -3870,69 +4072,14 @@ export default function BlueprintLevels({
                   {imagePlacementOpen && (
                     <div className="blueprint-image-placement">
                       <div className="blueprint-image-placement-row" data-testid="image-height-center-row">
-                        {numberField(
-                          'Image height (ft)',
-                          map.height_feet ?? 1,
-                          value =>
-                            updateLevel(
-                              {
-                                floor_map: {
-                                  ...map,
-                                  height_feet: value,
-                                },
-                              },
-                              false
-                            ),
-                          1
-                        )}
-                        {numberField(
-                          'Vertical center (ft)',
-                          map.y ?? 0,
-                          value =>
-                            updateLevel(
-                              {
-                                floor_map: {
-                                  ...map,
-                                  y: value,
-                                },
-                              },
-                              false
-                            )
-                        )}
+                        {imageRangeField('Image height (ft)', 'height_feet', 1, 1000)}
+                        {imageRangeField('Vertical center (ft)', 'y', -1000, 1000)}
                       </div>
 
-                      <div data-testid="image-width-row">
-                        {numberField(
-                          'Image width (ft)',
-                          map.width_feet ?? 1,
-                          value =>
-                            updateLevel(
-                              {
-                                floor_map: {
-                                  ...map,
-                                  width_feet: value,
-                                },
-                              },
-                              false
-                            ),
-                          1
-                        )}
+                      <div className="blueprint-image-placement-row" data-testid="image-width-row">
+                        {imageRangeField('Image width (ft)', 'width_feet', 1, 1000)}
+                        {imageRangeField('Horizontal center (ft)', 'x', -1000, 1000)}
                       </div>
-
-                      {numberField(
-                        'Image center X (ft)',
-                        map.x ?? 0,
-                        value =>
-                          updateLevel(
-                            {
-                              floor_map: {
-                                ...map,
-                                x: value,
-                              },
-                            },
-                            false
-                          )
-                      )}
 
                       {numberField(
                         'Image rotation (°)',
@@ -3952,23 +4099,7 @@ export default function BlueprintLevels({
                         0.5
                       )}
 
-                      {numberField(
-                        'Image opacity',
-                        map.opacity ?? 0.6,
-                        value =>
-                          updateLevel(
-                            {
-                              floor_map: {
-                                ...map,
-                                opacity: value,
-                              },
-                            },
-                            false
-                          ),
-                        0,
-                        1,
-                        0.05
-                      )}
+                      {imageRangeField('Image opacity', 'opacity', 0, 1, 0.05)}
 
                       <button
                         onClick={() => {
@@ -4003,243 +4134,6 @@ export default function BlueprintLevels({
                   )}
                 </>
               )}
-
-              {tool !== 'select' &&
-                tool !== 'stairs' &&
-                tool !== 'arc' &&
-                tool !== 'circle' &&
-                tool !== 'roof' &&
-                numberField(
-                  'Opening width (ft)',
-                  width,
-                  setWidth,
-                  1,
-                  30,
-                  0.5
-                )}
-
-              {tool === 'circle' && (
-                <label>
-                  Circle destination
-                  <select
-                    value={circleDestination}
-                    onChange={event => setCircleDestination(event.target.value)}
-                  >
-                    <option value="footprint">Replace footprint</option>
-                    <option value="wall">Add interior wall</option>
-                  </select>
-                </label>
-              )}
-
-              {stairCreationControls}
-
-              {tool === 'platform' && (
-                <>
-                  <label>
-                    Platform type
-
-                    <select
-                      value={platformStyle}
-                      onChange={event =>
-                        setPlatformStyle(
-                          event.target.value
-                        )
-                      }
-                    >
-                      <option value="porch">
-                        Porch
-                      </option>
-
-                      <option value="deck">
-                        Deck
-                      </option>
-
-                      <option value="balcony">
-                        Balcony
-                      </option>
-                    </select>
-                  </label>
-
-                  {numberField(
-                    'Platform thickness (ft)',
-                    platformThickness,
-                    setPlatformThickness,
-                    0.1,
-                    4,
-                    0.1
-                  )}
-
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={platformRailing}
-                      onChange={event =>
-                        setPlatformRailing(
-                          event.target.checked
-                        )
-                      }
-                    />
-
-                    Add railings to free edges
-                  </label>
-                </>
-              )}
-
-              {tool === 'fireplace' && (
-                <>
-                  {numberField(
-                    'New chimney width (ft)',
-                    chimneyWidth,
-                    setChimneyWidth,
-                    1,
-                    20,
-                    0.5
-                  )}
-
-                  {numberField(
-                    'New chimney depth (ft)',
-                    chimneyDepth,
-                    setChimneyDepth,
-                    1,
-                    20,
-                    0.5
-                  )}
-
-                  {numberField(
-                    'Fireplace opening width (ft)',
-                    fireplaceWidth,
-                    setFireplaceWidth,
-                    1,
-                    20,
-                    0.5
-                  )}
-
-                  {numberField(
-                    'Fireplace opening height (ft)',
-                    fireplaceOpeningHeight,
-                    setFireplaceOpeningHeight,
-                    1,
-                    level.floor_height,
-                    0.5
-                  )}
-
-                  <label>
-                    Fireplace face
-
-                    <select
-                      value={fireplaceSide}
-                      onChange={event =>
-                        setFireplaceSide(
-                          event.target.value
-                        )
-                      }
-                    >
-                      <option value="north">
-                        North
-                      </option>
-
-                      <option value="south">
-                        South
-                      </option>
-
-                      <option value="east">
-                        East
-                      </option>
-
-                      <option value="west">
-                        West
-                      </option>
-                    </select>
-                  </label>
-
-                  <p>
-                    Click an existing chimney to add another fireplace opening. Click empty space to create a new chimney stack and its first fireplace.
-                  </p>
-                </>
-              )}
-
-              {(
-                tool === 'door' ||
-                tool ===
-                'double-door'
-              ) && (
-                  <>
-                    <label>
-                      Door operation
-
-                      <select
-                        value={
-                          doorOperation
-                        }
-                        onChange={event =>
-                          setDoorOperation(
-                            event.target.value
-                          )
-                        }
-                      >
-                        <option value="hinged">
-                          Hinged
-                        </option>
-
-                        <option value="sliding">
-                          Sliding
-                        </option>
-                      </select>
-                    </label>
-
-                    {tool === 'door' && (
-                      <label>
-                        {doorOperation ===
-                          'sliding'
-                          ? 'Slides'
-                          : 'Hinge side'}
-
-                        <select
-                          value={
-                            hingeSide
-                          }
-                          onChange={event =>
-                            setHingeSide(
-                              event.target.value
-                            )
-                          }
-                        >
-                          <option value="left">
-                            Left
-                          </option>
-
-                          <option value="right">
-                            Right
-                          </option>
-                        </select>
-                      </label>
-                    )}
-
-                    {doorOperation ===
-                      'hinged' && (
-                        <label>
-                          Opens
-
-                          <select
-                            value={swingSide}
-                            onChange={event =>
-                              setSwingSide(
-                                event.target.value
-                              )
-                            }
-                          >
-                            <option value="inward">
-                              Inward
-                            </option>
-
-                            <option value="outward">
-                              Outward
-                            </option>
-                          </select>
-                        </label>
-                      )}
-                  </>
-                )}
 
               {tool === 'select' && (
                 <>
@@ -4349,6 +4243,21 @@ export default function BlueprintLevels({
                     );
                   })}
                 </div>
+              )}
+
+              {activeToolControls.props.children.filter(Boolean).length > 0 && (
+                <section
+                  className="blueprint-active-tool-controls"
+                  aria-label={`${tool} tool settings`}
+                >
+                  <div className="blueprint-active-tool-heading">
+                    <span>Tool settings</span>
+                    <strong>{tool === 'double-door' ? 'Double door' : tool}</strong>
+                  </div>
+                  <div className="blueprint-active-tool-fields">
+                    {activeToolControls}
+                  </div>
+                </section>
               )}
 
               <p className="blueprint-hint">
@@ -5817,7 +5726,8 @@ export default function BlueprintLevels({
                   disabled={
                     tool !==
                     'footprint' ||
-                    draft.length < 3
+                    draft.length < 3 ||
+                    arcDraft.length > 1
                   }
                   onClick={() => {
                     const nextWallId = createWallIdFactory();
@@ -6021,14 +5931,19 @@ export default function BlueprintLevels({
           </fieldset>
         </DialogContent>
 
-        <DialogActions>
+        <DialogActions className="blueprint-dialog-actions">
+          <span className="blueprint-save-status" role="status">
+            Changes save as you work
+          </span>
           <Button
+            className="blueprint-done-action"
+            variant="contained"
             disabled={busy}
             onClick={() =>
               setOpen(false)
             }
           >
-            Done
+            Done editing
           </Button>
         </DialogActions>
       </Dialog>

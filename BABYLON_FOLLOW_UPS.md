@@ -19,11 +19,26 @@ hatches. Keep the following implementation in place when adding that UI:
 - the per-level opening, stair, and hatch rendering in
   `webapp/src/BabylonSettlementHost.js`.
 
-## Building-management actions have dialogs/logic but no launch controls
+## Building inspection and metadata
 
-`SettlementManager.js` still contains the building editor, local event picker,
-and asset reroll logic. Their dialogs and update paths are implemented, but
-`openBuildingEditor`, `openBuildingEvents`, and `rerollSelectedBuilding` are not
+Inspect opens a building record when any of its walls or roofs is selected and
+outlines its footprint. The record links to Build > Manage, where **Edit
+building details** opens the metadata editor.
+
+Optional `opens_at` and `closes_at` fields store daily hours as `HH:MM` in each
+JSON building record. Closing before opening means an overnight schedule;
+matching times mean open 24 hours. Missing or invalid hours are shown as unknown.
+`economy_business_id` explicitly links a building to an economy business. Without
+that link, only a unique normalized name match supplies the operating status.
+
+Map View supports natural materials, building types, useful building categories,
+and districts. The themed views include a legend and affect rendering only.
+
+## Remaining building-management actions have no launch controls
+
+`SettlementManager.js` still contains the local event picker and asset reroll
+logic. Their dialogs and update paths are implemented, but
+`openBuildingEvents` and `rerollSelectedBuilding` are not
 currently connected to buttons. These were retained as staged UI work rather
 than treated as dead backend/domain functionality.
 

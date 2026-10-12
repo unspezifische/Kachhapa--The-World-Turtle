@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { guessReferencePlacement, prepareReferencePreview, referenceForSave } from './referencePlacement';
+import ValidatedNumberInput from './ValidatedNumberInput';
 import './ReferencePlacementPanel.css';
 
-export default function ReferencePlacementPanel({ layers, selectedId, select, draft, setDraft, cameraRef, apply, remove, fit, calibration }) {
+export default function ReferencePlacementPanel({ layers, selectedId, select, draft, setDraft, cameraRef, apply, remove, fit, calibration, onFinishEdit = () => {} }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const fileRef = useRef(null), urlRef = useRef(null), mounted = useRef(true), pickerRef = useRef(null);
   const selected = layers.find(l => l.id === selectedId) || layers[0];
@@ -10,7 +11,7 @@ export default function ReferencePlacementPanel({ layers, selectedId, select, dr
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false; if (urlRef.current) URL.revokeObjectURL(urlRef.current); setDraft(null);
   }; }, [setDraft]);
-  const cancel = () => { setDraft(null); fileRef.current = null; if (urlRef.current) URL.revokeObjectURL(urlRef.current); urlRef.current = null; setError(''); };
+  const cancel = () => { setDraft(null); onFinishEdit(); fileRef.current = null; if (urlRef.current) URL.revokeObjectURL(urlRef.current); urlRef.current = null; setError(''); };
   const upload = async file => {
     if (!file) return;
     setBusy(true); setError('');
@@ -26,9 +27,7 @@ export default function ReferencePlacementPanel({ layers, selectedId, select, dr
     finally { if (mounted.current) setBusy(false); }
   };
   const patch = values => setDraft(current => ({ ...current, ...values }));
-  const number = (label, key, min) => <label key={key}>{label}<input type="number" step="any" min={min} value={draft[key] ?? 0} onChange={event => {
-    if (!event.target.value || !Number.isFinite(event.target.valueAsNumber)) return;
-    const value = min == null ? event.target.valueAsNumber : Math.max(min, event.target.valueAsNumber);
+  const number = (label, key, min) => <label key={key}>{label}<ValidatedNumberInput step="any" min={min} value={draft[key] ?? 0} onCommit={value => {
     const values = { [key]: value };
     if (draft._lockAspect && key === 'width_feet') values.height_feet = value * draft.height_feet / draft.width_feet;
     if (draft._lockAspect && key === 'height_feet') values.width_feet = value * draft.width_feet / draft.height_feet;
@@ -44,6 +43,7 @@ export default function ReferencePlacementPanel({ layers, selectedId, select, dr
         if (urlRef.current) URL.revokeObjectURL(urlRef.current);
         urlRef.current = null;
         setDraft(null);
+        onFinishEdit();
       }
     }
     catch (err) { if (mounted.current) { setError(err.response?.data?.message || err.message || 'Unable to save this image.'); patch({ _busy: false }); } }
@@ -63,6 +63,7 @@ export default function ReferencePlacementPanel({ layers, selectedId, select, dr
       <label className="reference-check"><input type="checkbox" checked={draft.project_to_terrain !== false} onChange={e => patch({ project_to_terrain: e.target.checked })} /> Project onto sculpted terrain</label>
       <label className="reference-check"><input type="checkbox" checked={draft._lockAspect} onChange={e => patch({ _lockAspect: e.target.checked })} /> Lock proportions</label>
       <div className="reference-number-grid">{number('Width (ft)', 'width_feet', 1)}{number('Height (ft)', 'height_feet', 1)}{number('Center X (ft)', 'origin_x')}{number('Center Y (ft)', 'origin_y')}{number('Rotation (°)', 'rotation_degrees')}</div>
+      {calibration}
       <label>Opacity · {Math.round(draft.opacity * 100)}%<input type="range" min="0" max="1" step="0.01" value={draft.opacity} onChange={e => patch({ opacity: Number(e.target.value) })} /></label>
       <div className="reference-actions"><button onClick={() => patch(guessReferencePlacement(draft.width_feet, draft.height_feet, cameraRef.current))}>Fit at camera</button><button onClick={() => fit(draft)}>View image</button></div>
       <p className="reference-hint">Apply saves the current alignment and returns to the reference image list. Cancel discards these changes.</p>

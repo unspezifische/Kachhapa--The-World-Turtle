@@ -72,7 +72,9 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 
 import AtlasViewport from './AtlasViewport';
 import BlueprintLevels from './BlueprintLevels';
+import { resizeBlueprintFootprint } from './buildingBlueprint';
 import ReferencePlacementPanel from './ReferencePlacementPanel';
+import ValidatedNumberInput, { ValidatedNumberField } from './ValidatedNumberInput';
 import { mergeReferenceSave } from './referencePlacement';
 import {
   calibrateReferenceLayer,
@@ -94,6 +96,7 @@ import {
   searchSettlementLocations,
   settlementSearchLocations
 } from './settlementSearch';
+import { buildingViewLegend } from './settlementInspection';
 
 import './SettlementManager.css';
 import './SettlementToolPanels.css';
@@ -153,6 +156,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [buildMode, setBuildMode] = useState('place-asset'); // 'place-asset' | 'draw-blueprint'
 
   const [selected, setSelected] = useState(null)
+  const [inspectSelection, setInspectSelection] = useState(null);
   const [activeTool, setActiveTool] = useState(requestedTool === 'atlas' ? 'atlas' : initialTool);
   const [roads, setRoads] = useState([])
   const [terrainStrokes, setTerrainStrokes] = useState([])
@@ -178,6 +182,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     ? [...referenceLayers.filter(layer => layer.id !== referenceDraft.id), referenceDraft]
     : referenceLayers, [referenceLayers, referenceDraft]);
   const [calibrationPoints, setCalibrationPoints] = useState([])
+  const [referenceCalibrationMode, setReferenceCalibrationMode] = useState(false);
   const [knownDistance, setKnownDistance] = useState(471)
   const [fitRequest, setFitRequest] = useState(0);
   const [designLoaded, setDesignLoaded] = useState(false)
@@ -418,6 +423,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     setTileStoreVersion(v => v + 1);
 
     setBuildings(map.buildings || []);
+    setInspectSelection(null);
     setRoads(map.roads || []);
     setWaterBodies(map.water_bodies || []);
     setMapEnvironment(map.environment || {
@@ -486,7 +492,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     mapLoadStartedAtRef.current = startedAt;
     const fromAtlasZoom = options.fromAtlasZoom === true;
     const beginSceneLoad = () => {
-      setActiveTool('inspect'); setActiveSettlementId(Number(settlementId)); setDesignLoaded(false); setMapLoading(true); setSaveStatus('Loading map…'); setSelected(null);
+      setActiveTool('inspect'); setActiveSettlementId(Number(settlementId)); setDesignLoaded(false); setMapLoading(true); setSaveStatus('Loading map…'); setSelected(null); setInspectSelection(null);
     };
     // Cross the Atlas threshold immediately. Prefetching normally makes the
     // data available already, but a slow request must not leave the user stuck
@@ -827,9 +833,15 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   }, [playerFollow, scheduleTerrainTileFetch, sendPlayerCommand]);
 
   const applyReferenceCalibration = () => {
-    if (!selectedReference || calibrationPoints.length !== 2) return;
-    updateReference(selectedReference.id, layer => calibrateReferenceLayer(layer, calibrationPoints[0], calibrationPoints[1], knownDistance));
-    setCalibrationPoints([]); setFitRequest(value => value + 1);
+    if (calibrationPoints.length !== 2 || knownDistance <= 0) return;
+    if (referenceDraft) {
+      setReferenceDraft(layer => calibrateReferenceLayer(layer, calibrationPoints[0], calibrationPoints[1], knownDistance));
+    } else if (selectedReference) {
+      updateReference(selectedReference.id, layer => calibrateReferenceLayer(layer, calibrationPoints[0], calibrationPoints[1], knownDistance));
+    } else return;
+    setCalibrationPoints([]);
+    setReferenceCalibrationMode(false);
+    setFitRequest(value => value + 1);
   };
 
   const applyReferencePlacement = async (placement, file) => {
@@ -949,14 +961,34 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
   const tenday = selectedHistory.slice(-10).reduce((totals, row) => ({ revenue: totals.revenue + row.revenue_cp, profit: totals.profit + row.profit_cp }), { revenue: 0, profit: 0 });
 
-  const selectedBuilding = buildings.find(building => building.id === selected?.id) || selected;
+  const selectedBuilding = buildings.find(building => String(building.id) === String(selected?.id)) || null;
   const selectedAsset = assets.find(asset => asset.key === selectedBuilding?.asset_key);
   const selectedRoad = roads.find(road => road.id === selectedBuilding?.front_road_id);
+  const mapViewLegend = useMemo(
+    () => buildingViewLegend(buildings, assets, buildingViewMode, economy.businesses),
+    [assets, buildings, buildingViewMode, economy.businesses]
+  );
+
+  useEffect(() => {
+    if (inspectSelection?.entityKind !== 'building') return;
+    const building = buildings.find(item => String(item.id) === String(inspectSelection.id));
+    if (!building) {
+      setInspectSelection(null);
+      setSelected(current => String(current?.id) === String(inspectSelection.id) ? null : current);
+      return;
+    }
+    if (inspectSelection.item !== building) {
+      setInspectSelection(current => current?.entityKind === 'building'
+        ? { ...current, item: building, name: building.name || 'Unnamed Structure' }
+        : current);
+    }
+  }, [buildings, inspectSelection]);
 
   const deleteBuildingById = useCallback((buildingId) => {
     if (buildingId == null) return;
     setBuildings(values => values.filter(building => building.id !== buildingId));
     setSelected(current => current?.id === buildingId ? null : current);
+    setInspectSelection(current => String(current?.id) === String(buildingId) ? null : current);
   }, []);
 
   const buildingDeletePreferenceKey = buildingDeleteSessionId
@@ -1012,7 +1044,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     setBuildings(values => values.map(building => building.id === selectedBuilding.id ? updater(building) : building));
   };
 
-  // eslint-disable-next-line no-unused-vars -- implemented dialog awaiting a UI launch control; see BABYLON_FOLLOW_UPS.md
+  const resizeSelectedBlueprint = (width, depth) => {
+    if (!selectedBuilding?.is_blueprint) return;
+    updateSelectedBuilding(building => resizeBlueprintFootprint(building, width, depth));
+  };
+
   const openBuildingEditor = () => {
     if (selectedBuilding) setBuildingEditDraft(
       { ...selectedBuilding, factions: Array.isArray(selectedBuilding.factions) ? selectedBuilding.factions.join(', ') : (selectedBuilding.factions || ''), tags: Array.isArray(selectedBuilding.tags) ? selectedBuilding.tags.join(', ') : (selectedBuilding.tags || '') }
@@ -1021,8 +1057,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
   const saveBuildingEditor = () => {
     if (!buildingEditDraft) return;
+    if (Boolean(buildingEditDraft.opens_at) !== Boolean(buildingEditDraft.closes_at)) return;
     const asset = assets.find(item => item.key === buildingEditDraft.asset_key);
-    updateSelectedBuilding(building => ({ ...building, ...buildingEditDraft, factions: String(buildingEditDraft.factions || '').split(',').map(value => value.trim()).filter(Boolean), tags: String(buildingEditDraft.tags || '').split(',').map(value => value.trim()).filter(Boolean), rooms: asset?.rooms || building.rooms }));
+    setBuildings(values => values.map(building => building.id === buildingEditDraft.id
+      ? { ...building, ...buildingEditDraft,
+        factions: String(buildingEditDraft.factions || '').split(',').map(value => value.trim()).filter(Boolean),
+        tags: String(buildingEditDraft.tags || '').split(',').map(value => value.trim()).filter(Boolean),
+        rooms: buildingEditDraft.asset_key !== building.asset_key ? asset?.rooms || building.rooms : building.rooms }
+      : building));
     setBuildingEditDraft(null);
   };
 
@@ -1061,7 +1103,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const selectedLocation = searchableLocations.find(location => location.id === selectedLocationId) || null;
 
   const selectLocation = location => {
-    setSelectedLocationId(location.id); if (location.kind === 'building') setSelected(location.source);
+    setSelectedLocationId(location.id);
+    if (location.kind === 'building') {
+      setSelected(location.source);
+      setInspectSelection({ entityKind: 'building', id: location.source.id, item: location.source, kind: 'Building', name: location.title });
+    }
   };
 
   const centerDmOn = location => {
@@ -1292,6 +1338,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               <Tooltip key={item.tool} title={item.title} placement="right" arrow>
                 <span>
                   <IconButton
+                    aria-label={item.title}
                     disabled={item.checkLoaded && !designLoaded}
                     onClick={() => setActiveTool(item.tool)}
                     sx={{
@@ -1336,9 +1383,18 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
               selected={selectedBuilding}
               setSelected={setSelected}
+              inspectSelection={inspectSelection}
+              setInspectSelection={setInspectSelection}
               viewCommand={activeViewCommand}
 
               buildingViewMode={buildingViewMode}
+              businesses={economy.businesses}
+              onManageInspectedBuilding={() => {
+                if (inspectSelection?.entityKind !== 'building') return;
+                setSelected(inspectSelection.item);
+                setBuildMode('select-placed');
+                setActiveTool('build');
+              }}
               roads={roads}
               setRoads={setRoads}
               strokes={terrainStrokes}
@@ -1355,10 +1411,12 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               destination={destination}
               referenceLayers={displayedReferenceLayers}
               referencePlacement={activeTool === 'reference' ? referenceDraft : null}
+              referenceCalibrationMode={referenceCalibrationMode}
               setReferencePlacement={setReferenceDraft}
               onWaypoint={handleWaypoint}
               onReferencePoint={recordCalibrationPoint}
               onCameraChange={handleCameraChange}
+              saveStatus={saveStatus}
               calibrationPoints={calibrationPoints}
               fitRequest={fitRequest}
               pointsOfInterest={travelContext.points_of_interest}
@@ -1453,7 +1511,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               sx={{
                 position: 'absolute',
                 top: '18px',
-                right: '290px',
+                right: '320px',
                 backgroundColor: '#14201cce',
                 border: '1px solid #ffffff2c',
                 borderRadius: '6px',
@@ -1489,6 +1547,16 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   <MenuItem value="districts" sx={{ fontSize: '12px' }}>Districts</MenuItem>
                 </Select>
               </FormControl>
+              {mapViewLegend.length > 0 && (
+                <Box className="map-view-legend" role="region" aria-label={`${buildingViewMode} map legend`}>
+                  {mapViewLegend.map(entry => (
+                    <span key={entry.label}>
+                      <i style={{ backgroundColor: entry.color }} />
+                      {entry.label}
+                    </span>
+                  ))}
+                </Box>
+              )}
             </Box>
           )}
 
@@ -1707,24 +1775,22 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
           {activeTool === 'reference' && (
             <ReferencePlacementPanel key={activeSettlementId} layers={referenceLayers.filter(l => !l.floor_level_id)} selectedId={selectedReferenceId}
-              select={id => { setSelectedReferenceId(id); setCalibrationPoints([]); }}
+              select={id => { setSelectedReferenceId(id); setCalibrationPoints([]); setReferenceCalibrationMode(false); }}
               draft={referenceDraft} setDraft={setReferenceDraft} cameraRef={referenceCameraRef}
+              onFinishEdit={() => { setCalibrationPoints([]); setReferenceCalibrationMode(false); }}
               apply={applyReferencePlacement}
               remove={id => { setReferenceLayers(values => values.filter(l => l.id !== id)); setSelectedReferenceId(null); }}
               fit={reference => setLocalViewCommand({ mode: 'reference', reference, nonce: Date.now() })}
               calibration={<details><summary>Distance calibration</summary>
-                <p>Click two terrain points, then enter their known distance.</p>
+                <p>Pick two points on the image whose distance you know, then enter that distance.</p>
+                <button type="button" onClick={() => { setCalibrationPoints([]); setReferenceCalibrationMode(true); }}>Pick two points</button>
                 <p>{calibrationPoints.length}/2 points selected</p>
-                <input aria-label="Known distance in feet" type="number" min="1" value={knownDistance} onChange={e => setKnownDistance(Number(e.target.value))} />
-                <button disabled={calibrationPoints.length !== 2 || knownDistance <= 0} onClick={applyReferenceCalibration}>Apply calibration</button>
+                <ValidatedNumberInput aria-label="Known distance in feet" min={1} value={knownDistance} onCommit={setKnownDistance} />
+                <button type="button" disabled={calibrationPoints.length !== 2 || knownDistance <= 0} onClick={applyReferenceCalibration}>Apply calibration</button>
               </details>}
             />
           )}
 
-          {activeTool === 'inspect' && selectedBuilding?.is_blueprint && (
-            <Button sx={{ position: 'absolute', right: 24, bottom: 70, background: '#23352d', color: '#e7d6ae' }}
-              onClick={() => { setBuildMode('select-placed'); setActiveTool('build'); }}>Building details & levels</Button>
-          )}
           {activeTool === 'build' && designLoaded && (
             <aside className="editor-menu build-tools-panel">
               <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
@@ -1879,53 +1945,98 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   </Typography>
 
                   {selectedBuilding && (
-                    <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                      <Button
-                        variant={buildMode === 'move-selected' ? 'contained' : 'outlined'}
-                        startIcon={<OpenWithIcon fontSize="small" />}
-                        onClick={() => setBuildMode(buildMode === 'move-selected' ? 'select-placed' : 'move-selected')}
-                        sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
-                      >
-                        {buildMode === 'move-selected' ? 'Done Moving' : 'Move Structure'}
-                      </Button>
+                    <Box className="building-inspector">
+                      <section className="building-inspector-section building-inspector-identity">
+                        <Typography className="building-inspector-eyebrow">Selected building</Typography>
+                        <TextField
+                          label="Building name"
+                          size="small"
+                          fullWidth
+                          value={selectedBuilding.name || ''}
+                          onChange={e => updateSelectedBuilding(building => ({ ...building, name: e.target.value }))}
+                        />
+                        <Typography className="building-inspector-summary">
+                          Footprint · {Math.round(selectedBuilding.width_feet)} × {Math.round(selectedBuilding.depth_feet)} ft
+                        </Typography>
+                        <Button variant="outlined" startIcon={<EditIcon />} onClick={openBuildingEditor}>
+                          Edit building details
+                        </Button>
+                      </section>
+
+                      <section className="building-inspector-section">
+                        <Typography className="building-inspector-heading">Placement &amp; footprint</Typography>
+                        <Button
+                          className="building-inspector-primary-action"
+                          variant={buildMode === 'move-selected' ? 'contained' : 'outlined'}
+                          startIcon={<OpenWithIcon />}
+                          onClick={() => setBuildMode(buildMode === 'move-selected' ? 'select-placed' : 'move-selected')}
+                        >
+                          {buildMode === 'move-selected' ? 'Done Moving' : 'Move Structure'}
+                        </Button>
+
+                        <Box className="building-dimension-grid">
+                          <Box className="building-dimension-control">
+                            <ValidatedNumberField
+                              label="Footprint width (ft)"
+                              size="small"
+                              fullWidth
+                              value={Math.round(selectedBuilding.width_feet)}
+                              min={10}
+                              max={1000}
+                              onCommit={value => selectedBuilding.is_blueprint
+                                ? resizeSelectedBlueprint(value, selectedBuilding.depth_feet)
+                                : updateSelectedBuilding(building => ({ ...building, width_feet: value }))}
+                            />
+                            <Slider
+                              min={10}
+                              max={1000}
+                              step={1}
+                              value={Math.max(10, Math.min(1000, Number(selectedBuilding.width_feet) || 10))}
+                              onChange={(event, value) => selectedBuilding.is_blueprint
+                                ? resizeSelectedBlueprint(Number(value), selectedBuilding.depth_feet)
+                                : updateSelectedBuilding(building => ({ ...building, width_feet: Number(value) }))}
+                            />
+                          </Box>
+
+                          <Box className="building-dimension-control">
+                            <ValidatedNumberField
+                              label="Footprint depth (ft)"
+                              size="small"
+                              fullWidth
+                              value={Math.round(selectedBuilding.depth_feet)}
+                              min={10}
+                              max={1000}
+                              onCommit={value => selectedBuilding.is_blueprint
+                                ? resizeSelectedBlueprint(selectedBuilding.width_feet, value)
+                                : updateSelectedBuilding(building => ({ ...building, depth_feet: value }))}
+                            />
+                            <Slider
+                              min={10}
+                              max={1000}
+                              step={1}
+                              value={Math.max(10, Math.min(1000, Number(selectedBuilding.depth_feet) || 10))}
+                              onChange={(event, value) => selectedBuilding.is_blueprint
+                                ? resizeSelectedBlueprint(selectedBuilding.width_feet, Number(value))
+                                : updateSelectedBuilding(building => ({ ...building, depth_feet: Number(value) }))}
+                            />
+                          </Box>
+                        </Box>
+
+                        <Box className="building-rotation-control">
+                          <Typography variant="caption">Rotation <strong>{Math.round((selectedBuilding.rotation || 0) * 180 / Math.PI)}°</strong></Typography>
+                          <Slider min={0} max={359} step={1} value={Math.round((selectedBuilding.rotation || 0) * 180 / Math.PI)} onChange={(event, value) => updateSelectedBuilding(building => ({ ...building, rotation: Number(value) * Math.PI / 180 }))} />
+                        </Box>
+                      </section>
+
                       {selectedBuilding.is_blueprint && <BlueprintLevels key={selectedBuilding.id} building={selectedBuilding}
                         onChange={next => setBuildings(values => values.map(b => b.id === next.id ? next : b))}
                         uploadImage={uploadFloorImage} />}
-                      <TextField
-                        label="Rename Structure"
-                        size="small"
-                        fullWidth
-                        value={selectedBuilding.name || ''}
-                        onChange={e => updateSelectedBuilding(building => ({ ...building, name: e.target.value }))}
-                      />
 
-                      <Box>
-                        <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                          <span>Width Boundary</span>
-                          <strong>{Math.round(selectedBuilding.width_feet)} ft</strong>
-                        </Typography>
-                        <Slider disabled={!!selectedBuilding.is_blueprint} min={10} max={200} step={1} value={selectedBuilding.width_feet} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, width_feet: Number(val) }))} sx={{ color: '#bd9149', py: 0.5 }} />
-                      </Box>
-
-                      <Box>
-                        <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                          <span>Depth Dimension</span>
-                          <strong>{Math.round(selectedBuilding.depth_feet)} ft</strong>
-                        </Typography>
-                        <Slider disabled={!!selectedBuilding.is_blueprint} min={10} max={200} step={1} value={selectedBuilding.depth_feet} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, depth_feet: Number(val) }))} sx={{ color: '#bd9149', py: 0.5 }} />
-                      </Box>
-
-                      <Box>
-                        <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                          <span>Rotation Orientation</span>
-                          <strong>{Math.round((selectedBuilding.rotation || 0) * 180 / Math.PI)}°</strong>
-                        </Typography>
-                        <Slider min={0} max={359} step={1} value={Math.round((selectedBuilding.rotation || 0) * 180 / Math.PI)} onChange={(e, val) => updateSelectedBuilding(building => ({ ...building, rotation: Number(val) * Math.PI / 180 }))} sx={{ color: '#bd9149', py: 0.5 }} />
-                      </Box>
-
-                      <Button variant="contained" color="error" fullWidth startIcon={<DeleteIcon />} onClick={requestDeleteSelectedBuilding} sx={{ fontWeight: 'bold', textTransform: 'none' }}>
-                        Delete Selected Building
-                      </Button>
+                      <section className="building-inspector-danger">
+                        <Button variant="contained" color="error" fullWidth startIcon={<DeleteIcon />} onClick={requestDeleteSelectedBuilding}>
+                          Delete Selected Building
+                        </Button>
+                      </section>
                     </Box>
                   )}
                 </Box>
@@ -1965,14 +2076,13 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 </Box>
 
                 {/* Travelers Input */}
-                <TextField
+                <ValidatedNumberField
                   label="Travelers in Party"
-                  type="number"
                   size="small"
                   fullWidth
-                  inputProps={{ min: 1 }}
+                  min={1}
                   value={partySize}
-                  onChange={e => setPartySize(Math.max(1, Number(e.target.value)))}
+                  onCommit={setPartySize}
                 />
 
                 {/* Destination Metadata Card & Route Calculator */}
@@ -2102,12 +2212,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       )}
 
                       <Box sx={{ display: 'flex', gap: 1, mt: 1, alignItems: 'center' }}>
-                        <TextField
-                          type="number"
+                        <ValidatedNumberField
                           size="small"
-                          inputProps={{ min: 1 }}
+                          min={1}
                           value={commodityQuantity}
-                          onChange={e => setCommodityQuantity(Math.max(1, Number(e.target.value)))}
+                          onCommit={setCommodityQuantity}
                           sx={{ width: '65px', '& .MuiInputBase-input': { padding: '4px 6px', fontSize: '11px', color: '#fff' } }}
                         />
                         <Button variant="contained" size="small" fullWidth onClick={() => disruptMarket(market.commodity_key)} sx={{ backgroundColor: '#23352d', color: '#d5ddd7', textTransform: 'none', fontSize: '10px', padding: '4px' }}>
@@ -2224,12 +2333,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
                   {/* Date Row Split Box */}
                   <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr', gap: 1 }}>
-                    <TextField
+                    <ValidatedNumberField
                       label="Year"
-                      type="number"
                       size="small"
                       value={manualDate.year}
-                      onChange={e => setManualDate(prev => ({ ...prev, year: Number(e.target.value) }))}
+                      onCommit={value => setManualDate(prev => ({ ...prev, year: value }))}
                       sx={{ input: { color: '#fff', fontSize: '12px' } }}
                     />
 
@@ -2259,35 +2367,32 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       </Select>
                     </FormControl>
 
-                    <TextField
+                    <ValidatedNumberField
                       label="Day"
-                      type="number"
                       size="small"
-                      inputProps={{ min: 1, max: activeCalendar.months[manualDate.month_index]?.length || 30 }}
+                      min={1} max={activeCalendar.months[manualDate.month_index]?.length || 30}
                       value={manualDate.day}
-                      onChange={e => setManualDate(prev => ({ ...prev, day: Number(e.target.value) }))}
+                      onCommit={value => setManualDate(prev => ({ ...prev, day: value }))}
                       sx={{ input: { color: '#fff', fontSize: '12px' } }}
                     />
                   </Box>
 
                   {/* Hours & Minutes Row Split Box */}
                   <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-                    <TextField
+                    <ValidatedNumberField
                       label="Hour (0-23)"
-                      type="number"
                       size="small"
-                      inputProps={{ min: 0, max: 23 }}
+                      min={0} max={23}
                       value={manualDate.hour}
-                      onChange={e => setManualDate(prev => ({ ...prev, hour: Number(e.target.value) }))}
+                      onCommit={value => setManualDate(prev => ({ ...prev, hour: value }))}
                       sx={{ input: { color: '#fff', fontSize: '12px' } }}
                     />
-                    <TextField
+                    <ValidatedNumberField
                       label="Minute (0-59)"
-                      type="number"
                       size="small"
-                      inputProps={{ min: 0, max: 59 }}
+                      min={0} max={59}
                       value={manualDate.minute}
-                      onChange={e => setManualDate(prev => ({ ...prev, minute: Number(e.target.value) }))}
+                      onCommit={value => setManualDate(prev => ({ ...prev, minute: value }))}
                       sx={{ input: { color: '#fff', fontSize: '12px' } }}
                     />
                   </Box>
@@ -2588,7 +2693,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                     <Typography variant="caption" sx={{ color: '#aab4ad', mb: 0.5, fontWeight: 'bold' }}>Model &amp; Footprint</Typography>
                     <Select
                       size="small"
-                      value={buildingEditDraft.asset_key || ''}
+                      value={buildingEditDraft.is_blueprint ? buildingEditDraft.asset_key || 'blueprint' : buildingEditDraft.asset_key || ''}
+                      disabled={Boolean(buildingEditDraft.is_blueprint)}
+                      inputProps={{ 'aria-label': 'Model & Footprint' }}
                       onChange={event => {
                         const asset = assets.find(item => item.key === event.target.value);
                         setBuildingEditDraft(value => ({
@@ -2607,16 +2714,22 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' }
                       }}
                     >
-                      {assets.map(asset => (
+                      {buildingEditDraft.is_blueprint && (
+                        <MenuItem value={buildingEditDraft.asset_key || 'blueprint'}>Custom blueprint</MenuItem>
+                      )}
+                      {!buildingEditDraft.is_blueprint && buildingEditDraft.asset_key && !assets.some(asset => asset.key === buildingEditDraft.asset_key) && (
+                        <MenuItem value={buildingEditDraft.asset_key}>Current model ({buildingEditDraft.asset_key})</MenuItem>
+                      )}
+                      {!buildingEditDraft.is_blueprint && assets.map(asset => (
                         <MenuItem key={asset.key} value={asset.key}>{asset.name} · {asset.category}</MenuItem>
                       ))}
                     </Select>
                   </Box>
 
                   <TextField
-                    label="Building or Business Type"
+                    label="Business Type"
                     size="small"
-                    value={buildingEditDraft.business_type || buildingEditDraft.building_type || ''}
+                    value={buildingEditDraft.business_type || ''}
                     onChange={event => setBuildingEditDraft(value => ({ ...value, business_type: event.target.value }))}
                     sx={{ mt: 2.2 }}
                   />
@@ -2657,11 +2770,54 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   />
 
                   <TextField
+                    label="Opens at"
+                    type="time"
+                    size="small"
+                    value={buildingEditDraft.opens_at || ''}
+                    onChange={event => setBuildingEditDraft(value => ({ ...value, opens_at: event.target.value }))}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ step: 300 }}
+                  />
+
+                  <TextField
+                    label="Closes at"
+                    type="time"
+                    size="small"
+                    value={buildingEditDraft.closes_at || ''}
+                    onChange={event => setBuildingEditDraft(value => ({ ...value, closes_at: event.target.value }))}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ step: 300 }}
+                  />
+
+                  <Typography variant="caption" sx={{ gridColumn: 'span 2', color: '#aab4ad' }}>
+                    Hours repeat daily. A closing time before opening continues past midnight; matching times mean open 24 hours. Leave both blank when hours are unknown.
+                  </Typography>
+
+                  <FormControl size="small" sx={{ gridColumn: 'span 2' }}>
+                    <Typography variant="caption" sx={{ color: '#aab4ad', mb: 0.5, fontWeight: 'bold' }}>
+                      Linked economy business
+                    </Typography>
+                    <Select
+                      value={buildingEditDraft.economy_business_id || ''}
+                      displayEmpty
+                      onChange={event => setBuildingEditDraft(value => ({ ...value, economy_business_id: event.target.value || null }))}
+                      sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
+                    >
+                      <MenuItem value="">Match a unique business name automatically</MenuItem>
+                      {buildingEditDraft.economy_business_id && !economy.businesses.some(business => String(business.id) === String(buildingEditDraft.economy_business_id)) && (
+                        <MenuItem value={buildingEditDraft.economy_business_id}>Linked business unavailable</MenuItem>
+                      )}
+                      {economy.businesses.map(business => (
+                        <MenuItem key={business.id} value={business.id}>{business.name} · {business.business_type}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+
+                  <ValidatedNumberField
                     label="Elevation Offset (ft)"
-                    type="number"
                     size="small"
                     value={Number(buildingEditDraft.elevation) || 0}
-                    onChange={event => setBuildingEditDraft(value => ({ ...value, elevation: Number(event.target.value) || 0 }))}
+                    onCommit={next => setBuildingEditDraft(value => ({ ...value, elevation: next }))}
                   />
 
                   <TextField
@@ -2680,7 +2836,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 <Button variant="outlined" onClick={() => setBuildingEditDraft(null)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
                   Cancel
                 </Button>
-                <Button type="submit" variant="contained" sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold', '&:hover': { backgroundColor: '#d4a75b' } }}>
+                <Button type="submit" disabled={Boolean(buildingEditDraft.opens_at) !== Boolean(buildingEditDraft.closes_at)} variant="contained" sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold', '&:hover': { backgroundColor: '#d4a75b' } }}>
                   Save Building Changes
                 </Button>
               </DialogActions>

@@ -4,10 +4,10 @@ import ReferencePlacementPanel from './ReferencePlacementPanel';
 import { prepareReferencePreview } from './referencePlacement';
 jest.mock('./referencePlacement', () => ({ ...jest.requireActual('./referencePlacement'), prepareReferencePreview: jest.fn() }));
 const layer = { id: 'saved', name: 'Waterdeep', width_feet: 200, height_feet: 100, origin_x: 10, origin_y: 20, opacity: .7, pixel_width: 2000, pixel_height: 1000 };
-function Harness({ apply }) {
+function Harness({ apply, calibration }) {
   const [draft, setDraft] = useState(null);
   return <ReferencePlacementPanel layers={[layer]} selectedId="saved" select={() => {}} draft={draft} setDraft={setDraft}
-    cameraRef={{ current: { target: [2, 0, 3], radius: 10 } }} apply={apply} remove={() => {}} fit={() => {}} />;
+    cameraRef={{ current: { target: [2, 0, 3], radius: 10 } }} apply={apply} remove={() => {}} fit={() => {}} calibration={calibration} />;
 }
 test('existing placement opacity can be changed without opening Edit placement', () => {
   const apply = jest.fn();
@@ -21,6 +21,7 @@ test('existing placement is staged, proportional, cancellable, and only saved on
   render(<Harness apply={apply} />);
   fireEvent.click(screen.getByText('Edit placement'));
   fireEvent.change(screen.getByLabelText('Width (ft)'), { target: { value: '400' } });
+  fireEvent.blur(screen.getByLabelText('Width (ft)'));
   expect(screen.getByLabelText('Height (ft)')).toHaveValue(200);
   expect(apply).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText('Cancel'));
@@ -29,11 +30,36 @@ test('existing placement is staged, proportional, cancellable, and only saved on
   expect(screen.getByLabelText('Width (ft)')).toHaveValue(200);
   fireEvent.click(screen.getByLabelText('Lock proportions'));
   fireEvent.change(screen.getByLabelText('Width (ft)'), { target: { value: '450' } });
+  fireEvent.blur(screen.getByLabelText('Width (ft)'));
   expect(screen.getByLabelText('Height (ft)')).toHaveValue(100);
   fireEvent.click(screen.getByText('Apply changes'));
   await waitFor(() => expect(apply).toHaveBeenCalledWith(expect.objectContaining({ width_feet: 450, height_feet: 100 }), null));
   await screen.findByText('Edit placement');
   expect(screen.queryByLabelText('Width (ft)')).not.toBeInTheDocument();
+});
+test('a cleared dimension remains empty while editing and restores on blur', () => {
+  render(<Harness apply={jest.fn()} />);
+  fireEvent.click(screen.getByText('Edit placement'));
+  const width = screen.getByLabelText('Width (ft)');
+  fireEvent.focus(width);
+  fireEvent.change(width, { target: { value: '' } });
+  expect(width).toHaveValue(null);
+  expect(screen.getByLabelText('Height (ft)')).toHaveValue(100);
+  fireEvent.blur(width);
+  expect(width).toHaveValue(200);
+
+  fireEvent.focus(width);
+  fireEvent.change(width, { target: { value: '' } });
+  fireEvent.change(width, { target: { value: '40' } });
+  expect(width).toHaveValue(40);
+  fireEvent.blur(width);
+  expect(width).toHaveValue(40);
+  expect(screen.getByLabelText('Height (ft)')).toHaveValue(20);
+});
+test('distance calibration remains available inside Edit placement', () => {
+  render(<Harness apply={jest.fn()} calibration={<details><summary>Distance calibration</summary></details>} />);
+  fireEvent.click(screen.getByText('Edit placement'));
+  expect(screen.getByText('Distance calibration')).toBeInTheDocument();
 });
 test('one upload action previews at camera before the original file is submitted', async () => {
   URL.revokeObjectURL = jest.fn();

@@ -74,6 +74,21 @@ export function referenceForSave(layer) {
 }
 
 export async function prepareReferencePreview(file) {
+  if (typeof createImageBitmap === 'function') {
+    // ImageBitmap exposes the displayed dimensions after EXIF orientation.
+    // The original file is still sent to the server when Apply is pressed.
+    const image = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    try {
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 2048 / Math.max(image.width, image.height));
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('Unable to prepare an image preview.');
+      return { url: URL.createObjectURL(blob), width: image.width, height: image.height };
+    } finally { image.close?.(); }
+  }
   const url = URL.createObjectURL(file);
   try {
     const image = await new Promise((resolve, reject) => {

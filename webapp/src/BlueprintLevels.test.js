@@ -3,6 +3,25 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import BlueprintLevels from './BlueprintLevels';
 import { wallPolyline } from './buildingBlueprint';
 
+test('level construction controls change floors and apply a material to every exterior wall', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({ id: 'materials', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{ id: 'ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }] }] });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+  render(<Harness />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  fireEvent.change(screen.getByLabelText('Floor material'), { target: { value: 'stone' } });
+  fireEvent.change(screen.getByLabelText('Exterior wall material'), { target: { value: 'wood' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply to all exterior walls' }));
+  expect(current.levels[0].floor_material).toBe('stone');
+  expect(current.levels[0].outline).toHaveLength(4);
+  expect(current.levels[0].outline.every(wall => wall.material === 'wood')).toBe(true);
+});
+
 test('levels, image upload and alignment changes are attached to the chosen floor', async () => {
   let current;
   const upload = jest.fn().mockResolvedValue({ image_url: '/test-plan.png', width_feet: 40, height_feet: 30, x: 0, y: 0, rotation: 0, opacity: 0.6 });
@@ -26,6 +45,20 @@ test('levels, image upload and alignment changes are attached to the chosen floo
   expect(current.levels[1].floor_map.width_feet).toBe(45);
   expect(current.levels[0].floor_map).toBeUndefined();
   expect(upload.mock.calls[0][1].id).toBe(current.levels[1].id);
+});
+
+test('the floor-plan action follows the Levels heading before level settings', () => {
+  const building = {
+    id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [{
+      id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }],
+    }],
+  };
+  const { container } = render(<BlueprintLevels building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
+  const elements = Array.from(container.querySelector('.blueprint-levels').children);
+  expect(elements.slice(0, 3).map(element => element.tagName)).toEqual(['H3', 'BUTTON', 'LABEL']);
+  expect(elements[1]).toHaveTextContent('Edit floor plan & walls');
 });
 
 test('image placement drawer starts closed and opens for Align with grouped size fields', () => {
@@ -67,9 +100,57 @@ test('image placement drawer starts closed and opens for Align with grouped size
   const height = screen.getByLabelText('Image height (ft)');
   const verticalCenter = screen.getByLabelText('Vertical center (ft)');
   const width = screen.getByLabelText('Image width (ft)');
+  const horizontalCenter = screen.getByLabelText('Horizontal center (ft)');
   expect(screen.getByTestId('image-height-center-row')).toContainElement(height);
   expect(screen.getByTestId('image-height-center-row')).toContainElement(verticalCenter);
   expect(screen.getByTestId('image-width-row')).toContainElement(width);
+  expect(screen.getByTestId('image-width-row')).toContainElement(horizontalCenter);
+  expect(screen.getByLabelText('Image width (ft) slider')).toBeInTheDocument();
+  expect(screen.getByLabelText('Image opacity slider')).toBeInTheDocument();
+});
+
+test('image placement numeric fields and sliders stay synchronized', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{
+        id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }],
+        floor_map: { image_url: '/plan.png', width_feet: 40, height_feet: 30, x: 0, y: 0, opacity: 0.6 },
+      }],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+
+  render(<Harness />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  fireEvent.click(screen.getByRole('button', { name: /Image placement/ }));
+  fireEvent.change(screen.getByLabelText('Image width (ft) slider'), { target: { value: '55' } });
+  expect(current.levels[0].floor_map.width_feet).toBe(55);
+  expect(screen.getByLabelText('Image width (ft)')).toHaveValue(55);
+  fireEvent.change(screen.getByLabelText('Horizontal center (ft)'), { target: { value: '12' } });
+  expect(current.levels[0].floor_map.x).toBe(12);
+  expect(screen.getByLabelText('Horizontal center (ft) slider')).toHaveValue('12');
+});
+
+test('active tool settings stay next to the drawing tools and Done editing is prominent', () => {
+  const building = {
+    id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [{
+      id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }],
+    }],
+  };
+  render(<BlueprintLevels building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  fireEvent.click(screen.getByRole('button', { name: 'fireplace' }));
+  const settings = screen.getByLabelText('fireplace tool settings');
+  expect(settings).toContainElement(screen.getByLabelText('New chimney width (ft)'));
+  expect(document.querySelector('.blueprint-workspace-main')).toContainElement(settings);
+  expect(screen.getByRole('button', { name: 'Done editing' })).toHaveClass('blueprint-done-action');
+  expect(screen.getByText('Changes save as you work')).toBeInTheDocument();
 });
 
 test('Arc and Circle tools create curved wall and footprint geometry', () => {
@@ -135,6 +216,7 @@ test('Arc and Circle tools create curved wall and footprint geometry', () => {
     expect(screen.getByRole('status', { name: 'Arc point 2 of 3' })).toBeInTheDocument();
     fireEvent.click(canvas, { clientX: 20, clientY: 0 });
     expect(screen.getByRole('status', { name: 'Arc point 3 of 3' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Finish footprint' })).toBeDisabled();
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 10, clientY: -5 });
     expect(screen.getByTestId('blueprint-arc-preview').getAttribute('points').split(' ').length).toBeGreaterThan(2);
     fireEvent.click(canvas, { clientX: 10, clientY: -5 });

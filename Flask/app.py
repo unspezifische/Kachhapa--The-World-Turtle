@@ -19,7 +19,6 @@ from flask_compress import Compress
 
 from rapidfuzz import fuzz, process
 
-from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import NotFound
 from flask_cors import CORS
@@ -50,8 +49,10 @@ from economy_simulation import commodity_price, simulate_business_day, simulate_
 from workforce_simulation import rebalance_workforce, choose_noble_investment
 from module_templates import campaign_module_template, module_catalog, module_definition
 from module_npcs import module_npc_presets
+from reference_image import display_dimensions, viewer_image
 from npc_generation import generated_npc, supported_generation_options
 from settlement_generation import BIOMES, GOVERNMENTS, RESOURCES, SETTLEMENT_PRESETS, generate_settlement
+from password_security import hash_password, password_validation_error, verify_password
 
 import markdown
 from urllib.parse import unquote
@@ -630,6 +631,48 @@ def seed_module_npcs(campaign, definition):
     return added
 
 
+def imported_module_key(source):
+    return f'5etools_{source.lower()}'
+
+
+def imported_module_definition(adventure, creature_count=None):
+    return {
+        'key': imported_module_key(adventure.source),
+        'name': adventure.name, 'source': adventure.source,
+        'system': 'D&D 5e', 'setting_key': None,
+        'setting_name': 'Unspecified setting',
+        'starting_year': None, 'starting_year_label': None,
+        'calendar': None, 'settlements': [],
+        'description': (adventure.metadata_json or {}).get('storyline') or '5etools adventure',
+        'creature_count': creature_count if creature_count is not None else CreatureCatalog.query.filter_by(source=adventure.source).count(),
+    }
+
+
+def available_module_catalog():
+    definitions = module_catalog()
+    existing_names = {item['name'].casefold() for item in definitions}
+    creature_counts = dict(db.session.query(CreatureCatalog.source, db.func.count(CreatureCatalog.id)).group_by(CreatureCatalog.source).all())
+    for adventure in AdventureCatalog.query.with_entities(
+        AdventureCatalog.source, AdventureCatalog.name, AdventureCatalog.metadata_json
+    ).order_by(AdventureCatalog.name).all():
+        if adventure.source.casefold() not in {'wdh', 'lmop'} and adventure.name.casefold() not in existing_names:
+            definitions.append(imported_module_definition(adventure, creature_counts.get(adventure.source, 0)))
+    return definitions
+
+
+def available_module_definition(identifier):
+    definition = module_definition(identifier)
+    if definition:
+        return definition
+    key = str(identifier or '').strip().lower()
+    if not key.startswith('5etools_'):
+        return None
+    adventure = AdventureCatalog.query.with_entities(
+        AdventureCatalog.source, AdventureCatalog.name, AdventureCatalog.metadata_json
+    ).filter(db.func.lower(AdventureCatalog.source) == key[8:]).first()
+    return imported_module_definition(adventure) if adventure else None
+
+
 ## Add all the models to the admin console
 admin.add_view(ModelView(User, db.session))
 admin.add_view(ModelView(Character, db.session))
@@ -741,7 +784,7 @@ def persist_reference_layer_media(campaign_id, template):
                 except Exception:
                     app.logger.exception('Unable to sample database-backed heightmap %s', asset.id)
     return payload
-ALLOWED_AVATAR_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+ALLOWED_AVATAR_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
 ALLOWED_MAP_REFERENCE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 ALLOWED_SOUND_EXTENSIONS = {"mp3", "wav", "ogg", "m4a", "aac", "webm", "flac"}
 MAX_SOUND_UPLOAD_BYTES = 1024 * 1024 * 1024
@@ -1621,15 +1664,10 @@ def clear_shared_session_cookie(response):
 ## Verify a user's JWT token
 @app.route('/api/verify', methods=['POST'])
 def verify_token():
-    # app.logger.debug("/api/verify: %s", request.json)
     data = request.get_json()
-    origin = request.headers.get('Origin')
     token = data.get('token')
-    app.logger.debug("Token: %s", token)
-    # app.logger.debug("Origin: %s", origin)
     try:
         decoded_token = decode_token(token)
-        app.logger.debug("Decoded Token:", decoded_token)
 
         user = User.query.filter_by(username=decoded_token['sub']).first()
         if user is None:
@@ -1691,14 +1729,18 @@ def login():
         return jsonify({
             'message': 'The server database is unavailable or has not finished initializing. Please try again shortly.'
         }), 503
-    if not user:
-        return jsonify({'message': 'Invalid Username'}), 401
-    elif not check_password_hash(user.password, data['password']):
-        return jsonify({'message': 'Incorrect Password'}), 401
+    password_matches, needs_rehash = verify_password(
+        user.password if user else None,
+        data['password'],
+    )
+    if not user or not password_matches:
+        return jsonify({'message': 'Invalid username or password'}), 401
     print("Creating Access Token for", user.username)
     # app.logger.info("Creating Access Token for %s", user.username)
     access_token = create_access_token(identity=user.username)
 
+    if needs_rehash:
+        user.password = hash_password(data['password'])
     user.is_online = True
     db.session.commit()
     # campaign_id = request.args.get('campaignID')  # Retrieve the campaignID from the request arguments
@@ -1714,19 +1756,21 @@ def login():
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    ## app.logger.debug("/api/register: %s", request.json)
-    data = request.get_json()
-    app.logger.debug("Data from Register:", data)
+    data = request.get_json(silent=True) or {}
     
     if 'username' not in data or 'password' not in data:
         return jsonify({'message': 'Username and password are required!'}), 400
+
+    password_error = password_validation_error(data['password'])
+    if password_error:
+        return jsonify({'message': password_error}), 400
 
     # Check if a user with the given username already exists
     existing_user = User.query.filter_by(username=data['username'].lower()).first()
     if existing_user:
         return jsonify({'message': 'A user with this username already exists.'}), 400
 
-    hashed_password = generate_password_hash(data['password'], method='sha256')
+    hashed_password = hash_password(data['password'])
     new_user = User(username=data['username'].lower(), password=hashed_password)
 
     db.session.add(new_user)
@@ -1816,26 +1860,233 @@ def register():
     set_shared_session_cookie(response, access_token)
     return response
 
+
+@app.route('/api/profile/password', methods=['PATCH'])
+@jwt_required()
+def update_profile_password():
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password')
+    new_password = data.get('new_password')
+
+    if not current_password or not new_password:
+        return jsonify({'message': 'Current and new passwords are required.'}), 400
+
+    password_error = password_validation_error(new_password)
+    if password_error:
+        return jsonify({'message': password_error}), 400
+    if current_password == new_password:
+        return jsonify({'message': 'Choose a new password that differs from your current password.'}), 400
+
+    username = get_jwt_identity()
+    user = User.query.filter_by(username=username).first()
+    password_matches, _needs_rehash = verify_password(
+        user.password if user else None,
+        current_password,
+    )
+    if not user or not password_matches:
+        return jsonify({'message': 'Current password is incorrect.'}), 401
+
+    user.password = hash_password(new_password)
+    db.session.commit()
+    return jsonify({'message': 'Password updated successfully.'}), 200
+
+
+@app.route('/api/profile/verify-password', methods=['POST'])
+@jwt_required()
+def verify_profile_password():
+    """Confirm the signed-in user's password before revealing advanced links."""
+    data = request.get_json(silent=True) or {}
+    password = data.get('password')
+    if not isinstance(password, str) or not password:
+        return jsonify({'message': 'Enter your password to continue.'}), 400
+
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    matches, _needs_rehash = verify_password(
+        user.password if user else None,
+        password,
+    )
+    if not user or not matches:
+        return jsonify({'message': 'Password is incorrect.'}), 401
+    return jsonify({'verified': True}), 200
+
 ## Get a user's profile information
-@app.route('/api/profile', methods=['GET'])
+@app.route('/api/profile', methods=['GET', 'PATCH'])
 @jwt_required()
 def get_profile():
     try:
         username = get_jwt_identity()
         user = User.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({'message': 'User not found.'}), 404
+        if request.method == 'PATCH':
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict) or set(data) - {'real_name', 'bio'}:
+                return jsonify({'message': 'Only real name and bio can be changed here.'}), 400
+            real_name = str(data.get('real_name', user.real_name or '')).strip()
+            bio = str(data.get('bio', user.bio or '')).strip()
+            if len(real_name) > 120 or len(bio) > 600:
+                return jsonify({'message': 'Name or bio is too long.'}), 400
+            user.real_name = real_name or None
+            user.bio = bio or None
+            db.session.commit()
+            return jsonify({'username': user.username, 'id': user.id, 'real_name': user.real_name or '', 'bio': user.bio or '', 'has_profile_photo': bool(user.profile_photo)})
         campaignID = request.headers.get('CampaignID')
         if campaignID:
             character = Character.query.filter_by(userID=user.id, campaignID=campaignID).first()
             if character:
-                return jsonify({'username': user.username, 'id': user.id, 'character': character.to_dict()})
+                return jsonify({'username': user.username, 'id': user.id, 'character': character.to_dict(), 'real_name': user.real_name or '', 'bio': user.bio or '', 'has_profile_photo': bool(user.profile_photo)})
             else:
-                return jsonify({'username': user.username, 'id': user.id, 'character': None})
+                return jsonify({'username': user.username, 'id': user.id, 'character': None, 'real_name': user.real_name or '', 'bio': user.bio or '', 'has_profile_photo': bool(user.profile_photo)})
         else:
-            return jsonify({'username': user.username, 'id': user.id})
+            return jsonify({'username': user.username, 'id': user.id, 'real_name': user.real_name or '', 'bio': user.bio or '', 'has_profile_photo': bool(user.profile_photo)})
     except InvalidTokenError:
         return jsonify({'error': 'InvalidTokenError- GET /api/profile'}), 401
     except ExpiredSignatureError:
         return jsonify({'error': 'Expired token'}), 401
+
+
+@app.route('/api/profile/photo', methods=['GET', 'POST', 'DELETE'])
+@jwt_required()
+def profile_photo():
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    if not user:
+        return jsonify({'message': 'User not found.'}), 404
+    if request.method == 'GET':
+        if not user.profile_photo:
+            return jsonify({'message': 'No profile photo.'}), 404
+        photo_bytes = bytes(user.profile_photo)
+        mimetype = 'image/gif' if photo_bytes.startswith((b'GIF87a', b'GIF89a')) else 'image/webp'
+        response = send_file(io.BytesIO(photo_bytes), mimetype=mimetype)
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
+    if request.method == 'DELETE':
+        user.profile_photo = None
+        user.profile_photo_updated = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'has_profile_photo': False})
+    if request.content_length and request.content_length > 5 * 1024 * 1024:
+        return jsonify({'message': 'Profile photos must be 5 MB or smaller.'}), 413
+    uploaded = request.files.get('photo')
+    if not uploaded or not uploaded.filename or not allowed_avatar_file(uploaded.filename):
+        return jsonify({'message': 'Choose a PNG, JPEG, WebP, or GIF image.'}), 400
+    try:
+        with Image.open(uploaded.stream) as source:
+            if source.width * source.height > 25_000_000:
+                return jsonify({'message': 'Image dimensions are too large.'}), 400
+            source.load()
+            if source.format == 'GIF':
+                uploaded.stream.seek(0)
+                photo_bytes = uploaded.stream.read()
+            else:
+                normalized = ImageOps.fit(source.convert('RGB'), (512, 512), method=Image.Resampling.LANCZOS)
+                output = io.BytesIO()
+                normalized.save(output, format='WEBP', quality=88)
+                photo_bytes = output.getvalue()
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return jsonify({'message': 'The uploaded file is not a valid image.'}), 400
+    user.profile_photo = photo_bytes
+    user.profile_photo_updated = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'has_profile_photo': True})
+
+
+def dashboard_campaign_context(campaign_id):
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    campaign = Campaign.query.get(campaign_id)
+    if not user or not campaign:
+        return None, None, None, None
+    is_dm = user.id in {campaign.dm_id, campaign.owner_id}
+    membership = db.session.execute(select(campaign_members.c.characterID).where(
+        campaign_members.c.userID == user.id,
+        campaign_members.c.campaignID == campaign.id,
+    )).first()
+    if not is_dm and membership is None:
+        return None, None, None, None
+    return user, campaign, is_dm, membership.characterID if membership else None
+
+
+DM_LANDING_PATHS = {'/dmTools', '/settlementManager', '/worldAtlas', '/calendar', '/library'}
+PLAYER_LANDING_PATHS = {'/characterSheet', '/inventoryView', '/journal', '/calendar', '/library'}
+
+
+@app.route('/api/dashboard/preferences', methods=['GET'])
+@jwt_required()
+def dashboard_preferences():
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    if not user:
+        return jsonify({'message': 'User not found.'}), 404
+    campaign_ids = {campaign.id for campaign in user.campaigns}
+    campaign_ids.update(campaign.id for campaign in user.owned_campaigns)
+    campaign_ids.update(campaign.id for campaign in user.dm_campaigns)
+    preferences = UserCampaignPreference.query.filter_by(user_id=user.id).all()
+    return jsonify({str(item.campaign_id): item.landing_path for item in preferences if item.campaign_id in campaign_ids})
+
+
+@app.route('/api/campaigns/<int:campaign_id>/landing', methods=['PATCH'])
+@jwt_required()
+def set_campaign_landing(campaign_id):
+    user, campaign, is_dm, character_id = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
+    data = request.get_json(silent=True) or {}
+    path = data.get('landing_path')
+    allowed = DM_LANDING_PATHS if is_dm else PLAYER_LANDING_PATHS
+    if path not in allowed:
+        return jsonify({'message': 'Choose an available campaign page.'}), 400
+    if not is_dm and not character_id and path in {'/characterSheet', '/inventoryView', '/journal'}:
+        return jsonify({'message': 'Create a character before choosing this page.'}), 409
+    preference = UserCampaignPreference.query.filter_by(user_id=user.id, campaign_id=campaign.id).first()
+    if not preference:
+        preference = UserCampaignPreference(user_id=user.id, campaign_id=campaign.id, landing_path=path)
+        db.session.add(preference)
+    else:
+        preference.landing_path = path
+    db.session.commit()
+    return jsonify({'landing_path': path})
+
+
+@app.route('/api/campaigns/<int:campaign_id>/quick-notes', methods=['GET', 'POST'])
+@jwt_required()
+def campaign_quick_notes(campaign_id):
+    user, campaign, is_dm, character_id = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
+    if request.method == 'GET':
+        notes = QuickNote.query.filter_by(user_id=user.id, campaign_id=campaign.id).order_by(QuickNote.updated_at.desc()).all()
+        notes = [note for note in notes if (note.character_id is None if is_dm else character_id is not None and note.character_id == character_id)]
+        return jsonify({'notes': [note.to_dict() for note in notes]})
+    if not is_dm and not character_id:
+        return jsonify({'message': 'Create a character before making notes.'}), 409
+    content = str((request.get_json(silent=True) or {}).get('content') or '').strip()
+    if not content or len(content) > 10000:
+        return jsonify({'message': 'Write a note of 1 to 10,000 characters.'}), 400
+    note = QuickNote(user_id=user.id, campaign_id=campaign.id, character_id=None if is_dm else character_id, content=content)
+    db.session.add(note)
+    db.session.commit()
+    return jsonify({'note': note.to_dict()}), 201
+
+
+@app.route('/api/quick-notes/<int:note_id>', methods=['PATCH', 'DELETE'])
+@jwt_required()
+def change_quick_note(note_id):
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    note = QuickNote.query.filter_by(id=note_id, user_id=user.id if user else -1).first()
+    if not note:
+        return jsonify({'message': 'Note not found.'}), 404
+    context_user, _, is_dm, character_id = dashboard_campaign_context(note.campaign_id)
+    if not context_user or (note.character_id is None if not is_dm else note.character_id is not None) or (not is_dm and note.character_id != character_id):
+        return jsonify({'message': 'Note not found.'}), 404
+    if request.method == 'DELETE':
+        db.session.delete(note)
+        db.session.commit()
+        return jsonify({'message': 'Note deleted.'})
+    content = str((request.get_json(silent=True) or {}).get('content') or '').strip()
+    if not content or len(content) > 10000:
+        return jsonify({'message': 'Write a note of 1 to 10,000 characters.'}), 400
+    note.content = content
+    note.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'note': note.to_dict()})
 
 ## Get all users in a campaign
 @app.route('/api/campaigns', methods=['GET', 'POST'])
@@ -1963,7 +2214,7 @@ def campaign_modules_payload(campaign):
         'installed_modules': [installation.to_dict() for installation in installations],
         'available_modules': [
             {**definition, 'installed': definition['key'] in installed_keys}
-            for definition in module_catalog()
+            for definition in available_module_catalog()
         ],
         'calendar': ({
             'name': calendar.name,
@@ -2092,7 +2343,7 @@ def preview_campaign_module(campaign_id):
     if not user_can_edit_campaign(campaign):
         return jsonify({'message': 'Only the campaign DM or owner may manage modules'}), 403
     data = request.get_json(silent=True) or {}
-    definition = module_definition(data.get('module_key'))
+    definition = available_module_definition(data.get('module_key'))
     if not definition:
         return jsonify({'message': 'Unknown module'}), 404
     installed = CampaignModuleInstallation.query.filter_by(
@@ -2113,7 +2364,7 @@ def preview_campaign_module(campaign_id):
     calendar = Calendar.query.filter_by(campaign_id=campaign.id).first()
     current_year = calendar.current_year if calendar else None
     module_year = definition.get('starting_year')
-    public_definition = next(item for item in module_catalog() if item['key'] == definition['key'])
+    public_definition = next(item for item in available_module_catalog() if item['key'] == definition['key'])
     return jsonify({
         'module': public_definition,
         'already_installed': installed is not None,
@@ -2124,9 +2375,9 @@ def preview_campaign_module(campaign_id):
             'current_year': current_year,
             'current_format': calendar.format_slug if calendar else None,
             'module_year': module_year,
-            'module_format': definition.get('calendar', {}).get('slug'),
+            'module_format': (definition.get('calendar') or {}).get('slug'),
             'year_mismatch': current_year is not None and module_year is not None and current_year != module_year,
-            'format_mismatch': calendar is not None and calendar.format_slug != definition.get('calendar', {}).get('slug'),
+            'format_mismatch': bool(calendar and definition.get('calendar') and calendar.format_slug != definition['calendar'].get('slug')),
         },
     }), 200
 
@@ -2140,7 +2391,7 @@ def install_campaign_module(campaign_id):
     if not user_can_edit_campaign(campaign):
         return jsonify({'message': 'Only the campaign DM or owner may manage modules'}), 403
     data = request.get_json(silent=True) or {}
-    definition = module_definition(data.get('module_key'))
+    definition = available_module_definition(data.get('module_key'))
     if not definition:
         return jsonify({'message': 'Unknown module'}), 404
     if CampaignModuleInstallation.query.filter_by(campaign_id=campaign.id, module_key=definition['key']).first():
@@ -2203,7 +2454,7 @@ def refresh_campaign_module(campaign_id, module_key):
     if not user_can_edit_campaign(campaign):
         return jsonify({'message': 'Only the campaign DM or owner may refresh modules'}), 403
     
-    definition = module_definition(module_key)
+    definition = available_module_definition(module_key)
 
     if not definition:
         return jsonify({'message': 'Unknown module'}), 404
@@ -4483,6 +4734,73 @@ def get_npcs():
     npcs = NPC.query.filter_by(campaign_id=campaignID).all()
     return jsonify([npc.to_dict() for npc in npcs]), 200
 
+
+def campaign_creature_sources(campaign_id):
+    keys = installed_module_keys(campaign_id)
+    sources = {key[8:] for key in keys if key.startswith('5etools_')}
+    if 'waterdeep_dragon_heist' in keys:
+        sources.add('wdh')
+    if 'lost_mine_of_phandelver' in keys:
+        sources.add('lmop')
+    return sources
+
+
+@app.route('/api/creatures', methods=['GET'])
+@jwt_required()
+def search_creatures():
+    campaign, _, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    query = CreatureCatalog.query.filter(db.or_(
+        CreatureCatalog.is_adventure.is_(False),
+        db.func.lower(CreatureCatalog.source).in_(campaign_creature_sources(campaign.id)),
+    ))
+    search = (request.args.get('q') or '').strip()
+    if search:
+        query = query.filter(CreatureCatalog.name.ilike(f'%{search[:100]}%'))
+    rows = query.order_by(CreatureCatalog.name, CreatureCatalog.source).limit(50).all()
+    return jsonify([row.summary() for row in rows]), 200
+
+
+@app.route('/api/creatures/<int:creature_id>', methods=['GET'])
+@jwt_required()
+def get_creature(creature_id):
+    campaign, _, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    creature = CreatureCatalog.query.get_or_404(creature_id)
+    if creature.is_adventure and creature.source.lower() not in campaign_creature_sources(campaign.id):
+        return jsonify({'message': 'Install the source adventure to use this creature'}), 403
+    return jsonify({**creature.summary(), 'data': creature.data}), 200
+
+
+@app.route('/api/campaigns/<int:campaign_id>/modules/<module_key>/adventure', methods=['GET'])
+@jwt_required()
+def get_campaign_adventure(campaign_id, module_key):
+    campaign = Campaign.query.get_or_404(campaign_id)
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may read adventure content'}), 403
+    definition = available_module_definition(module_key)
+    source = definition.get('source') if definition else None
+    if not source and module_key == 'waterdeep_dragon_heist':
+        source = 'WDH'
+    if not source and module_key == 'lost_mine_of_phandelver':
+        source = 'LMoP'
+    if not source or module_key not in installed_module_keys(campaign_id):
+        return jsonify({'message': 'Adventure is not installed'}), 404
+    adventure = AdventureCatalog.query.filter_by(source=source).first()
+    if not adventure:
+        return jsonify({'message': 'Adventure data is not loaded'}), 404
+    sections = (adventure.content or {}).get('adventureData', [{}])[0].get('data', [])
+    index = request.args.get('section', type=int)
+    if index is None:
+        return jsonify({'source': source, 'name': adventure.name,
+                        'sections': [{'index': i, 'name': section.get('name', f'Section {i+1}')}
+                                     for i, section in enumerate(sections)]}), 200
+    if index < 0 or index >= len(sections):
+        return jsonify({'message': 'Section not found'}), 404
+    return jsonify({'source': source, 'name': adventure.name, 'section': sections[index]}), 200
+
 ##************************##
 ## **  Random Tables   ** ##
 ##************************##
@@ -5521,7 +5839,7 @@ def upload_settlement_reference_layer(campaign_id):
 
     try:
         with Image.open(uploaded.stream) as image:
-            pixel_width, pixel_height = image.size
+            pixel_width, pixel_height = display_dimensions(image)
             if image.format not in {'PNG', 'JPEG', 'WEBP'}:
                 return jsonify({'message': 'Reference images must be PNG, JPEG, or WebP'}), 400
             if pixel_width * pixel_height > 300_000_000:
@@ -5555,21 +5873,8 @@ def upload_settlement_reference_layer(campaign_id):
     layer_id = uuid4().hex
     uploaded.stream.seek(0)
     original_bytes = uploaded.read()
-    preview_buffer = io.BytesIO()
     try:
-        with Image.open(io.BytesIO(original_bytes)) as source:
-            if source.format == 'JPEG':
-                source.draft('RGB', (5500, 5500))
-            source.thumbnail((5500, 5500), Image.Resampling.LANCZOS)
-            if source.mode != 'RGB':
-                flattened = Image.new('RGB', source.size, 'white')
-                if 'A' in source.getbands():
-                    flattened.paste(source, mask=source.getchannel('A'))
-                else:
-                    flattened.paste(source)
-                source = flattened
-            preview_width, preview_height = source.size
-            source.save(preview_buffer, 'JPEG', quality=90, optimize=True)
+        preview_bytes, (preview_width, preview_height) = viewer_image(original_bytes)
     except Exception:
         app.logger.exception('Unable to generate map reference viewer image')
         return jsonify({'message': 'The original was valid, but a viewer image could not be generated'}), 500
@@ -5580,7 +5885,7 @@ def upload_settlement_reference_layer(campaign_id):
         pixel_width=pixel_width, pixel_height=pixel_height,
     )
     preview_asset = store_map_media_asset(
-        campaign_id, preview_buffer.getvalue(), f'{Path(uploaded.filename).stem}-viewer.jpg', 'image/jpeg',
+        campaign_id, preview_bytes, f'{Path(uploaded.filename).stem}-viewer.jpg', 'image/jpeg',
         purpose='map_reference_preview', name=request.form.get('name'),
         pixel_width=preview_width, pixel_height=preview_height,
     )
@@ -6099,7 +6404,11 @@ def rebalance_campaign_workforce(campaign_id):
 
 #GET    /api/calendar/<campaign_id>'
 @app.route('/api/calendar/<int:campaign_id>', methods=['GET'])
+@jwt_required()
 def get_calendar(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
 
     if not calendar:
@@ -6108,7 +6417,10 @@ def get_calendar(campaign_id):
             "message": f"No calendar found for campaign {campaign_id}",
         }), 200
 
-    return jsonify(calendar.to_dict()), 200
+    payload = calendar.to_dict()
+    if not is_dm:
+        payload['events'] = [event for event in payload['events'] if event['is_player_visible']]
+    return jsonify(payload), 200
 
 
 CALENDAR_FORMAT_SOURCES = {
@@ -6227,7 +6539,11 @@ def create_campaign_calendar(campaign_id):
 
 #POST   /api/calendar/<campaign_id>/date/set
 @app.route('/api/calendar/<int:campaign_id>/date/set', methods=['POST', 'PATCH'])
+@jwt_required()
 def set_calendar_date(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user or not is_dm:
+        return jsonify({'message': 'Only the campaign DM can set the date.'}), 403
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
     if not calendar:
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
@@ -6277,7 +6593,11 @@ def set_calendar_date(campaign_id):
 
 #POST   /api/calendar/<campaign_id>/date/advance
 @app.route('/api/calendar/<int:campaign_id>/date/advance', methods=['POST'])
+@jwt_required()
 def advance_calendar_date(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user or not is_dm:
+        return jsonify({'message': 'Only the campaign DM can advance the date.'}), 403
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
     if not calendar:
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
@@ -6326,7 +6646,11 @@ def advance_calendar_date(campaign_id):
 
 #GET    /api/calendar/<campaign_id>/date
 @app.route('/api/calendar/<int:campaign_id>/date', methods=['GET'])
+@jwt_required()
 def get_calendar_date(campaign_id):
+    user, _, _, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
     if not calendar:
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
@@ -6346,12 +6670,19 @@ def get_calendar_date(campaign_id):
 
 #GET    /api/calendar/<campaign_id>/events
 @app.route('/api/calendar/<int:campaign_id>/events', methods=['GET'])
+@jwt_required()
 def get_calendar_events(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
     if not calendar:
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
 
-    events = CalendarEvent.query.filter_by(calendar_id=calendar.id).order_by(
+    query = CalendarEvent.query.filter_by(calendar_id=calendar.id)
+    if not is_dm:
+        query = query.filter_by(is_player_visible=True)
+    events = query.order_by(
         CalendarEvent.start_year,
         CalendarEvent.start_month_index,
         CalendarEvent.start_day,
@@ -6364,7 +6695,11 @@ def get_calendar_events(campaign_id):
 
 #POST   /api/calendar/<campaign_id>/events
 @app.route('/api/calendar/<int:campaign_id>/events', methods=['POST'])
+@jwt_required()
 def create_calendar_event(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user or not is_dm:
+        return jsonify({'message': 'Only the campaign DM can add events.'}), 403
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
     if not calendar:
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
@@ -6382,6 +6717,7 @@ def create_calendar_event(campaign_id):
         start_day=data.get('day'),
         start_hour=data.get('hour'),
         start_minute=data.get('minute'),
+        is_player_visible=data.get('is_player_visible') is True,
     )
 
     db.session.add(event)
@@ -6401,12 +6737,16 @@ def create_calendar_event(campaign_id):
 
 #PATCH  /api/calendar/events/<event_id>
 @app.route('/api/calendar/events/<int:event_id>', methods=['PATCH'])
+@jwt_required()
 def update_calendar_event(event_id):
     event = CalendarEvent.query.get(event_id)
     if not event:
         return jsonify({"message": f"Event {event_id} not found"}), 404
 
     calendar = event.calendar
+    user, _, is_dm, _ = dashboard_campaign_context(calendar.campaign_id)
+    if not user or not is_dm:
+        return jsonify({'message': 'Only the campaign DM can edit events.'}), 403
 
     old_year = event.start_year
     old_month_index = event.start_month_index
@@ -6430,6 +6770,10 @@ def update_calendar_event(event_id):
         event.start_hour = data['hour']
     if 'minute' in data:
         event.start_minute = data['minute']
+    if 'is_player_visible' in data:
+        if not isinstance(data['is_player_visible'], bool):
+            return jsonify({'message': 'Event visibility must be true or false.'}), 400
+        event.is_player_visible = data['is_player_visible']
 
     db.session.commit()
 
@@ -6450,12 +6794,16 @@ def update_calendar_event(event_id):
 
 #DELETE /api/calendar/events/<event_id>
 @app.route('/api/calendar/events/<int:event_id>', methods=['DELETE'])
+@jwt_required()
 def delete_calendar_event(event_id):
     event = CalendarEvent.query.get(event_id)
     if not event:
         return jsonify({"message": f"Event {event_id} not found"}), 404
 
     calendar = event.calendar
+    user, _, is_dm, _ = dashboard_campaign_context(calendar.campaign_id)
+    if not user or not is_dm:
+        return jsonify({'message': 'Only the campaign DM can delete events.'}), 403
 
     old_year = event.start_year
     old_month_index = event.start_month_index
@@ -6479,10 +6827,14 @@ def delete_calendar_event(event_id):
 
 #GET    /api/calendar/<campaign_id>/month-view
 @app.route('/api/calendar/<int:campaign_id>/month-view', methods=['GET'])
+@jwt_required()
 def get_calendar_month_view(campaign_id):
     '''
     Returns the current month's calendar data for the specified campaign, including events, holidays, and moon phases for each day.
     '''
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
     if not calendar:
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
@@ -6500,11 +6852,14 @@ def get_calendar_month_view(campaign_id):
     month = months[month_index]
     total_days = days_in_month(calendar, year, month_index)
 
-    events = CalendarEvent.query.filter_by(
+    event_query = CalendarEvent.query.filter_by(
         calendar_id=calendar.id,
         start_year=year,
         start_month_index=month_index
-    ).all()
+    )
+    if not is_dm:
+        event_query = event_query.filter_by(is_player_visible=True)
+    events = event_query.all()
 
     event_map = {}
     for event in events:
@@ -6558,12 +6913,20 @@ def get_calendar_month_view(campaign_id):
 
 #GET    /api/calendar/<campaign_id>/moon-phases
 @app.route('/api/calendar/<int:campaign_id>/moon-phases', methods=['GET'])
+@jwt_required()
 def get_calendar_moon_phases(campaign_id):
+    user, _, _, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
     return jsonify({"message": f"Moon phases for campaign {campaign_id}"})
 
 #GET    /api/calendar/<campaign_id>/holidays
 @app.route('/api/calendar/<int:campaign_id>/holidays', methods=['GET'])
+@jwt_required()
 def get_calendar_holidays(campaign_id):
+    user, _, _, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
     if not calendar:
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404

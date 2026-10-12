@@ -1,12 +1,32 @@
 #!/usr/bin/env bash
 set -u
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 HOSTNAME" >&2
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 HOSTNAME [--skip-foundry] [--target-ip IPv4]" >&2
   exit 2
 fi
 
 hostname=$1
+shift
+skip_foundry=false
+target_ip=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-foundry) skip_foundry=true ;;
+    --target-ip)
+      shift
+      [[ $# -gt 0 ]] || { echo "Missing --target-ip value" >&2; exit 2; }
+      target_ip=$1
+      python3 - "$target_ip" <<'PY' || exit 2
+import ipaddress, sys
+address = ipaddress.ip_address(sys.argv[1])
+assert address.version == 4
+PY
+      ;;
+    *) echo "Unknown route check option: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
 failures=0
 response_body=$(mktemp "${TMPDIR:-/tmp}/kachhapa-route-check.XXXXXX")
 response_headers=$(mktemp "${TMPDIR:-/tmp}/kachhapa-route-headers.XXXXXX")
@@ -22,12 +42,13 @@ command -v python3 >/dev/null 2>&1 || {
   exit 1
 }
 
-target_ip=""
-for candidate in "$hostname" "maps.$hostname" "app.$hostname"; do
-  if target_ip=$(python3 -c 'import socket,sys; print(socket.gethostbyname(sys.argv[1]))' "$candidate" 2>/dev/null); then
-    break
-  fi
-done
+if [[ -z "$target_ip" ]]; then
+  for candidate in "$hostname" "maps.$hostname" "app.$hostname"; do
+    if target_ip=$(python3 -c 'import socket,sys; print(socket.gethostbyname(sys.argv[1]))' "$candidate" 2>/dev/null); then
+      break
+    fi
+  done
+fi
 
 if [[ -z "$target_ip" ]]; then
   echo "Unable to resolve $hostname or one of its known service names from this publisher." >&2
@@ -77,14 +98,20 @@ probe_redirect() {
   local label=$1
   local url=$2
   local expected_location=$3
-  local attempt status="000"
+  local attempt status="000" scheme authority expected_absolute
+  scheme=${url%%://*}
+  authority=${url#*://}
+  authority=${authority%%/*}
+  expected_absolute="${scheme}://${authority}${expected_location}"
 
   for attempt in {1..15}; do
     : >"$response_headers"
     status=$(curl --silent --noproxy '*' "${curl_resolve_args[@]}" \
       --connect-timeout 5 --max-time 30 --output /dev/null --dump-header "$response_headers" \
       --write-out '%{http_code}' "$url") || status="000"
-    if [[ "$status" =~ ^30[1278]$ ]] && grep -Fqi "Location: $expected_location" "$response_headers"; then
+    if [[ "$status" =~ ^30[1278]$ ]] &&
+       { grep -Fqi "Location: $expected_location" "$response_headers" ||
+         grep -Fqi "Location: $expected_absolute" "$response_headers"; }; then
       printf '  OK   %-18s %s (%s)\n' "$label" "$url" "$status"
       return 0
     fi
@@ -121,7 +148,18 @@ probe_content_type() {
 
 echo "==> Checking deployed routes from $(hostname) via $target_ip"
 probe "Kachhapa" "http://$hostname/" "Kachhapa- The World Turtle"
+probe "Kachhapa IP" "http://$target_ip/" "Kachhapa- The World Turtle"
 probe "Kachhapa app" "http://app.$hostname/" "Kachhapa- The World Turtle"
+if command -v node >/dev/null 2>&1 && [[ -f scripts/check-socket-transport.cjs ]]; then
+  node scripts/check-socket-transport.cjs "http://$target_ip" || failures=$((failures + 1))
+  node scripts/check-socket-transport.cjs "http://$target_ip" "app.$hostname" || failures=$((failures + 1))
+else
+  echo "Socket.IO transport probe requires Node and scripts/check-socket-transport.cjs" >&2
+  failures=$((failures + 1))
+fi
+probe "Account profile" "http://app.$hostname/accountProfile" "Kachhapa- The World Turtle"
+probe_redirect "Flask dashboard" "http://$hostname/dashboard" "/dashboard/"
+probe_redirect "Flask dashboard app" "http://app.$hostname/dashboard" "/dashboard/"
 probe "Campaign wiki" "http://$hostname/wiki/health" "kachhapa-wiki"
 probe_content_type "Wiki assets" "http://app.$hostname/wiki-static/bootstrap.min.css" "text/css"
 probe_content_type "Waterdeep media" "http://app.$hostname/media/modules/waterdeep_dragon_heist/waterdeep_texture.jpg" "image/jpeg"
@@ -129,7 +167,11 @@ probe "5etools" "http://tools.$hostname/index.html" "<title>5etools</title>"
 probe "MTG frontend" "http://mtg.$hostname/" "<title>MTG Sandbox</title>"
 probe "MTG API" "http://mtg.$hostname/api/health" '"ok":true'
 probe "Settlement entry" "http://app.$hostname/settlementManager" "Kachhapa- The World Turtle"
-probe "Foundry VTT" "http://maps.$hostname/" "Foundry Virtual Tabletop"
+if $skip_foundry; then
+  printf '  SKIP %-18s %s\n' "Foundry VTT" "not installed on this host"
+else
+  probe "Foundry VTT" "http://maps.$hostname/" "Foundry Virtual Tabletop"
+fi
 
 if (( failures > 0 )); then
   echo "$failures publisher-side route check(s) failed." >&2

@@ -25,8 +25,6 @@ import CalendarIcon from '@mui/icons-material/CalendarToday';
 import HikingIcon from '@mui/icons-material/Hiking';
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
 import MapIcon from '@mui/icons-material/Map';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
-import DashboardIcon from '@mui/icons-material/Dashboard';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
@@ -116,16 +114,9 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
 
     { key: 'wiki', label: 'Wiki', icon: <HikingIcon />, onClick: openWiki },
 
-    ...(accountType === 'DM'
-      ? [
-        { key: 'dashboard', label: 'Flask Dashboard', icon: <DashboardIcon />, onClick: () => navigateToExternalLink(primaryOrigin + '/dashboard/') },
-        { key: 'admin', label: 'Flask Admin', icon: <AdminPanelSettingsIcon />, onClick: () => navigateToExternalLink(primaryOrigin + '/admin/') },
-      ]
-      : []),
-
     {
-      key: 'accountProfile',
-      label: 'Account Profile',
+      key: 'dashboardHome',
+      label: 'Dashboard',
       icon: <AccountCircleIcon />,
       onClick: () => {
         setSelectedCampaign({ id: null, name: null, dmId: null, ownerId: null });
@@ -226,7 +217,7 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
           <List sx={{ flex: '1 1 auto', overflowY: 'auto', pt: 0 }}>
             {navItems.map((item) => {
               const isActive =
-                item.key === 'accountProfile'
+                item.key === 'dashboardHome'
                   ? location.pathname === '/accountProfile'
                   : location.pathname === `/${item.key}`;
 

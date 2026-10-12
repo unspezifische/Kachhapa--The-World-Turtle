@@ -18,7 +18,7 @@ UMask=0007
 ExecStartPre=/home/ijohnson/Kachhapa/venv/bin/flask set-all-users-offline
 
 ExecStart=/home/ijohnson/Kachhapa/venv/bin/gunicorn \
-  -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 4 \
+  -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 \
   --bind unix:/home/ijohnson/Kachhapa/Flask/myapp.sock \
   --umask 007 \
   app:app

@@ -7,6 +7,7 @@ import {
   Texture,
   Color3,
   Mesh,
+  VertexData,
 } from '@babylonjs/core';
 
 import earcut from 'earcut';
@@ -31,6 +32,11 @@ import {
   chimneysForLevel,
   fireplacePosition,
   platformEdgeMode,
+  constructionFinish,
+  WALL_FINISHES,
+  FLOOR_FINISHES,
+  foundationPerimeter,
+  exteriorFootprint,
 } from './buildingBlueprint';
 
 import { createBlueprintRoofMesh } from './roofMesh';
@@ -38,7 +44,8 @@ import { createBlueprintRoofMesh } from './roofMesh';
 export function createBlueprintMesh(
   scene,
   source,
-  ground = 0
+  ground = 0,
+  heightSampler = () => ground
 ) {
   const building =
     normalizeBlueprint(
@@ -94,16 +101,68 @@ export function createBlueprintMesh(
       '#a98b69'
     );
 
+  const finishColors = {
+    stone: '#898780', wood: '#946d46', brick: '#a15f4b',
+    plaster: '#d0b99a', 'packed-earth': '#65513d'
+  };
+  const finishMaterials = {};
+  const materialFor = (finish, fallback) => {
+    if (!finish || finish === 'existing' || !finishColors[finish]) return fallback;
+    if (!finishMaterials[finish]) {
+      const value = mat(`finish-${finish}`, finishColors[finish]);
+      if (scene.getEngine().getRenderingCanvas()) {
+        const texture = new DynamicTexture(`${building.id}-${finish}-texture`, { width: 256, height: 256 }, scene, true);
+        const context = texture.getContext();
+        if (context) {
+          context.fillStyle = finishColors[finish];
+          context.fillRect(0, 0, 256, 256);
+          if (finish === 'wood') {
+            for (let row = 0; row < 8; row += 1) {
+              context.fillStyle = row % 2 ? '#997348' : '#b08856';
+              context.fillRect(0, row * 32 + 1, 256, 30);
+              context.strokeStyle = '#6a4c2e';
+              context.lineWidth = 1;
+              for (let grain = 0; grain < 4; grain += 1) {
+                context.beginPath(); context.moveTo(0, row * 32 + 5 + grain * 6);
+                context.bezierCurveTo(80, row * 32 + 2 + grain * 6, 160, row * 32 + 10 + grain * 6, 256, row * 32 + 5 + grain * 6);
+                context.stroke();
+              }
+            }
+          } else if (finish === 'stone' || finish === 'brick') {
+            context.fillStyle = '#514c43'; context.fillRect(0, 0, 256, 256);
+            const blockHeight = finish === 'brick' ? 16 : 32;
+            const blockWidth = finish === 'brick' ? 48 : 64;
+            for (let row = 0; row < 256 / blockHeight; row += 1) {
+              for (let column = -1; column < 6; column += 1) {
+                context.fillStyle = finish === 'brick'
+                  ? ['#aa735b', '#bb8064', '#9c654f'][(row + column + 6) % 3]
+                  : ['#aaa79c', '#938f84', '#b6b1a5'][(row + column + 6) % 3];
+                context.fillRect(column * blockWidth + (row % 2 ? blockWidth / 2 : 0) + 1,
+                  row * blockHeight + 1, blockWidth - 2, blockHeight - 2);
+              }
+            }
+          }
+        }
+        texture.wrapU = Texture.WRAP_ADDRESSMODE; texture.wrapV = Texture.WRAP_ADDRESSMODE;
+        texture.uScale = 4; texture.vScale = 2;
+        texture.update(false);
+        value.diffuseTexture = texture;
+        value.diffuseColor = Color3.White();
+      }
+      finishMaterials[finish] = value;
+    }
+    return finishMaterials[finish];
+  };
+
   const foundationMat =
     mat(
       'foundation-stone',
       '#8c8980'
     );
 
-  const foundationFinish =
-    building.foundation_material === 'exterior'
-      ? wallMat
-      : foundationMat;
+  const groundLevel = building.levels.find(level => level.elevation_feet === 0);
+  const foundationFinish = building.foundation_material === 'exterior'
+    ? materialFor(groundLevel?.exterior_material, wallMat) : foundationMat;
 
   if (
     building.foundation_material !== 'exterior' &&
@@ -141,7 +200,9 @@ export function createBlueprintMesh(
     stoneTexture.wrapV = Texture.WRAP_ADDRESSMODE;
     stoneTexture.uScale = 4;
     stoneTexture.vScale = 2;
+    stoneTexture.update(false);
     foundationMat.diffuseTexture = stoneTexture;
+    foundationMat.diffuseColor = Color3.White();
   }
 
   const floorMat =
@@ -271,6 +332,33 @@ export function createBlueprintMesh(
     ) ||
     building.levels[0];
 
+  const groundVisible = groundLevel && (
+    building.level_view !== 'level' || chosen?.id === groundLevel.id
+  ) && (
+    building.level_view !== 'through' || chosen?.elevation_feet >= 0
+  );
+  if (groundVisible) {
+    const base = foundationPerimeter(building, groundLevel, ground, heightSampler);
+    if (base.length >= 3 && base.some(point => point.top - point.bottom > 0.05)) {
+      const top = base.map(point => new Vector3(point.x / SCALE, point.top / SCALE, point.y / SCALE));
+      const bottom = base.map(point => new Vector3(point.x / SCALE, point.bottom / SCALE, point.y / SCALE));
+      attach(MeshBuilder.CreateRibbon(`foundation-${building.id}`,
+        { pathArray: [top, bottom], closePath: true, sideOrientation: Mesh.DOUBLESIDE }, scene), foundationFinish);
+      const bottomMesh = new Mesh(`foundation-bottom-${building.id}`, scene);
+      const flat = base.flatMap(point => [point.x, point.y]);
+      const triangles = earcut(flat);
+      const data = new VertexData();
+      data.positions = base.flatMap(point => [point.x / SCALE, point.bottom / SCALE, point.y / SCALE]);
+      data.indices = triangles.flatMap((_, index) => index % 3 === 0
+        ? [triangles[index], triangles[index + 2], triangles[index + 1]] : []);
+      const normals = [];
+      VertexData.ComputeNormals(data.positions, data.indices, normals);
+      data.normals = normals;
+      data.applyToMesh(bottomMesh);
+      attach(bottomMesh, foundationFinish);
+    }
+  }
+
   building.levels.forEach(
     level => {
       if (
@@ -310,40 +398,19 @@ export function createBlueprintMesh(
         return;
       }
 
-      if (
-        foundationHeight > 0 &&
-        level.elevation_feet === 0
-      ) {
-        (level.outline || []).forEach(
-          (wall, wallIndex) => {
-            const length = wallLength(wall);
-
-            if (length < 0.1) return;
-
-            const pieces = wall.type === 'arc'
-              ? Math.ceil(length)
-              : 1;
-            const pieceWidth = length / pieces;
-
-            for (let pieceIndex = 0; pieceIndex < pieces; pieceIndex++) {
-              const distance = pieceWidth * (pieceIndex + 0.5);
-              const point = wallPointAtDistance(wall, distance);
-              const tangent = wallTangentAtDistance(wall, distance);
-
-              box(
-                `foundation-${level.id}-${wallIndex}-${pieceIndex}`,
-                point.x,
-                level.elevation_feet + foundationHeight / 2,
-                point.y,
-                pieceWidth + 0.06,
-                foundationHeight,
-                wall.thickness || 0.5,
-                Math.atan2(tangent.y, tangent.x),
-                foundationFinish
-              );
-            }
-          }
-        );
+      if (level.elevation_feet < 0) {
+        const outer = exteriorFootprint(level, 0.05);
+        const angle = Number(building.rotation) || 0;
+        const rootHeight = ground + (Number(building.elevation) || 0);
+        const bottom = outer.map(point => new Vector3(point.x / SCALE, elevation / SCALE, point.y / SCALE));
+        const top = outer.map(point => {
+          const x = building.x + point.x * Math.cos(angle) - point.y * Math.sin(angle);
+          const y = building.y + point.x * Math.sin(angle) + point.y * Math.cos(angle);
+          return new Vector3(point.x / SCALE, Math.max(elevation, heightSampler(x, y) - rootHeight) / SCALE, point.y / SCALE);
+        });
+        attach(MeshBuilder.CreateRibbon(`basement-earth-${level.id}`,
+          { pathArray: [top, bottom], closePath: true, sideOrientation: Mesh.DOUBLESIDE }, scene),
+        materialFor('packed-earth', wallMat));
       }
 
       /* ------------------------------------------------------------------ */
@@ -516,7 +583,7 @@ export function createBlueprintMesh(
             earcut
           ),
 
-          floorMat
+          materialFor(constructionFinish(level.floor_material, FLOOR_FINISHES), floorMat)
         );
 
       floor.position.y =
@@ -534,6 +601,11 @@ export function createBlueprintMesh(
           wall,
           wallIndex
         ) => {
+          const exterior = (level.outline || []).some(outline => outline.id === wall.id);
+          const wallFinish = exterior
+            ? materialFor(constructionFinish(wall.material, WALL_FINISHES,
+              level.exterior_material), wallMat)
+            : wallMat;
           const length =
             wallLength(wall);
 
@@ -600,7 +672,8 @@ export function createBlueprintMesh(
                   Math.atan2(
                     tangent.y,
                     tangent.x
-                  )
+                  ),
+                  wallFinish
                 );
 
                 return;
@@ -669,7 +742,8 @@ export function createBlueprintMesh(
                   Math.atan2(
                     tangent.y,
                     tangent.x
-                  )
+                  ),
+                  wallFinish
                 );
               }
             }
@@ -1314,6 +1388,8 @@ export function createBlueprintMesh(
   root.onDisposeObservable.add(
     () => {
       wallMat.dispose();
+      Object.values(finishMaterials).forEach(material => material.dispose(false, true));
+      foundationMat.dispose(false, true);
       floorMat.dispose();
       markerMat.dispose();
       chimneyMat.dispose();

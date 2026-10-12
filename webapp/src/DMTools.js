@@ -110,6 +110,7 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
   }, [soundPlayerOpenRequest]);
 
   const [npcs, setNpcs] = useState([]);
+  const [creatures, setCreatures] = useState([]);
   const [npcSearch, setNpcSearch] = useState('');
   const [npcSort, setNpcSort] = useState({ key: 'name', direction: 'asc' });
   const [npcVisibleColumns, setNpcVisibleColumns] = useState(initialNpcColumns);
@@ -518,6 +519,33 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
       dexterity: npc.dexterity,
     });
   };
+
+  const addCreatureToEncounter = (creature) => {
+    addEncounterCombatant({
+      id: `creature-${creature.id}-${Date.now()}-${Math.random()}`,
+      sourceId: creature.id,
+      characterName: creature.name,
+      initiative: '',
+      kind: 'npc',
+      ac: creature.ac,
+      hp: creature.hp,
+      dexterity: creature.dexterity,
+    });
+  };
+
+  useEffect(() => {
+    if (currentContent !== 'encounterBuilder') return undefined;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      axios.get('/api/creatures', {
+        headers,
+        params: { q: encounterSearch.trim() },
+        signal: controller.signal,
+      }).then((response) => setCreatures(response.data))
+        .catch((error) => { if (error.code !== 'ERR_CANCELED') console.error('Failed to fetch creatures:', error); });
+    }, 250);
+    return () => { clearTimeout(timeout); controller.abort(); };
+  }, [currentContent, encounterSearch, headers?.CampaignID, headers?.Authorization]);
 
   const removeEncounterCombatant = (combatantId) => {
     setCombatants((current) => current.filter((combatant) => combatant.id !== combatantId));
@@ -1355,7 +1383,7 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
             <Form.Control
               type="search"
               aria-label="Search campaign roster"
-              placeholder="Search players and NPCs"
+              placeholder="Search players, NPCs, and creatures"
               value={encounterSearch}
               onChange={(event) => setEncounterSearch(event.target.value)}
             />
@@ -1395,6 +1423,16 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
                     <strong>{npc.name}</strong>
                     <small>CR {npc.challenge || '—'} · AC {npc.ac || '—'} · HP {npc.hp || '—'}</small>
                   </span>
+                  <span aria-hidden="true">＋</span>
+                </button>
+              ))}
+            </div>
+            <div className="encounter-library-group">
+              <h4>Bestiary and installed adventures</h4>
+              {creatures.length === 0 ? <p className="encounter-empty">No matching creatures.</p> : creatures.map((creature) => (
+                <button type="button" className="encounter-library-item" key={creature.id}
+                  onClick={() => addCreatureToEncounter(creature)}>
+                  <span><strong>{creature.name}</strong><small>{creature.source} · CR {creature.challenge || '—'} · AC {creature.ac || '—'} · HP {creature.hp || '—'}</small></span>
                   <span aria-hidden="true">＋</span>
                 </button>
               ))}

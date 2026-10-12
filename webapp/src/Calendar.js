@@ -23,9 +23,15 @@ function Calendar({ headers, campaignID, accountType, socket }) {
   });
   const [showDayModal, setShowDayModal] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [dateDraft, setDateDraft] = useState({ year: '', month_index: '', day: '', hour: 0, minute: 0 });
+  const [dateSaving, setDateSaving] = useState(false);
+  const [dateError, setDateError] = useState('');
+  const [contextMenu, setContextMenu] = useState(null);
 
   const [newEventName, setNewEventName] = useState('');
   const [newEventDescription, setNewEventDescription] = useState('');
+  const [newEventVisible, setNewEventVisible] = useState(false);
 
   useEffect(() => {
     fetchCalendarMeta();
@@ -229,6 +235,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
         }
       );
       setMonthView(response.data);
+      return response.data;
     } catch (error) {
       console.error('Error fetching month view:', error);
     }
@@ -279,6 +286,60 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     }
   };
 
+  const openDateEditor = () => {
+    const currentDate = calendarMeta?.current_date;
+    if (!currentDate) return;
+    setDateDraft({
+      year: currentDate.year,
+      month_index: currentDate.month_index,
+      day: currentDate.day,
+      hour: currentDate.hour ?? 0,
+      minute: currentDate.minute ?? 0,
+    });
+    setDateError('');
+    setShowDateModal(true);
+  };
+
+  const saveCurrentDate = async (date) => {
+    setDateSaving(true);
+    setDateError('');
+    try {
+      const response = await axios.post(
+        `/api/calendar/${campaignID}/date/set`,
+        {
+          year: Number(date.year),
+          month_index: Number(date.month_index),
+          day: Number(date.day),
+          hour: Number(date.hour),
+          minute: Number(date.minute),
+        },
+        { headers }
+      );
+      setCalendarMeta(response.data);
+      setViewYear(response.data.current_date.year);
+      setViewMonthIndex(response.data.current_date.month_index);
+      setShowDateModal(false);
+      setShowDayModal(false);
+      setContextMenu(null);
+    } catch (error) {
+      setDateError(error.response?.data?.message || 'The current date could not be updated.');
+    } finally {
+      setDateSaving(false);
+    }
+  };
+
+  const setDayAsCurrent = (day) => saveCurrentDate({
+    ...calendarMeta.current_date,
+    year: day.year,
+    month_index: day.month_index,
+    day: day.day,
+  });
+
+  const handleSaveDate = (event) => {
+    event.preventDefault();
+    saveCurrentDate(dateDraft);
+  };
+
   const handleCreateEvent = async () => {
     if (!isDM || !newEventName || !selectedDay || viewYear === null || viewMonthIndex === null) return;
 
@@ -288,6 +349,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
         {
           name: newEventName,
           description: newEventDescription,
+          is_player_visible: newEventVisible,
           year: selectedDay.year,
           month_index: selectedDay.month_index,
           day: selectedDay.day,
@@ -297,6 +359,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
 
       setNewEventName('');
       setNewEventDescription('');
+      setNewEventVisible(false);
       await fetchMonthView(viewYear, viewMonthIndex);
       await fetchCalendarMeta();
       setShowDayModal(false);
@@ -306,11 +369,28 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     }
   };
 
+  const handleToggleEventVisibility = async (event) => {
+    try {
+      await axios.patch(`/api/calendar/events/${event.id}`, {
+        is_player_visible: !event.is_player_visible,
+      }, { headers });
+      const updated = await fetchMonthView(viewYear, viewMonthIndex);
+      const refreshedDay = updated?.days?.find(day =>
+        day.year === selectedDay.year && day.month_index === selectedDay.month_index && day.day === selectedDay.day
+      );
+      if (refreshedDay) setSelectedDay(refreshedDay);
+      await fetchCalendarMeta();
+    } catch (error) {
+      console.error('Error changing event visibility:', error);
+    }
+  };
+
   const openDayModal = (dayObj) => {
     setSelectedDay(dayObj);
     setShowDayModal(true);
     setNewEventName('');
     setNewEventDescription('');
+    setNewEventVisible(false);
   };
 
   const closeDayModal = () => {
@@ -318,6 +398,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     setSelectedDay(null);
     setNewEventName('');
     setNewEventDescription('');
+    setNewEventVisible(false);
   };
 
   const currentMonthLabel = useMemo(() => {
@@ -447,11 +528,16 @@ function Calendar({ headers, campaignID, accountType, socket }) {
             </Button>
           </Col>
           {isDM && (
-            <Col xs="auto">
-              <Button variant="warning" onClick={handleAdvanceDay}>
-                Advance 1 Day
-              </Button>
-            </Col>
+            <>
+              <Col xs="auto">
+                <Button variant="outline-light" onClick={openDateEditor}>Set Date &amp; Time</Button>
+              </Col>
+              <Col xs="auto">
+                <Button variant="warning" onClick={handleAdvanceDay}>
+                  Advance 1 Day
+                </Button>
+              </Col>
+            </>
           )}
           <Col className="text-end">
             {calendarMeta.current_date && (
@@ -488,6 +574,11 @@ function Calendar({ headers, campaignID, accountType, socket }) {
                 key={`${dayObj.year}-${dayObj.month_index}-${dayObj.day}`}
                 className={`calendar-day day-clickable ${isCurrentDay ? 'current-day' : ''}`}
                 onClick={() => openDayModal(dayObj)}
+                onContextMenu={(event) => {
+                  if (!isDM) return;
+                  event.preventDefault();
+                  setContextMenu({ x: event.clientX, y: event.clientY, day: dayObj });
+                }}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
@@ -535,6 +626,57 @@ function Calendar({ headers, campaignID, accountType, socket }) {
           })}
         </div>
 
+        {contextMenu && (
+          <div
+            className="calendar-day-context-menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseLeave={() => setContextMenu(null)}
+          >
+            <Button size="sm" onClick={() => setDayAsCurrent(contextMenu.day)}>
+              Set as current day
+            </Button>
+          </div>
+        )}
+
+        <Modal show={showDateModal} onHide={() => setShowDateModal(false)} centered>
+          <Form onSubmit={handleSaveDate}>
+            <Modal.Header closeButton>
+              <Modal.Title>Set Current Date &amp; Time</Modal.Title>
+            </Modal.Header>
+            <Modal.Body>
+              <div className="calendar-date-fields">
+                <Form.Group>
+                  <Form.Label htmlFor="calendar-current-year">Year</Form.Label>
+                  <Form.Control id="calendar-current-year" type="number" required value={dateDraft.year} onChange={(event) => setDateDraft((current) => ({ ...current, year: event.target.value }))} />
+                </Form.Group>
+                <Form.Group>
+                  <Form.Label htmlFor="calendar-current-month">Month</Form.Label>
+                  <Form.Select id="calendar-current-month" required value={dateDraft.month_index} onChange={(event) => setDateDraft((current) => ({ ...current, month_index: event.target.value, day: 1 }))}>
+                    {(calendarMeta.months || []).map((month, index) => <option key={index} value={index}>{month.name}</option>)}
+                  </Form.Select>
+                </Form.Group>
+                <Form.Group>
+                  <Form.Label htmlFor="calendar-current-day">Day</Form.Label>
+                  <Form.Control id="calendar-current-day" type="number" required min="1" max={calendarMeta.months?.[Number(dateDraft.month_index)]?.length || undefined} value={dateDraft.day} onChange={(event) => setDateDraft((current) => ({ ...current, day: event.target.value }))} />
+                </Form.Group>
+                <Form.Group>
+                  <Form.Label htmlFor="calendar-current-hour">Hour</Form.Label>
+                  <Form.Control id="calendar-current-hour" type="number" required min="0" max={(calendarMeta.hours_in_day || 24) - 1} value={dateDraft.hour} onChange={(event) => setDateDraft((current) => ({ ...current, hour: event.target.value }))} />
+                </Form.Group>
+                <Form.Group>
+                  <Form.Label htmlFor="calendar-current-minute">Minute</Form.Label>
+                  <Form.Control id="calendar-current-minute" type="number" required min="0" max={(calendarMeta.minutes_in_hour || 60) - 1} value={dateDraft.minute} onChange={(event) => setDateDraft((current) => ({ ...current, minute: event.target.value }))} />
+                </Form.Group>
+              </div>
+              {dateError ? <div className="calendar-setup-error mt-3" role="alert">{dateError}</div> : null}
+            </Modal.Body>
+            <Modal.Footer>
+              <Button variant="secondary" type="button" onClick={() => setShowDateModal(false)}>Cancel</Button>
+              <Button type="submit" disabled={dateSaving}>{dateSaving ? 'Saving…' : 'Set Current Date'}</Button>
+            </Modal.Footer>
+          </Form>
+        </Modal>
+
         <Modal show={showDayModal} onHide={closeDayModal} centered>
           <Modal.Header closeButton>
             <Modal.Title>
@@ -549,6 +691,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
                   <div key={event.id} className="modal-event-item" style={{ borderLeft: `4px solid ${event.color || '#c084fc'}` }}>
                     <strong>{event.name}</strong>
                     {event.description ? <div>{event.description}</div> : null}
+                    {isDM && <button type="button" className="btn btn-link btn-sm p-0" onClick={() => handleToggleEventVisibility(event)}>{event.is_player_visible ? 'Visible to players · make private' : 'DM only · show to players'}</button>}
                   </div>
                 ))}
               </div>
@@ -584,13 +727,17 @@ function Calendar({ headers, campaignID, accountType, socket }) {
                   value={newEventDescription}
                   onChange={(e) => setNewEventDescription(e.target.value)}
                 />
+                <Form.Check id="calendar-event-visible-to-players" className="mt-2" type="checkbox" label="Visible to players" checked={newEventVisible} onChange={event => setNewEventVisible(event.target.checked)} />
               </div>
             )}
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={closeDayModal}>Close</Button>
             {isDM && (
-              <Button onClick={handleCreateEvent}>Save Event</Button>
+              <>
+                <Button variant="outline-primary" onClick={() => setDayAsCurrent(selectedDay)}>Set as Current Day</Button>
+                <Button onClick={handleCreateEvent}>Save Event</Button>
+              </>
             )}
           </Modal.Footer>
         </Modal>

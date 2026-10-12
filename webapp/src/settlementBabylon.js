@@ -1,6 +1,7 @@
 import {
   createTerrainHeightSampler,
   FEET_PER_SCENE_UNIT,
+  isFortificationTowerPoint,
   roadWidthAt,
   waterDepthAtSeaLevel,
 } from './settlementEditor';
@@ -1617,6 +1618,57 @@ function getSplinePoint(points, amount) {
     localT
   );
 }
+
+/** World-space centerline used by rendering, snapping, and linked boundaries. */
+export function sampleRoadCenterline(road) {
+  const source = (road?.points || []).map(point =>
+    new Vector3(point.x / FEET_PER_SCENE_UNIT, 0, point.y / FEET_PER_SCENE_UNIT));
+  if (source.length < 2) return [];
+  const samples = Math.max(32, source.length * 32);
+  return Array.from({ length: samples + 1 }, (_, index) => {
+    const point = getSplinePoint(source, index / samples);
+    return { x: point.x * FEET_PER_SCENE_UNIT, y: point.z * FEET_PER_SCENE_UNIT, t: index / samples };
+  });
+}
+
+export function sampleFortificationCenterline(wall) {
+  const sections = fortificationSplineSections(wall);
+  const all = [];
+  sections.forEach((section, sectionIndex) => {
+    const source = section.map(point => new Vector3(point.x / FEET_PER_SCENE_UNIT, 0, point.y / FEET_PER_SCENE_UNIT));
+    const samples = Math.max(24, section.length * 18);
+    for (let index = sectionIndex ? 1 : 0; index <= samples; index += 1) {
+      const point = getSplinePoint(source, index / samples);
+      all.push({ x: point.x * FEET_PER_SCENE_UNIT, y: point.z * FEET_PER_SCENE_UNIT });
+    }
+  });
+  return all.map((point, index) => ({ ...point, t: all.length > 1 ? index / (all.length - 1) : 0 }));
+}
+
+
+/** Splits a wall wherever a tower permits a deliberate change of heading. */
+export function fortificationSplineSections(wall) {
+  const points = wall?.points || [];
+  if (points.length < 2) return [];
+
+  const sections = [];
+  let section = [points[0]];
+
+  for (let index = 1; index < points.length; index += 1) {
+    section.push(points[index]);
+
+    if (
+      index < points.length - 1 &&
+      isFortificationTowerPoint(wall, index)
+    ) {
+      sections.push(section);
+      section = [points[index]];
+    }
+  }
+
+  if (section.length >= 2) sections.push(section);
+  return sections;
+}
 // -----------------------------------------------------------------------------
 // ROAD GEOMETRY
 // -----------------------------------------------------------------------------
@@ -1765,21 +1817,9 @@ export function fortificationVertexData(
       heightMap
     );
 
-  const source = (wall.points || []).map(
-    point =>
-      new Vector3(
-        point.x / FEET_PER_SCENE_UNIT,
-        0,
-        point.y / FEET_PER_SCENE_UNIT
-      )
-  );
+  const sections = fortificationSplineSections(wall);
 
-  if (source.length < 2) return new VertexData();
-
-  const samples = Math.max(
-    24,
-    source.length * 18
-  );
+  if (!sections.length) return new VertexData();
 
   const positions = [];
   const indices = [];
@@ -1792,102 +1832,113 @@ export function fortificationVertexData(
     (Number(wall.height_feet) || 35) /
     FEET_PER_SCENE_UNIT;
 
-  for (let index = 0; index <= samples; index += 1) {
-    const amount = index / samples;
-
-    const point = getSplinePoint(
-      source,
-      amount
+  sections.forEach(section => {
+    const source = section.map(
+      point =>
+        new Vector3(
+          point.x / FEET_PER_SCENE_UNIT,
+          0,
+          point.y / FEET_PER_SCENE_UNIT
+        )
     );
 
-    const nearby = getSplinePoint(
-      source,
-      Math.min(
-        1,
-        amount + 1 / samples
-      )
-    );
+    const samples = Math.max(24, source.length * 18);
+    const sectionVertexOffset = positions.length / 3;
 
-    const tangent = nearby
-      .subtract(point)
-      .normalize();
+    for (let index = 0; index <= samples; index += 1) {
+      const amount = index / samples;
 
-    const normal = new Vector3(
-      -tangent.z,
-      0,
-      tangent.x
-    ).scale(halfWidth);
-
-    const left = point.add(normal);
-    const right = point.subtract(normal);
-
-    const centerWorldX =
-      point.x *
-      FEET_PER_SCENE_UNIT;
-
-    const centerWorldY =
-      point.z *
-      FEET_PER_SCENE_UNIT;
-
-    const wallBaseElevation =
-      heightSampler(
-        centerWorldX,
-        centerWorldY
-      ) /
-      FEET_PER_SCENE_UNIT;
-
-    positions.push(
-      left.x,
-      wallBaseElevation,
-      left.z,
-
-      right.x,
-      wallBaseElevation,
-      right.z,
-
-      left.x,
-      wallBaseElevation + height,
-      left.z,
-
-      right.x,
-      wallBaseElevation + height,
-      right.z
-    );
-
-    if (index < samples) {
-      const offset = index * 4;
-      const next = offset + 4;
-
-      indices.push(
-        // Outer face
-        offset,
-        next,
-        offset + 2,
-
-        offset + 2,
-        next,
-        next + 2,
-
-        // Inner face
-        offset + 1,
-        offset + 3,
-        next + 1,
-
-        offset + 3,
-        next + 3,
-        next + 1,
-
-        // Top walkway
-        offset + 2,
-        next + 2,
-        offset + 3,
-
-        offset + 3,
-        next + 2,
-        next + 3
+      const point = getSplinePoint(source, amount);
+      const before = getSplinePoint(
+        source,
+        Math.max(0, amount - 1 / samples)
       );
+      const after = getSplinePoint(
+        source,
+        Math.min(1, amount + 1 / samples)
+      );
+
+      const tangent = after
+        .subtract(before)
+        .normalize();
+
+      const normal = new Vector3(
+        -tangent.z,
+        0,
+        tangent.x
+      ).scale(halfWidth);
+
+      const left = point.add(normal);
+      const right = point.subtract(normal);
+
+      const centerWorldX =
+        point.x *
+        FEET_PER_SCENE_UNIT;
+
+      const centerWorldY =
+        point.z *
+        FEET_PER_SCENE_UNIT;
+
+      const wallBaseElevation =
+        heightSampler(
+          centerWorldX,
+          centerWorldY
+        ) /
+        FEET_PER_SCENE_UNIT;
+
+      positions.push(
+        left.x,
+        wallBaseElevation,
+        left.z,
+
+        right.x,
+        wallBaseElevation,
+        right.z,
+
+        left.x,
+        wallBaseElevation + height,
+        left.z,
+
+        right.x,
+        wallBaseElevation + height,
+        right.z
+      );
+
+      if (index < samples) {
+        const offset = sectionVertexOffset + index * 4;
+        const next = offset + 4;
+
+        indices.push(
+          // Outer face
+          offset,
+          next,
+          offset + 2,
+
+          offset + 2,
+          next,
+          next + 2,
+
+          // Inner face
+          offset + 1,
+          offset + 3,
+          next + 1,
+
+          offset + 3,
+          next + 3,
+          next + 1,
+
+          // Top walkway
+          offset + 2,
+          next + 2,
+          offset + 3,
+
+          offset + 3,
+          next + 2,
+          next + 3
+        );
+      }
     }
-  }
+  });
 
   const normals = [];
 

@@ -1,5 +1,5 @@
-import { calibrateReferenceLayer, createTerrainHeightSampler, firstPersonLookAngles, heightmapHeightAt, insertClosedBoundaryPoint, insertRoadControlPoint, nearestRoadPoint, pitchPositionAroundTarget, referenceLayerUv, resizeBuildingFromCorner, roadWidthAt, rotatePositionAroundVerticalAxis, snapBuildingPlacement, snapRegionBoundaryPoint, snapRoadNetworkPoint, snapRoadSplineTranslation, terrainHeightAt, terrainSurfaceWeights, waterDepthAtSeaLevel, waterFlowSpeed } from './settlementEditor';
-import { babylonToWorld, buildWorldMapData, fortificationVertexData, roadVertexData, worldToBabylon } from './settlementBabylon';
+import { calibrateReferenceLayer, createTerrainHeightSampler, firstPersonLookAngles, heightmapHeightAt, insertClosedBoundaryPoint, insertOpenSplineControlPoint, insertRoadControlPoint, isFortificationTowerPoint, nearestRoadPoint, pitchPositionAroundTarget, referenceLayerUv, resizeBuildingFromCorner, roadWidthAt, rotatePositionAroundVerticalAxis, snapBuildingPlacement, snapRegionBoundaryPoint, snapRoadNetworkPoint, snapRoadSplineTranslation, terrainHeightAt, terrainSurfaceWeights, waterDepthAtSeaLevel, waterFlowSpeed } from './settlementEditor';
+import { babylonToWorld, buildWorldMapData, fortificationSplineSections, fortificationVertexData, roadVertexData, worldToBabylon } from './settlementBabylon';
 
 test('camera rotation preserves radius and opposite turns restore the position', () => {
   const target={x:3,y:0,z:-2},position={x:13,y:15,z:8};
@@ -70,6 +70,39 @@ test('Babylon fortification geometry produces an elevated indexed wall buffer', 
   expect(wall.positions.length).toBeGreaterThan(0);
   expect(wall.indices.length).toBeGreaterThan(0);
   expect(Math.max(...wall.positions.filter((_, index) => index % 3 === 1))).toBeCloseTo(.8);
+});
+
+test('fortification points distinguish explicit towers from smooth direction points', () => {
+  const wall = { points: [
+    { x: 0, y: 0, tower: true },
+    { x: 50, y: 20, tower: false },
+    { x: 100, y: 0, tower: true }
+  ] };
+  expect(isFortificationTowerPoint(wall, 0)).toBe(true);
+  expect(isFortificationTowerPoint(wall, 1)).toBe(false);
+  expect(fortificationSplineSections(wall)).toHaveLength(1);
+
+  const legacyWall = { points: [{}, {}, {}, {}] };
+  expect(legacyWall.points.map((point, index) => isFortificationTowerPoint(legacyWall, index)))
+    .toEqual([true, false, true, true]);
+});
+
+test('tower points split wall curves so either side can use a different angle', () => {
+  const wall = { points: [
+    { x: 0, y: 0, tower: true },
+    { x: 100, y: 0, tower: true },
+    { x: 100, y: 100, tower: true }
+  ] };
+  expect(fortificationSplineSections(wall)).toEqual([
+    [wall.points[0], wall.points[1]],
+    [wall.points[1], wall.points[2]]
+  ]);
+});
+
+test('newly inserted wall controls default to smooth direction points', () => {
+  const wall = { points: [{ x: 0, y: 0, tower: true }, { x: 100, y: 0, tower: true }] };
+  const result = insertOpenSplineControlPoint(wall, { x: 50, y: 10 }, { tower: false });
+  expect(result.item.points[1]).toEqual({ x: 50, y: 0, tower: false });
 });
 
 test('terrain strokes blend smoothly and stop at their radius', () => {
