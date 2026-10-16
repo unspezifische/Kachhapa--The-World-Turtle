@@ -1,23 +1,20 @@
 # BabylonJS follow-ups
 
-## Blueprint buildings are only partially wired to the UI
+## Staged terrain and water calculations
 
-The building data model and Babylon renderer already support per-level:
+The current UI does not directly call the pure `terrainSurfaceWeights` or
+`waterFlowSpeed` calculations in `webapp/src/settlementEditor.js`. They remain
+useful, tested domain implementations for terrain-material parity and future
+flow-aware river presentation, so they are intentionally retained.
 
-- polygon footprints and floor heights;
-- doors and windows;
-- stairs, including turns and downward runs;
-- floor hatches and optional ladders.
+`isOceanAtFeet` in `webapp/src/settlementTiles.js` is likewise retained for
+future foliage, biome, and water-shading lookups. It reads the ocean-continuity
+mask already generated for terrain tiles; it is not an obsolete terrain
+implementation.
 
-The current Build > Draw UI can place footprint corners, close a footprint,
-duplicate it into another level, and save the building. It does not expose
-controls for choosing a level or adding/editing doors, windows, stairs, or
-hatches. Keep the following implementation in place when adding that UI:
-
-- `addBlueprintStairs` and `addBlueprintHatch` in
-  `webapp/src/settlementEditor.js`;
-- the per-level opening, stair, and hatch rendering in
-  `webapp/src/BabylonSettlementHost.js`.
+The multi-level blueprint editor is now wired to the UI. Levels, openings,
+stairs, hatches and ladders, roofs, platforms, chimneys, and related editing
+all use the normalized helpers in `buildingBlueprint.js` and `BlueprintLevels.js`.
 
 ## Building inspection and metadata
 

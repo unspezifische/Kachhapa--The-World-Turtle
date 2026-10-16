@@ -44,6 +44,9 @@ import shutil
 import subprocess
 
 from settlement_simulation import calculate_lamplighter_state
+from property_destinations import settlement_destinations
+from property_navigation import resolve_rest_route, destination_key
+from settlement_lighting import generated_lighting_routes, validate_region_lighting
 from travel_planning import estimate_travel_options
 from economy_simulation import commodity_price, simulate_business_day, simulate_commodity_day
 from workforce_simulation import rebalance_workforce, choose_noble_investment
@@ -602,7 +605,9 @@ NPC_RECORD_FIELDS = {
 def npc_from_record(campaign_id, record, source='Homebrew'):
     """Build an NPC model from either a generated or module preset record."""
     values = {key: record.get(key) for key in NPC_RECORD_FIELDS}
-    return NPC(campaign_id=campaign_id, source=source, **values)
+    npc = NPC(campaign_id=campaign_id, source=source, **values)
+    npc.profile_metadata = {'generation': record.get('generation', {})}
+    return npc
 
 
 def seed_module_npcs(campaign, definition):
@@ -624,7 +629,11 @@ def seed_module_npcs(campaign, definition):
             continue
             
         # 🚀 FIX: Use definition['name'] (the module title) as the source identifier
+        if NPC.query.filter_by(campaign_id=campaign.id, module_key=definition['key'], source_key=preset['source_key']).first():
+            continue
         npc = npc_from_record(campaign.id, preset, source=definition['name'])
+        npc.module_key, npc.source_key = definition['key'], preset['source_key']
+        npc.origin_snapshot = {key: preset.get(key) for key in NPC_RECORD_FIELDS} | {'source': definition['name'], 'schedule_definition_id': None}
         db.session.add(npc)
         added.append(npc)
         existing_names.add(normalized_name)
@@ -5327,6 +5336,42 @@ def phase_index_to_name(phase_index, cycle_length):
         return 'last-quarter'
     return 'waning-crescent'
 
+
+def get_current_moon_states(calendar):
+    if not calendar:
+        return []
+
+    ordinal_day = date_to_ordinal(
+        calendar,
+        calendar.current_year,
+        calendar.current_month_index,
+        calendar.current_day,
+    )
+    states = []
+
+    for moon in get_moons(calendar):
+        try:
+            cycle_length = max(1.0, float(moon.get('cycle_length_days', 30)))
+            phase_offset = float(moon.get('phase_offset', 0))
+        except (TypeError, ValueError):
+            cycle_length = 30.0
+            phase_offset = 0.0
+
+        phase_age = (ordinal_day + phase_offset) % cycle_length
+        phase_fraction = phase_age / cycle_length
+        illumination = (1 - math.cos(phase_fraction * math.pi * 2)) / 2
+
+        states.append({
+            'name': moon.get('name') or 'Moon',
+            'phase': phase_index_to_name(phase_age, cycle_length),
+            'phase_age_days': round(phase_age, 4),
+            'phase_fraction': round(phase_fraction, 6),
+            'illumination': round(illumination, 6),
+            'cycle_length_days': cycle_length,
+        })
+
+    return states
+
 def get_holidays_for_month(calendar, year, month_index):
     holidays = get_holidays(calendar)
 
@@ -5344,8 +5389,13 @@ def get_holidays_for_month(calendar, year, month_index):
 
 def get_settlement_simulation_state(campaign_id, persist=True):
     calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    months = get_months(calendar) if calendar else []
+    month_index = calendar.current_month_index if calendar else 0
+    current_month = months[month_index] if 0 <= month_index < len(months) else None
     minute_of_day = (calendar.current_hour * 60 + calendar.current_minute) if calendar else 720
     routes = LamplighterRoute.query.filter_by(campaign_id=campaign_id, active=True).order_by(LamplighterRoute.id).all()
+    settlements = WorldAtlasLocation.query.filter_by(campaign_id=campaign_id).order_by(WorldAtlasLocation.id).all()
+    primary = next((location for location in settlements if location.is_primary), settlements[0] if settlements else None)
     route_states = []
     changed = False
 
@@ -5360,12 +5410,19 @@ def get_settlement_simulation_state(campaign_id, persist=True):
                 changed = True
         route_states.append({
             'id': route.id,
+            'settlement_id': primary.id if primary else None,
+            'generated': False,
             'name': route.name,
             'phase': state['phase'],
             'lamplighter_position': state['position'],
             'next_lamp_id': state['next_lamp_id'],
             'lamps': state['lamps'],
         })
+
+    for settlement in settlements:
+        route_states.extend(generated_lighting_routes(
+            settlement.id, settlement.roads or [],
+            (settlement.environment or {}).get('regions', []), minute_of_day))
 
     if changed and persist:
         db.session.commit()
@@ -5374,10 +5431,14 @@ def get_settlement_simulation_state(campaign_id, persist=True):
         'campaign_id': campaign_id,
         'time': {
             'year': calendar.current_year if calendar else 1,
-            'month_index': calendar.current_month_index if calendar else 0,
+            'month_index': month_index,
+            'month_name': current_month.get('name') if current_month else None,
             'day': calendar.current_day if calendar else 1,
             'hour': calendar.current_hour if calendar else 12,
             'minute': calendar.current_minute if calendar else 0,
+        },
+        'celestial': {
+            'moons': get_current_moon_states(calendar),
         },
         'routes': route_states,
     }
@@ -5443,6 +5504,7 @@ def ensure_campaign_settlement(campaign_id, commit=True):
         terrain_strokes=(legacy.terrain_strokes or []) if legacy else [],
         roads=(legacy.roads or []) if legacy else [],
         buildings=(legacy.buildings or []) if legacy else [],
+        properties=(legacy.properties or []) if legacy else [],
         reference_layers=(legacy.reference_layers or []) if legacy else [],
     )
     db.session.add(location)
@@ -5783,6 +5845,144 @@ def terrain_tile_for_lod(payload, requested_cell_feet):
     }
 
 
+@app.route('/api/settlement-map/<int:campaign_id>/destinations', methods=['GET'])
+@jwt_required()
+def get_settlement_destinations(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may inspect room destinations'}), 403
+    design = resolve_settlement(campaign_id, request.args.get('settlement_id'))
+    if not design:
+        return jsonify({'message': 'Settlement not found'}), 404
+    capability = request.args.get('capability') or None
+    actor = {
+        'resident': request.args.get('resident') == 'true',
+        'staff': request.args.get('staff') == 'true',
+        'authorized': request.args.get('authorized') == 'true',
+    }
+    return jsonify({'destinations': settlement_destinations(
+        design.buildings or [], design.properties or [], capability, actor,
+        [{'destination_key': activity.destination_key} for activity in SettlementRestActivity.query.filter_by(campaign_id=campaign_id, settlement_id=design.id).all()] if isinstance(design, WorldAtlasLocation) else [],
+    )}), 200
+
+
+def rest_activity_context(campaign_id, settlement_id, lock=False):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return None, (jsonify({'message': 'Campaign not found'}), 404)
+    if not user_can_edit_campaign(campaign):
+        return None, (jsonify({'message': 'Only the campaign DM or owner may manage rest activities'}), 403)
+    query = WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign_id)
+    design = (query.with_for_update() if lock else query).first()
+    if not design:
+        return None, (jsonify({'message': 'Settlement not found'}), 404)
+    return design, None
+
+
+@app.route('/api/settlement-map/<int:campaign_id>/rest-activities', methods=['GET', 'POST'])
+@jwt_required()
+def settlement_rest_activities(campaign_id):
+    data = (request.get_json(silent=True) or {}) if request.method == 'POST' else {}
+    if not isinstance(data, dict):
+        return jsonify({'message': 'Request must be an object'}), 400
+    settlement_id = data.get('settlement_id') if request.method == 'POST' else request.args.get('settlement_id', type=int)
+    if not isinstance(settlement_id, int) or isinstance(settlement_id, bool):
+        return jsonify({'message': 'A settlement_id is required'}), 400
+    design, error = rest_activity_context(campaign_id, settlement_id, lock=request.method == 'POST')
+    if error:
+        return error
+    records = SettlementRestActivity.query.filter_by(campaign_id=campaign_id, settlement_id=design.id).all()
+    if request.method == 'GET':
+        return jsonify({'activities': [record.to_dict() for record in records],
+                        'npcs': [{'id': npc.id, 'name': npc.name} for npc in NPC.query.filter_by(campaign_id=campaign_id).order_by(NPC.name).all() if not (npc.profile_metadata or {}).get('disabled')]}), 200
+    npc_id = data.get('npc_id')
+    if not isinstance(npc_id, int) or isinstance(npc_id, bool) or not NPC.query.filter_by(id=npc_id, campaign_id=campaign_id).first():
+        return jsonify({'message': 'Choose an NPC in this campaign'}), 400
+    if (db.session.get(NPC, npc_id).profile_metadata or {}).get('disabled'):
+        return jsonify({'message': 'Enable this NPC in the campaign before assigning an activity'}), 400
+    permissions = data.get('permissions') or {}
+    if not isinstance(permissions, dict):
+        return jsonify({'message': 'Invalid permissions'}), 400
+    actor = {key: permissions.get(key) is True for key in ('resident', 'staff', 'authorized', 'can_open_doors')}
+    for key in ('clearance_width_feet', 'clearance_height_feet'):
+        value = data.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            return jsonify({'message': 'Clearance must be a nonnegative number'}), 400
+        actor[key] = value
+    position = data.get('position')
+    if position is not None:
+        if not isinstance(position, dict) or any(isinstance(position.get(key), bool) or not isinstance(position.get(key), (int, float)) or not math.isfinite(position[key]) for key in ('x', 'y')):
+            return jsonify({'message': 'Position requires finite x and y coordinates'}), 400
+        actor['position'] = {key: position[key] for key in ('x', 'y')}
+    preferred_id = data.get('preferred_id')
+    if preferred_id is not None and not isinstance(preferred_id, str):
+        return jsonify({'message': 'Preferred destination must be an ID'}), 400
+    existing = SettlementRestActivity.query.filter_by(campaign_id=campaign_id, npc_id=npc_id).first()
+    route = resolve_rest_route(design.buildings or [], design.properties or [], actor,
+        [{'destination_key': record.destination_key} for record in records if record.npc_id != npc_id], preferred_id)
+    if data.get('preview') is True or route['status'] == 'no_route':
+        return jsonify(route), 200
+    if data.get('expected_destination_key') != route['destination_key']:
+        return jsonify({'message': 'The available destination changed. Preview again before reserving.'}), 409
+    if existing:
+        return jsonify({'message': 'This NPC already has a rest reservation. Release it before choosing another.'}), 409
+    capacity = route['capacity']
+    slot = None
+    if capacity is not None:
+        used = {record.capacity_slot for record in records if record.destination_key == route['destination_key']}
+        slot = next((value for value in range(max(0, int(capacity) - route['current_occupancy'])) if value not in used), None)
+        if slot is None:
+            return jsonify({'message': 'Destination capacity changed. Preview again.'}), 409
+    record = SettlementRestActivity(campaign_id=campaign_id, settlement_id=design.id, npc_id=npc_id,
+        destination_key=route['destination_key'], capacity_slot=slot, route=route, actor=actor, state='awaiting_arrival')
+    db.session.add(record)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'message': 'The NPC or capacity slot was reserved by another request. Preview again.'}), 409
+    return jsonify(record.to_dict()), 201
+
+
+@app.route('/api/settlement-map/<int:campaign_id>/rest-activities/<int:activity_id>', methods=['PATCH', 'DELETE'])
+@jwt_required()
+def update_settlement_rest_activity(campaign_id, activity_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may manage rest activities'}), 403
+    record = SettlementRestActivity.query.filter_by(id=activity_id, campaign_id=campaign_id).first()
+    if not record:
+        return jsonify({'message': 'Rest activity not found'}), 404
+    design, error = rest_activity_context(campaign_id, record.settlement_id, lock=True)
+    if error:
+        return error
+    # Lock order matches reservation creation: settlement, then activity.
+    record = SettlementRestActivity.query.filter_by(id=activity_id, campaign_id=campaign_id).populate_existing().with_for_update().first()
+    if not record:
+        return jsonify({'message': 'Rest activity was released'}), 404
+    if request.method == 'DELETE':
+        db.session.delete(record)
+        db.session.commit()
+        return jsonify({'released': True}), 200
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict) or data.get('action') != 'confirm_arrival':
+        return jsonify({'message': 'Use confirm_arrival after moving the NPC to the destination'}), 400
+    others = SettlementRestActivity.query.filter_by(settlement_id=design.id).all()
+    route = resolve_rest_route(design.buildings or [], design.properties or [], record.actor,
+        [{'destination_key': other.destination_key} for other in others if other.id != record.id], record.route['destination']['id'])
+    if route['status'] != 'route_request' or destination_key(route['destination']) != record.destination_key:
+        return jsonify({'message': 'Destination or route is no longer available. Release this reservation and choose again.'}), 409
+    record.state = 'resting'
+    record.route = route
+    record.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify(record.to_dict()), 200
+
+
 @app.route('/api/settlement-map/<int:campaign_id>/terrain-tiles', methods=['GET'])
 @jwt_required()
 def get_settlement_terrain_tiles(campaign_id):
@@ -5973,7 +6173,7 @@ def save_settlement_map_design(campaign_id):
     # omit roads/buildings/etc. Only fields PRESENT in the request are
     # validated and applied, so omitting a field can never wipe stored data.
     provided = {}
-    for field in ('terrain_strokes', 'roads', 'water_bodies', 'buildings', 'reference_layers'):
+    for field in ('terrain_strokes', 'roads', 'water_bodies', 'buildings', 'properties', 'reference_layers'):
         if field not in data:
             continue
         value = data[field]
@@ -5990,11 +6190,16 @@ def save_settlement_map_design(campaign_id):
             return jsonify({'message': 'environment.regions must be an array'}), 400
         if len(regions) > 250:
             return jsonify({'message': 'Map design exceeds the region limit'}), 413
+        try:
+            validate_region_lighting(regions)
+        except (ValueError, TypeError, AttributeError) as error:
+            return jsonify({'message': str(error)}), 400
 
     if (len(provided.get('terrain_strokes', [])) > 1500
             or len(provided.get('roads', [])) > 500
             or len(provided.get('water_bodies', [])) > 250
             or len(provided.get('buildings', [])) > 5000
+            or len(provided.get('properties', [])) > 5000
             or len(provided.get('reference_layers', [])) > 100):
         return jsonify({'message': 'Map design exceeds the editor limits'}), 413
 
@@ -6006,6 +6211,13 @@ def save_settlement_map_design(campaign_id):
             if isinstance(item, dict) and 'source' not in item:
                 item['source'] = 'Unknown'
 
+    if 'properties' in provided or ('buildings' in provided and design.properties):
+        try:
+            from property_schema import validate_properties
+            validate_properties(provided.get('properties', design.properties or []), provided.get('buildings', design.buildings or []))
+        except ValueError as error:
+            return jsonify({'message': str(error)}), 400
+
     if 'terrain_strokes' in provided:
         design.terrain_strokes = provided['terrain_strokes']
     if 'roads' in provided:
@@ -6014,6 +6226,8 @@ def save_settlement_map_design(campaign_id):
         design.water_bodies = provided['water_bodies']
     if 'buildings' in provided:
         design.buildings = provided['buildings']
+    if 'properties' in provided:
+        design.properties = provided['properties']
 
     merged_tile_count = 0
     if 'reference_layers' in provided:
@@ -6078,6 +6292,8 @@ def save_settlement_map_design(campaign_id):
 
     payload = {**design.to_map_dict(), 'asset_catalog': SETTLEMENT_BUILDING_ASSETS}
     socketio.emit('settlement_map_updated', payload, to=f'campaign:{campaign_id}')
+    if 'roads' in provided or environment is not None:
+        emit_settlement_simulation_updated(campaign_id)
     return jsonify(payload), 200
 
 
@@ -6133,32 +6349,40 @@ def bootstrap_settlement_simulation(campaign_id):
 
 
 @app.route('/api/travel/<int:campaign_id>/context', methods=['GET'])
+@jwt_required()
 def get_travel_context(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user or not is_dm:
+        return jsonify(message='Only the campaign DM can inspect party travel.'), 403
     position = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
     if not position:
         return jsonify({'message': 'Party position has not been set'}), 404
     points = MapPointOfInterest.query.filter_by(campaign_id=campaign_id).order_by(MapPointOfInterest.name).all()
-    return jsonify({'party_position': position.to_dict(), 'points_of_interest': [point.to_dict() for point in points]}), 200
+    return jsonify({'party_position': position.to_dict(), 'groups': session_travel_groups(campaign_id), 'points_of_interest': [point.to_dict() for point in points]}), 200
 
 
 @app.route('/api/travel/<int:campaign_id>/party-position', methods=['PATCH'])
+@jwt_required()
 def update_party_map_position(campaign_id):
-    data = request.json or {}
-    position = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
-    if not position:
-        position = PartyMapPosition(campaign_id=campaign_id)
-        db.session.add(position)
-    for field in ('map_key', 'x', 'y', 'elevation', 'water_access', 'road_access'):
-        if field in data:
-            setattr(position, field, data[field])
-    position.updated_at = datetime.now(timezone.utc)
-    db.session.commit()
-    socketio.emit('party_position_updated', position.to_dict(), to=f'campaign:{campaign_id}')
-    return jsonify(position.to_dict()), 200
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user or not is_dm:
+        return jsonify(message='Only the campaign DM can relocate the party.'), 403
+    from session_management import SessionError
+    try:
+        pos = shared_session_legacy_position(campaign_id, request.json or {})
+        socketio.emit('party_position_updated', pos.to_dict(), to=f'campaign:{campaign_id}')
+        return jsonify(pos.to_dict()), 200
+    except (SessionError, ValueError, TypeError) as error:
+        db.session.rollback()
+        return jsonify(message=str(error)), 400
 
 
 @app.route('/api/travel/<int:campaign_id>/calculate', methods=['POST'])
+@jwt_required()
 def calculate_travel(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user or not is_dm:
+        return jsonify(message='Only the campaign DM can plan party travel.'), 403
     data = request.json or {}
     origin_record = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
     if not origin_record:
@@ -6175,6 +6399,14 @@ def calculate_travel(campaign_id):
         return jsonify({'message': 'A destination point or poi_id is required'}), 400
 
     origin = origin_record.to_dict()
+    groups = [group for group in session_travel_groups(campaign_id) if group['members']]
+    if len(groups) > 1 and not data.get('group_id'):
+        return jsonify(message='The party is split. Select a group before calculating travel.'), 400
+    if groups:
+        group = next((g for g in groups if g['id'] == data.get('group_id')), groups[0] if len(groups) == 1 else None)
+        if not group or group['location'].get('x') is None or group['location'].get('y') is None:
+            return jsonify(message='Choose a group with a mapped coordinate origin, or use a DM-specified journey duration.'), 400
+        origin = group['location']
     destination.setdefault('map_key', origin['map_key'])
     try:
         estimate = estimate_travel_options(
@@ -6372,6 +6604,7 @@ def purchase_market_commodity(campaign_id,commodity_key):
 def link_npc_to_economy(campaign_id,npc_id):
     npc=NPC.query.filter_by(id=npc_id,campaign_id=campaign_id).first()
     if not npc: return jsonify({'message':'NPC not found'}),404
+    if (npc.profile_metadata or {}).get('disabled'): return jsonify({'message':'NPC disabled in this campaign'}),400
     existing=SettlementEconomicAgent.query.filter_by(npc_id=npc_id).first()
     if existing: return jsonify(existing.to_dict()),200
     data=request.json or {};agent=SettlementEconomicAgent(campaign_id=campaign_id,npc_id=npc.id,name=npc.name,
@@ -6544,52 +6777,15 @@ def set_calendar_date(campaign_id):
     user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
     if not user or not is_dm:
         return jsonify({'message': 'Only the campaign DM can set the date.'}), 403
-    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
-    if not calendar:
-        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
-
-    data = request.json or {}
-
-    # Extract varying payload structures smoothly
-    year = data.get('year')
-    month_index = data.get('month_index') if data.get('month_index') is not None else data.get('month')
-    day = data.get('day')
-    hour = data.get('hour')
-    minute = data.get('minute')
-
-    # Fallback seamlessly to current configuration milestones if variables are omitted from the form
-    if year is None: year = calendar.current_year
-    if month_index is None: month_index = calendar.current_month_index
-    if day is None: day = calendar.current_day
-    if hour is None: hour = calendar.current_hour
-    if minute is None: minute = calendar.current_minute
-
+    from session_management import SessionError
     try:
-        year = int(year)
-        month_index = int(month_index)
-        day = int(day)
-        hour = int(hour)
-        minute = int(minute)
-    except (TypeError, ValueError):
-        return jsonify({"message": "Calendar values must be whole integers"}), 400
-
-    # Leverage the dynamic table array boundary tracker to check intercalary caps safely
-    total_days = days_in_month(calendar, year, month_index)
-    if day < 1 or day > total_days:
-        return jsonify({"message": f"Day must be between 1 and {total_days} for the selected month block."}), 400
-
-    calendar.current_year = year
-    calendar.current_month_index = month_index
-    calendar.current_day = day
-    calendar.current_hour = hour
-    calendar.current_minute = minute
-
-    db.session.commit()
-
-    emit_settlement_simulation_updated(campaign_id)
-    emit_calendar_updated(campaign_id, {"kind": "current_date"})
-
-    return jsonify(calendar.to_dict()), 200
+        data = dict(request.json or {})
+        if 'month_index' not in data and 'month' in data:
+            data['month_index'] = data.pop('month')
+        return jsonify(shared_session_calendar_change(campaign_id, data, setting=True).to_dict()), 200
+    except (SessionError, ValueError, TypeError) as error:
+        db.session.rollback()
+        return jsonify(message=str(error)), 400
 
 #POST   /api/calendar/<campaign_id>/date/advance
 @app.route('/api/calendar/<int:campaign_id>/date/advance', methods=['POST'])
@@ -6598,51 +6794,12 @@ def advance_calendar_date(campaign_id):
     user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
     if not user or not is_dm:
         return jsonify({'message': 'Only the campaign DM can advance the date.'}), 403
-    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
-    if not calendar:
-        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
-
-    data = request.json or {}
-
-    delta_days = data.get('days', 0)
-    delta_hours = data.get('hours', 0)
-    delta_minutes = data.get('minutes', 0)
-
-    current_date = {
-        'year': calendar.current_year,
-        'month_index': calendar.current_month_index,
-        'day': calendar.current_day,
-        'hour': calendar.current_hour,
-        'minute': calendar.current_minute,
-    }
-
-    new_date = advance_date(calendar, current_date, delta_days, delta_hours, delta_minutes)
-
-    calendar.current_year = new_date['year']
-    calendar.current_month_index = new_date['month_index']
-    calendar.current_day = new_date['day']
-    calendar.current_hour = new_date['hour']
-    calendar.current_minute = new_date['minute']
-
-    db.session.commit()
-
-    emit_calendar_updated(
-        campaign_id,
-        {
-            "kind": "current_date",
-            "current_date": {
-                "year": calendar.current_year,
-                "month_index": calendar.current_month_index,
-                "day": calendar.current_day,
-                "hour": calendar.current_hour,
-                "minute": calendar.current_minute,
-            }
-        }
-    )
-
-    emit_settlement_simulation_updated(campaign_id)
-
-    return jsonify(calendar.to_dict()), 200
+    from session_management import SessionError
+    try:
+        return jsonify(shared_session_calendar_change(campaign_id, request.json or {}).to_dict()), 200
+    except (SessionError, ValueError, TypeError) as error:
+        db.session.rollback()
+        return jsonify(message=str(error)), 400
 
 #GET    /api/calendar/<campaign_id>/date
 @app.route('/api/calendar/<int:campaign_id>/date', methods=['GET'])
@@ -6666,6 +6823,7 @@ def get_calendar_date(campaign_id):
         'day': calendar.current_day,
         'hour': calendar.current_hour,
         'minute': calendar.current_minute,
+        'second': calendar.current_second or 0,
     }), 200
 
 #GET    /api/calendar/<campaign_id>/events
@@ -7635,6 +7793,7 @@ def roll_initiative():
 def handle_initiative_roll(data):
     if not isinstance(data, dict) or not data.get('characterName'):
         return
+    record_session_initiative(request.args.get('campaignID'), request.sid, data)
     room = initiative_campaign_room()
     emit('initiative roll', data, to=room) if room else emit('initiative roll', data)
 
@@ -7717,6 +7876,15 @@ def handle_disconnect():
             emit("disconnect",f"user {user.username} disconnected", room='/')
             app.logger.info("DISCONNECT- %s disconnected", user.username)
 
+
+from npc_workflow import register_npc_workflow
+register_npc_workflow(app, db, (NPC, NpcScheduleDefinition, NpcScheduleRule, NpcProfileHistory, Calendar, WorldAtlasLocation, CampaignModuleInstallation), catalog_campaign_context, date_to_ordinal, days_in_month)
+
+from session_api import register_session_api
+register_session_api(app, globals())
+
+from appearance import register_appearance
+register_appearance(app, globals())
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5001)

@@ -19,6 +19,7 @@ import {
 import {
   normalizeBlueprint,
   isRoofVisible,
+  automaticRoofFootprints,
   openCorners,
   blueprintWalls,
   wallPanels,
@@ -37,9 +38,11 @@ import {
   FLOOR_FINISHES,
   foundationPerimeter,
   exteriorFootprint,
+  pointInPolygon,
 } from './buildingBlueprint';
 
 import { createBlueprintRoofMesh } from './roofMesh';
+import { structureWorldElevation } from './settlementProperties';
 
 export function createBlueprintMesh(
   scene,
@@ -61,15 +64,7 @@ export function createBlueprintMesh(
   root.position.set(
     building.x / SCALE,
 
-    (
-      ground +
-      (
-        Number(
-          building.elevation
-        ) || 0
-      )
-    ) /
-    SCALE,
+    structureWorldElevation(building, ground) / SCALE,
 
     building.y / SCALE
   );
@@ -589,6 +584,36 @@ export function createBlueprintMesh(
       floor.position.y =
         elevation / SCALE;
 
+      const floorHoles = [
+        ...hatchHoles,
+        ...floorVoidHoles,
+        ...automaticStairHoles,
+        ...chimneyPassThroughHoles,
+      ];
+
+      (level.rooms || []).filter(room =>
+        Array.isArray(room.region) && room.region.length >= 3 && room.floor_material
+      ).forEach(room => {
+        const roomFloor = attach(
+          MeshBuilder.CreatePolygon(
+            `room-floor-${level.id}-${room.id}`,
+            {
+              shape: room.region.map(point => new Vector3(point.x / SCALE, 0, point.y / SCALE)),
+              holes: floorHoles.filter(hole => hole[0] && pointInPolygon({
+                x: hole[0].x * SCALE,
+                y: hole[0].z * SCALE,
+              }, room.region)),
+              sideOrientation: Mesh.DOUBLESIDE,
+            },
+            scene,
+            earcut
+          ),
+          materialFor(constructionFinish(room.floor_material, FLOOR_FINISHES,
+            level.floor_material), floorMat)
+        );
+        roomFloor.position.y = elevation / SCALE + 0.002;
+      });
+
       /* ------------------------------------------------------------------ */
       /* Walls                                                               */
       /* ------------------------------------------------------------------ */
@@ -605,7 +630,8 @@ export function createBlueprintMesh(
           const wallFinish = exterior
             ? materialFor(constructionFinish(wall.material, WALL_FINISHES,
               level.exterior_material), wallMat)
-            : wallMat;
+            : materialFor(constructionFinish(wall.material, WALL_FINISHES,
+              level.interior_material), wallMat);
           const length =
             wallLength(wall);
 
@@ -750,6 +776,33 @@ export function createBlueprintMesh(
           );
         }
       );
+
+      // Wall panels end at their centerline nodes. Seal the exposed wedge at
+      // shared endpoints, which grows noticeable with thick exterior walls.
+      const wallJoints = [];
+      walls.forEach(wall => {
+        [wall.start, wall.end].forEach(point => {
+          const joint = wallJoints.find(candidate =>
+            Math.hypot(candidate.x - point.x, candidate.y - point.y) < 0.01);
+          if (joint) {
+            joint.count += 1;
+            joint.thickness = Math.max(joint.thickness, Number(wall.thickness) || 0.5);
+            joint.exterior ||= (level.outline || []).some(outline => outline.id === wall.id);
+          } else {
+            wallJoints.push({ x: point.x, y: point.y, count: 1,
+              thickness: Number(wall.thickness) || 0.5,
+              exterior: (level.outline || []).some(outline => outline.id === wall.id) });
+          }
+        });
+      });
+      wallJoints.filter(joint => joint.count > 1).forEach((joint, index) => {
+        const size = joint.thickness * 1.1;
+        box(`wall-joint-${level.id}-${index}`, joint.x, elevation + height / 2,
+          joint.y, size, height, size, 0,
+          joint.exterior
+            ? materialFor(level.exterior_material, wallMat)
+            : materialFor(level.interior_material, wallMat));
+      });
 
       /* ------------------------------------------------------------------ */
       /* Porches / decks / balconies                                        */
@@ -1355,7 +1408,7 @@ export function createBlueprintMesh(
   );
 
   if (building.show_roofs) {
-    building.roofs.forEach(roof => {
+    [...building.roofs, ...automaticRoofFootprints(building)].forEach(roof => {
       if (!isRoofVisible(building, roof)) return;
 
       const support = building.levels.find(

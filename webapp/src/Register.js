@@ -153,7 +153,7 @@ function Register({ setIsLoggedIn, setToken, setAppUsername, setUserID }) {
           onChange={e => setConfirmPassword(e.target.value)}
         />
         {password !== confirmPassword && confirmPassword !== '' && (
-          <span style={{ color: 'red', marginLeft: '10px' }}>Passwords do not match</span>
+          <span style={{ color: 'var(--danger)', marginLeft: '10px' }}>Passwords do not match</span>
         )}
         <input
           type="text"

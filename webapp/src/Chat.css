@@ -1,4 +1,4 @@
-.chat-widget {
+:where(html[data-kachhapa-ui="core"]) .chat-widget {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -7,7 +7,7 @@
   color: var(--text-main);
 }
 
-.chat-widget>.h-100 {
+:where(html[data-kachhapa-ui="core"]) .chat-widget>.h-100 {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -19,14 +19,14 @@
 
 /* ---------- Main layout ---------- */
 
-.chat-feed-row {
+:where(html[data-kachhapa-ui="core"]) .chat-feed-row {
   flex: 1 1 auto;
   min-height: 0;
   margin: 0;
   overflow: hidden;
 }
 
-.chat-feed-col {
+:where(html[data-kachhapa-ui="core"]) .chat-feed-col {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -36,7 +36,7 @@
   overflow: hidden;
 }
 
-.messageContainer {
+:where(html[data-kachhapa-ui="core"]) .messageContainer {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -49,35 +49,35 @@
   cursor: pointer;
 }
 
-.recipient-picker-row,
-.chat-compose-row {
+:where(html[data-kachhapa-ui="core"]) .recipient-picker-row,
+:where(html[data-kachhapa-ui="core"]) .chat-compose-row {
   flex: 0 0 auto;
   margin-left: 0;
   margin-right: 0;
 }
 
-.recipient-picker-col,
-.chat-compose-col {
+:where(html[data-kachhapa-ui="core"]) .recipient-picker-col,
+:where(html[data-kachhapa-ui="core"]) .chat-compose-col {
   padding-left: 0;
   padding-right: 0;
 }
 
-.recipient-picker-row {
+:where(html[data-kachhapa-ui="core"]) .recipient-picker-row {
   margin-top: 0.45rem;
   margin-bottom: 0.45rem;
 }
 
-.chat-compose-row {
+:where(html[data-kachhapa-ui="core"]) .chat-compose-row {
   margin-top: 0.15rem;
 }
 
-.chat-compose-form {
+:where(html[data-kachhapa-ui="core"]) .chat-compose-form {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
 }
 
-.chat-compose-actions {
+:where(html[data-kachhapa-ui="core"]) .chat-compose-actions {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -85,7 +85,7 @@
 
 /* ---------- Message rows ---------- */
 
-.message {
+:where(html[data-kachhapa-ui="core"]) .message {
   display: flex;
   align-items: flex-end;
   gap: 0.45rem;
@@ -94,44 +94,44 @@
   color: var(--text-main);
 }
 
-.message.sent {
+:where(html[data-kachhapa-ui="core"]) .message.sent {
   justify-content: flex-end;
 }
 
-.message.received {
+:where(html[data-kachhapa-ui="core"]) .message.received {
   justify-content: flex-start;
 }
 
-.message-new-run {
+:where(html[data-kachhapa-ui="core"]) .message-new-run {
   margin-top: 0.6rem;
 }
 
-.message-same-prev {
+:where(html[data-kachhapa-ui="core"]) .message-same-prev {
   margin-top: 0;
 }
 
-.message-avatar-wrap {
+:where(html[data-kachhapa-ui="core"]) .message-avatar-wrap {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
 }
 
-.message-avatar {
+:where(html[data-kachhapa-ui="core"]) .message-avatar {
   width: 36px !important;
   height: 36px !important;
   font-size: 0.85rem !important;
   font-weight: 700 !important;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid color-mix(in srgb, var(--border-main) 18%, transparent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
 }
 
-.message-avatar-self {
+:where(html[data-kachhapa-ui="core"]) .message-avatar-self {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 /* ---------- Message bubbles ---------- */
 
-.message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-bubble {
   max-width: min(70%, 640px);
   padding: 0.55rem 0.75rem;
   border-radius: 16px;
@@ -139,84 +139,84 @@
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
 }
 
-.message.sent .message-bubble {
-  background: #2f4c78;
-  border-color: #42679e;
+:where(html[data-kachhapa-ui="core"]) .message.sent .message-bubble {
+  background: var(--bg-surface);
+  border-color: var(--border-main);
 }
 
-.message.received .message-bubble {
-  background: #1d5a5a;
-  border-color: #2d7474;
+:where(html[data-kachhapa-ui="core"]) .message.received .message-bubble {
+  background: var(--bg-surface);
+  border-color: var(--border-main);
 }
 
-.message-text {
+:where(html[data-kachhapa-ui="core"]) .message-text {
   color: var(--text-main);
   font-size: 0.94rem;
   line-height: 1.28;
   word-break: break-word;
 }
 
-.message-text p,
-.message-text div,
-.message-text span {
+:where(html[data-kachhapa-ui="core"]) .message-text p,
+:where(html[data-kachhapa-ui="core"]) .message-text div,
+:where(html[data-kachhapa-ui="core"]) .message-text span {
   color: inherit;
 }
 
 /* ---------- Cluster shaping ---------- */
 
-.message-cluster-single .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-single .message-bubble {
   border-radius: 16px;
 }
 
-.message-cluster-top.sent .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-top.sent .message-bubble {
   border-radius: 16px 16px 0 16px;
 }
 
-.message-cluster-middle.sent .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-middle.sent .message-bubble {
   border-radius: 16px 0 0 16px;
 }
 
-.message-cluster-bottom.sent .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-bottom.sent .message-bubble {
   border-radius: 16px 0 16px 16px;
 }
 
-.message-cluster-top.received .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-top.received .message-bubble {
   border-radius: 16px 16px 16px 0;
 }
 
-.message-cluster-middle.received .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-middle.received .message-bubble {
   border-radius: 0 16px 16px 0;
 }
 
-.message-cluster-bottom.received .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-bottom.received .message-bubble {
   border-radius: 0 16px 16px 16px;
 }
 
-.message-cluster-top .message-bubble,
-.message-cluster-middle .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-top .message-bubble,
+:where(html[data-kachhapa-ui="core"]) .message-cluster-middle .message-bubble {
   padding-bottom: 0.3rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.message-cluster-bottom .message-bubble,
-.message-cluster-single .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-cluster-bottom .message-bubble,
+:where(html[data-kachhapa-ui="core"]) .message-cluster-single .message-bubble {
   padding-bottom: 0.5rem;
 }
 
 /* ---------- Participant avatars inside bubbles ---------- */
 
-.message-recipient-avatars {
+:where(html[data-kachhapa-ui="core"]) .message-recipient-avatars {
   display: flex;
   align-items: center;
   margin-top: 0.4rem;
 }
 
-.message-avatar-group {
+:where(html[data-kachhapa-ui="core"]) .message-avatar-group {
   justify-content: flex-start;
 }
 
-.message-avatar-group .MuiAvatar-root.message-recipient-avatar,
-.message-recipient-avatar {
+:where(html[data-kachhapa-ui="core"]) .message-avatar-group .MuiAvatar-root.message-recipient-avatar,
+:where(html[data-kachhapa-ui="core"]) .message-recipient-avatar {
   width: 20px !important;
   height: 20px !important;
   font-size: 0.55rem !important;
@@ -227,14 +227,14 @@
 
 /* ---------- Recipient picker ---------- */
 
-.recipient-picker-bar {
+:where(html[data-kachhapa-ui="core"]) .recipient-picker-bar {
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
   min-height: 0;
 }
 
-.recipient-chip-list {
+:where(html[data-kachhapa-ui="core"]) .recipient-chip-list {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -245,37 +245,37 @@
   padding-right: 0.25rem;
 }
 
-.recipient-chip.is-offline-user {
+:where(html[data-kachhapa-ui="core"]) .recipient-chip.is-offline-user {
   opacity: 0.82;
 }
 
-.recipient-picker-actions {
+:where(html[data-kachhapa-ui="core"]) .recipient-picker-actions {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
 }
 
-.recipient-empty-state {
+:where(html[data-kachhapa-ui="core"]) .recipient-empty-state {
   color: var(--text-subtle);
   font-size: 0.95rem;
   padding: 0.35rem 0;
 }
 
-.recipient-chip {
+:where(html[data-kachhapa-ui="core"]) .recipient-chip {
   border-radius: 999px !important;
   max-width: 100%;
   transition: transform 0.12s ease, background 0.12s ease !important;
 }
 
-.recipient-chip:hover {
+:where(html[data-kachhapa-ui="core"]) .recipient-chip:hover {
   transform: translateY(-1px);
 }
 
-.recipient-chip .MuiChip-label {
+:where(html[data-kachhapa-ui="core"]) .recipient-chip .MuiChip-label {
   font-weight: 500;
 }
 
-.recipient-chip .MuiAvatar-root.recipient-chip-avatar {
+:where(html[data-kachhapa-ui="core"]) .recipient-chip .MuiAvatar-root.recipient-chip-avatar {
   width: 26px !important;
   height: 26px !important;
   font-size: 0.76rem !important;
@@ -284,132 +284,122 @@
   opacity: 1 !important;
 }
 
-.recipient-chip.is-selected {
-  background: var(--accent-2) !important;
-  color: #fff !important;
+:where(html[data-kachhapa-ui="core"]) .recipient-chip.is-selected {
+  background: var(--accent) !important;
+  color: var(--text-on-accent) !important;
   border: 1px solid var(--accent-2) !important;
 }
 
-.recipient-chip.is-unselected {
+:where(html[data-kachhapa-ui="core"]) .recipient-chip.is-unselected {
   background: var(--bg-surface-2) !important;
   color: var(--text-main) !important;
   border: 1px solid var(--border-main) !important;
 }
 
-.recipient-clear-btn {
+:where(html[data-kachhapa-ui="core"]) .recipient-clear-btn {
   color: var(--text-muted) !important;
   border: 1px solid var(--border-main) !important;
   background: var(--bg-surface-2) !important;
 }
 
-.recipient-clear-btn:hover {
+:where(html[data-kachhapa-ui="core"]) .recipient-clear-btn:hover {
   color: var(--text-main) !important;
   background: var(--bg-surface-3) !important;
 }
 
 /* ---------- Form controls ---------- */
 
-.chat-widget .btn,
-.chat-widget .form-control,
-.chat-widget .form-select,
-.chat-widget .btn-outline-primary,
-.chat-widget .btn-primary {
+:where(html[data-kachhapa-ui="core"]) .chat-widget .btn,
+:where(html[data-kachhapa-ui="core"]) .chat-widget .form-control,
+:where(html[data-kachhapa-ui="core"]) .chat-widget .form-select,
+:where(html[data-kachhapa-ui="core"]) .chat-widget .btn-outline-primary,
+:where(html[data-kachhapa-ui="core"]) .chat-widget .btn-primary {
   border-radius: 0.5rem;
 }
 
-.chat-widget .form-control,
-.chat-widget .form-select {
+:where(html[data-kachhapa-ui="core"]) .chat-widget .form-control,
+:where(html[data-kachhapa-ui="core"]) .chat-widget .form-select {
   background: var(--bg-surface-2);
   color: var(--text-main);
   border: 1px solid var(--border-main);
 }
 
-.chat-widget .form-control::placeholder {
+:where(html[data-kachhapa-ui="core"]) .chat-widget .form-control::placeholder {
   color: var(--text-subtle);
 }
 
-.chat-widget .form-control:focus,
-.chat-widget .form-select:focus {
+:where(html[data-kachhapa-ui="core"]) .chat-widget .form-control:focus,
+:where(html[data-kachhapa-ui="core"]) .chat-widget .form-select:focus {
   background: var(--bg-surface-2);
   color: var(--text-main);
   border-color: var(--accent-2);
   box-shadow: 0 0 0 0.2rem rgba(96, 165, 250, 0.15);
 }
 
-.chat-widget .btn-primary {
+:where(html[data-kachhapa-ui="core"]) .chat-widget .btn-primary {
   background: var(--accent-2);
   border-color: var(--accent-2);
 }
 
-.chat-widget .btn-primary:hover,
-.chat-widget .btn-primary:focus {
+:where(html[data-kachhapa-ui="core"]) .chat-widget .btn-primary:hover,
+:where(html[data-kachhapa-ui="core"]) .chat-widget .btn-primary:focus {
   filter: brightness(1.05);
 }
 
-.error-message {
+:where(html[data-kachhapa-ui="core"]) .error-message {
   color: var(--danger);
   margin-top: 0.25rem;
   margin-bottom: 0;
 }
 
-.message-thread-active {
+:where(html[data-kachhapa-ui="core"]) .message-thread-active {
   opacity: 1;
   filter: none;
 }
 
-.message-thread-dimmed {
+:where(html[data-kachhapa-ui="core"]) .message-thread-dimmed {
   opacity: 0.34;
   filter: saturate(0.72);
   transition: opacity 0.16s ease, filter 0.16s ease;
 }
 
-.message-thread-active .message-bubble,
-.message-thread-active .message-avatar,
-.message-thread-active .message-avatar-self,
-.message-thread-active .message-recipient-avatar {
+:where(html[data-kachhapa-ui="core"]) .message-thread-active .message-bubble,
+:where(html[data-kachhapa-ui="core"]) .message-thread-active .message-avatar,
+:where(html[data-kachhapa-ui="core"]) .message-thread-active .message-avatar-self,
+:where(html[data-kachhapa-ui="core"]) .message-thread-active .message-recipient-avatar {
   opacity: 1;
 }
 
-.message-thread-dimmed .message-bubble,
-.message-thread-dimmed .message-avatar,
-.message-thread-dimmed .message-avatar-self,
-.message-thread-dimmed .message-recipient-avatar {
+:where(html[data-kachhapa-ui="core"]) .message-thread-dimmed .message-bubble,
+:where(html[data-kachhapa-ui="core"]) .message-thread-dimmed .message-avatar,
+:where(html[data-kachhapa-ui="core"]) .message-thread-dimmed .message-avatar-self,
+:where(html[data-kachhapa-ui="core"]) .message-thread-dimmed .message-recipient-avatar {
   transition: opacity 0.16s ease, filter 0.16s ease;
 }
 
-.message-thread-dimmed:hover {
+:where(html[data-kachhapa-ui="core"]) .message-thread-dimmed:hover {
   opacity: 0.52;
 }
 
-.message-thread-active .message-bubble {
+:where(html[data-kachhapa-ui="core"]) .message-thread-active .message-bubble {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
 }
 
 /* ---------- Light mode overrides ---------- */
 
-[data-theme="light"] .message.sent .message-bubble {
-  background: #dbeafe;
-  border-color: #bfdbfe;
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-text,
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-text p,
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-text div,
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-text span {
+  color: var(--text-main);
 }
 
-[data-theme="light"] .message.received .message-bubble {
-  background: #dcfce7;
-  border-color: #bbf7d0;
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-avatar,
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-avatar-self {
+  border-color: color-mix(in srgb, var(--border-main) 18%, transparent);
 }
 
-[data-theme="light"] .message-text,
-[data-theme="light"] .message-text p,
-[data-theme="light"] .message-text div,
-[data-theme="light"] .message-text span {
-  color: #111827;
-}
-
-[data-theme="light"] .message-avatar,
-[data-theme="light"] .message-avatar-self {
-  border-color: rgba(15, 23, 42, 0.08);
-}
-
-[data-theme="light"] .message-avatar-group .MuiAvatar-root.message-recipient-avatar,
-[data-theme="light"] .message-recipient-avatar {
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-avatar-group .MuiAvatar-root.message-recipient-avatar,
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .message-recipient-avatar {
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
 }

@@ -1,10 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Engine, Scene, useScene } from 'react-babylonjs';
 
 import { Scene as BabylonScene } from '@babylonjs/core/scene';
+import { Engine as BabylonEngine } from '@babylonjs/core/Engines/engine';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
-// import { Scalar } from '@babylonjs/core/Maths/math.scalar';
+import { Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Constants } from '@babylonjs/core/Engines/constants';
 
 import { Mesh, MeshBuilder, VertexData } from '@babylonjs/core/Meshes';
@@ -17,12 +16,23 @@ import {
   StandardMaterial,
   DynamicTexture,
   RawTexture,
-  ImageProcessingConfiguration
+  ImageProcessingConfiguration,
+  ColorCurves,
+  ShaderMaterial
 } from '@babylonjs/core/Materials';
+import { ShaderStore } from '@babylonjs/core/Engines/shaderStore';
 
-import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
+import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
 import { Sound } from '@babylonjs/core/Audio/sound';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
+import { ParticleSystem } from '@babylonjs/core/Particles/particleSystem';
+import { createStreetLampRenderer } from './streetLampRenderer';
+import { Atmosphere } from '@babylonjs/addons/atmosphere';
+import { moonIllumination, moonLitPath, moonPhaseFraction, selectedMoon } from './settlementMoon';
+import { sceneFootprintPreview } from './sceneFootprint';
+import { structureWorldElevation } from './settlementProperties';
+import { createPropertyMeshes } from './propertyMeshes';
+import { FIRST_PERSON_LOOK_FEET, firstPersonTarget, firstPersonWalkSceneUnits } from './firstPersonCamera';
 
 
 // ==============================================================================
@@ -35,6 +45,7 @@ import '@babylonjs/core/Shaders/pbr.vertex';
 import '@babylonjs/core/Lights/Shadows/index';
 
 import earcut from 'earcut';
+import { regionPresentation, regionFillOpacity } from './regionPresentation';
 
 import { createTerrainWindow } from './terrainWindow';
 
@@ -42,6 +53,8 @@ import '@babylonjs/loaders/glTF/2.0/glTFLoader';
 
 import {
   fortificationVertexData,
+  wallSegmentMaterialColor,
+  wallSegmentBattlements,
   oceanVertexData,
   terrainClippedWaterAreaVertexData,
   riverVertexData,
@@ -55,6 +68,8 @@ import {
   animatedWaterSurfaceY,
   settlementCameraClipPlanes,
   settlementCameraPanSpeed,
+  settlementCameraTapDistanceFeet,
+  settlementScaleFeet,
   featureIntersectsBounds,
   polylinePartsInBounds,
   sampleRoadCenterline,
@@ -66,6 +81,8 @@ import {
   createTerrainHeightSampler,
   FEET_PER_SCENE_UNIT,
   isFortificationTowerPoint,
+  wallSegmentProperties,
+  attachedWallTower,
   terrainHeightAt
 } from './settlementEditor';
 
@@ -79,12 +96,130 @@ import {
 import { createSettlementBabylonWorkflow } from './settlementBabylonWorkflow';
 import { calculateTerrainFog } from './terrainFog';
 import { calculateSettlementLighting } from './settlementLighting';
+import {
+  daylightColorGrade,
+  moonOrbit,
+  normalizeWeatherVisuals,
+} from './settlementEnvironment';
 import { createBlueprintMesh } from './blueprintMesh';
 import { createReferenceOverlay, createReferenceGizmo } from './referenceOverlay';
 import { planTerrainView, referenceCameraFrame, terrainSampleOrder } from './terrainView';
 import { EDITOR_ACCENT_HEX } from './editorAppearance';
 import { buildingViewColor } from './settlementInspection';
 import { applyBuildingMapColor, createBuildingInspectOutline } from './settlementBuildingPresentation';
+
+
+ShaderStore.ShadersStore.settlementCloudVertexShader = `
+precision highp float;
+attribute vec3 position;
+uniform mat4 world;
+uniform mat4 worldViewProjection;
+varying vec3 vPositionW;
+void main(void) {
+  vec4 worldPosition = world * vec4(position, 1.0);
+  vPositionW = worldPosition.xyz;
+  gl_Position = worldViewProjection * vec4(position, 1.0);
+}`;
+
+ShaderStore.ShadersStore.settlementCloudFragmentShader = `
+precision highp float;
+varying vec3 vPositionW;
+uniform vec3 cameraPosition;
+uniform vec2 cloudHeights;
+uniform vec2 windOffset;
+uniform float cloudCoverage;
+uniform float cloudDensity;
+uniform float daylight;
+uniform vec3 celestialDirection;
+uniform float sampleCount;
+uniform float previousSampleCount;
+uniform float qualityBlend;
+uniform float evolution;
+
+float hash31(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
+float valueNoise(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash31(i), hash31(i + vec3(1,0,0)), f.x),
+        mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
+        mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y),
+    f.z
+  );
+}
+
+float fbm(vec3 p) {
+  float value = 0.0;
+  float amplitude = 0.55;
+  for (int octave = 0; octave < 4; octave++) {
+    value += valueNoise(p) * amplitude;
+    p = p * 2.03 + vec3(13.1, 7.7, 5.3);
+    amplitude *= 0.48;
+  }
+  return value;
+}
+
+float integrateCloud(vec3 rayDirection, float startDistance, float endDistance, float steps) {
+  float stepLength = (endDistance - startDistance) / steps;
+  float opticalDepth = 0.0;
+  vec3 samplePosition = cameraPosition + rayDirection * (startDistance + stepLength * 0.5);
+  float threshold = mix(0.79, 0.38, cloudCoverage);
+
+  for (int index = 0; index < 24; index++) {
+    if (float(index) >= steps) break;
+    float heightFraction = clamp(
+      (samplePosition.y - cloudHeights.x) / max(0.01, cloudHeights.y - cloudHeights.x),
+      0.0,
+      1.0
+    );
+    float edgeFade = smoothstep(0.0, 0.16, heightFraction) *
+      smoothstep(0.0, 0.18, 1.0 - heightFraction);
+    vec3 noisePosition = vec3(
+      samplePosition.x * 0.055 + windOffset.x,
+      samplePosition.y * 0.075 + evolution,
+      samplePosition.z * 0.055 + windOffset.y
+    );
+    float shape = fbm(noisePosition);
+    float density = smoothstep(threshold, threshold + 0.16, shape) * edgeFade;
+    opticalDepth += density * stepLength * cloudDensity * 0.18;
+    samplePosition += rayDirection * stepLength;
+  }
+
+  return 1.0 - exp(-opticalDepth);
+}
+
+void main(void) {
+  vec3 rayDirection = normalize(vPositionW - cameraPosition);
+  float surfaceDistance = length(vPositionW - cameraPosition);
+  bool insideLayer = cameraPosition.y >= cloudHeights.x && cameraPosition.y <= cloudHeights.y;
+  float startDistance = insideLayer ? 0.0 : surfaceDistance;
+  float oppositeHeight = cameraPosition.y > cloudHeights.y ? cloudHeights.x : cloudHeights.y;
+  float endDistance = insideLayer
+    ? surfaceDistance
+    : abs(rayDirection.y) > 0.001
+      ? abs((oppositeHeight - cameraPosition.y) / rayDirection.y)
+      : startDistance + 240.0;
+  endDistance = min(max(endDistance, startDistance + 0.1), startDistance + 320.0);
+  float alpha = integrateCloud(rayDirection, startDistance, endDistance, sampleCount);
+  if (qualityBlend < 1.0) {
+    float oldAlpha = integrateCloud(rayDirection, startDistance, endDistance, previousSampleCount);
+    alpha = mix(oldAlpha, alpha, smoothstep(0.0, 1.0, qualityBlend));
+  }
+  if (alpha < 0.006) discard;
+  vec3 nightColor = vec3(0.12, 0.15, 0.22);
+  vec3 dayColor = vec3(0.88, 0.91, 0.94);
+  vec3 cloudColor = mix(nightColor, dayColor, daylight);
+  float towardLight = 0.5 + 0.5 * dot(rayDirection, normalize(celestialDirection));
+  cloudColor *= 0.67 + 0.33 * towardLight;
+  gl_FragColor = vec4(cloudColor, clamp(alpha, 0.0, 0.94));
+}`;
 
 
 // Babylon's PolygonMeshBuilder looks for earcut on the global window object.
@@ -100,14 +235,6 @@ const ROAD_COLORS = {
   stone: '#898982'
 };
 
-const REGION_COLORS = {
-  city: '#c79b54',
-  forest: '#326a3f',
-  swamp: '#4f6b59',
-  grassland: '#78a35d',
-  farmland: '#b59a52',
-  pasture: '#91ad6c'
-};
 
 const DEFAULT_FIRST_PERSON_SETTINGS = {
   sensitivity: 50,
@@ -117,6 +244,51 @@ const DEFAULT_FIRST_PERSON_SETTINGS = {
   walkSpeed: 8,
   eyeHeight: 6
 };
+
+
+function createAtmosphereTexture(scene, name, draw) {
+  const texture = new DynamicTexture(name, { width: 512, height: 256 }, scene, false);
+  const context = texture.getContext();
+  context.clearRect(0, 0, 512, 256);
+  draw(context, 512, 256);
+  texture.hasAlpha = true;
+  texture.update(false);
+  return texture;
+}
+
+
+function drawMoonPhase(texture, phaseFraction) {
+  const context = texture.getContext();
+  const width = texture.getSize().width;
+  const height = texture.getSize().height;
+  const radius = Math.min(width, height) * 0.43;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  context.clearRect(0, 0, width, height);
+  context.save();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.clip();
+  context.fillStyle = '#182033';
+  context.fillRect(0, 0, width, height);
+
+  const gradient = context.createRadialGradient(
+    centerX - radius * 0.28,
+    centerY - radius * 0.22,
+    radius * 0.08,
+    centerX,
+    centerY,
+    radius
+  );
+  gradient.addColorStop(0, '#fffbe0');
+  gradient.addColorStop(0.68, '#dedbbf');
+  gradient.addColorStop(1, '#858694');
+  context.fillStyle = gradient;
+  const path = new Path2D(moonLitPath(phaseFraction, centerX, centerY, radius));
+  context.fill(path);
+  context.restore();
+  texture.update(false);
+}
 
 
 function material(scene, name, hex, alpha = 1, useVertexColors = false) {
@@ -159,24 +331,61 @@ function meshFromData(
 }
 
 
+const GERSTNER_WAVES = [
+  [1, 0.2, 0.18, 12, 1],
+  [-0.4, 0.9, 0.12, 6, 1.3],
+  [0.2, -0.8, 0.08, 3.5, 0.8],
+];
+const SUNSET_LIGHT_COLOR = new Color3(1, 0.78, 0.58);
+const DAY_LIGHT_COLOR = new Color3(1, 0.98, 0.95);
+const NIGHT_SKY_COLOR = new Color3(0.012, 0.018, 0.055);
+const DAY_SKY_COLOR = new Color3(0.26, 0.58, 0.88);
+const OVERCAST_SKY_COLOR = new Color3(0.28, 0.32, 0.36);
+const NIGHT_AMBIENT_COLOR = new Color3(0.45, 0.52, 0.68);
+const DAY_AMBIENT_COLOR = new Color3(0.92, 0.96, 1);
+const NIGHT_GROUND_COLOR = new Color3(0.12, 0.14, 0.2);
+const DAY_GROUND_COLOR = new Color3(0.25, 0.25, 0.28);
+
 export function getGerstnerWaveHeightAt(x, z, timeTime) {
-  const getWaveOffset = (dir, steepness, wavelength, speed) => {
+  return GERSTNER_WAVES.reduce((height, [directionX, directionZ, steepness, wavelength, speed]) => {
     const k = 2 * Math.PI / wavelength;
     const c = Math.sqrt(9.81 / k) * speed;
-    const f = k * ((dir.x * x + dir.y * z) - c * timeTime);
-
-    return (steepness / k) * Math.sin(f);
-  };
-
-  const h1 = getWaveOffset({ x: 1, y: 0.2 }, 0.18, 12, 1);
-  const h2 = getWaveOffset({ x: -0.4, y: 0.9 }, 0.12, 6, 1.3);
-  const h3 = getWaveOffset({ x: 0.2, y: -0.8 }, 0.08, 3.5, 0.8);
-
-  return h1 + h2 + h3;
+    const phase = k * ((directionX * x + directionZ * z) - c * timeTime);
+    return height + (steepness / k) * Math.sin(phase);
+  }, 0);
 }
 
 
-function waterMaterial(scene, name, hex, animate, state) {
+function createWaterNormalTexture(scene) {
+  const size = 128;
+  const buffer = new Uint8Array(size * size * 4);
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * size + x) * 4;
+      buffer[idx] = Math.cos((x / size) * Math.PI * 8) * 127 + 128;
+      buffer[idx + 1] = Math.sin((y / size) * Math.PI * 8) * 127 + 128;
+      buffer[idx + 2] = 255;
+      buffer[idx + 3] = 255;
+    }
+  }
+
+  const texture = RawTexture.CreateRGBATexture(
+    buffer,
+    size,
+    size,
+    scene,
+    false,
+    false,
+    Constants.TEXTURE_TRILINEAR_SAMPLINGMODE
+  );
+  texture.uScale = 16;
+  texture.vScale = 16;
+  return texture;
+}
+
+
+function waterMaterial(scene, name, hex, bumpTexture) {
   const value = new PBRMaterial(name, scene);
 
   value.albedoColor = Color3.FromHexString(hex);
@@ -189,76 +398,21 @@ function waterMaterial(scene, name, hex, animate, state) {
   value.zOffsetUnits = 0;
 
 
-  // ---------------------------------------------------------------------------
-  // Procedural normal map
-  // ---------------------------------------------------------------------------
-
-  const size = 128;
-  const buffer = new Uint8Array(size * size * 4);
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const idx = (y * size + x) * 4;
-      const nx = Math.cos((x / size) * Math.PI * 8) * 127 + 128;
-      const ny = Math.sin((y / size) * Math.PI * 8) * 127 + 128;
-
-      buffer[idx] = nx;
-      buffer[idx + 1] = ny;
-      buffer[idx + 2] = 255;
-      buffer[idx + 3] = 255;
-    }
-  }
-
-  const proceduralBump = RawTexture.CreateRGBATexture(
-    buffer,
-    size,
-    size,
-    scene,
-    false,
-    false,
-    Constants.TEXTURE_TRILINEAR_SAMPLINGMODE
-  );
-
-  proceduralBump.uScale = 16;
-  proceduralBump.vScale = 16;
-  value.bumpTexture = proceduralBump;
-
-  if (animate) {
-    const scrollObserver = scene.onBeforeRenderObservable.add(() => {
-      if (state?.activeTool === 'terrain') return;
-
-      const delta = scene.getEngine().getDeltaTime() / 1000;
-
-      proceduralBump.uOffset += 0.012 * delta;
-      proceduralBump.vOffset += 0.006 * delta;
-    });
-
-    value.onDisposeObservable.add(() => {
-      scene.onBeforeRenderObservable.remove(scrollObserver);
-      proceduralBump.dispose();
-    });
-  }
+  value.bumpTexture = bumpTexture;
 
   return value;
 }
 
 
 function createBabylonRegionMesh(scene, region, state, heightSampler) {
-  const points = region.points || [];
-  if (!points.length) return [];
+  const presentation = regionPresentation(region);
+  if (!presentation) return [];
+  const { points } = presentation;
+  const selected = state.selectedRegionId === region.id;
 
-  const pointCount = points.length;
 
-  let totalX = 0;
-  let totalY = 0;
-
-  for (let i = 0; i < pointCount; i++) {
-    totalX += points[i].x;
-    totalY += points[i].y;
-  }
-
-  const centerX = totalX / Math.max(1, pointCount);
-  const centerY = totalY / Math.max(1, pointCount);
+  const centerX = presentation.center.x;
+  const centerY = presentation.center.y;
   const sample = heightSampler || ((x, y) => terrainHeightAt(state.strokes, x, y, state.heightMap));
   const centerElevation = sample(centerX, centerY);
 
@@ -275,15 +429,31 @@ function createBabylonRegionMesh(scene, region, state, heightSampler) {
     )
   );
 
-  const outline = MeshBuilder.CreateLines(
+  const outline = MeshBuilder.CreateTube(
     `region-outline-${region.id}`,
-    { points: outlinePoints },
+    { path: outlinePoints, radius: (selected ? 3 : 1.5) / FEET_PER_SCENE_UNIT, tessellation: 6 },
     scene
   );
 
-  outline.color = Color3.FromHexString(
-    REGION_COLORS[region.region_type] || REGION_COLORS.grassland
-  );
+  outline.material = material(scene, `region-outline-material-${region.id}`, selected ? '#fff1ad' : presentation.color);
+  outline.material.emissiveColor = Color3.FromHexString(selected ? '#fff1ad' : presentation.color);
+  outline.renderingGroupId = 2;
+  outline.isVisible = state.buildingViewMode === 'districts' || state.activeTool === 'region';
+  outline.metadata = { settlement: true, kind: 'region', item: region };
+  const fill = new VertexData();
+  fill.positions = points.flatMap(point => [point.x / FEET_PER_SCENE_UNIT,
+    (sample(point.x, point.y) + 2) / FEET_PER_SCENE_UNIT, point.y / FEET_PER_SCENE_UNIT]);
+  fill.indices = presentation.indices;
+  fill.normals = [];
+  VertexData.ComputeNormals(fill.positions, fill.indices, fill.normals);
+  const fillMaterial = material(scene, `region-fill-material-${region.id}`, presentation.color, regionFillOpacity(state.buildingViewMode));
+  fillMaterial.backFaceCulling = false;
+  fillMaterial.disableLighting = true;
+  fillMaterial.emissiveColor = Color3.FromHexString(presentation.color);
+  const polygon = meshFromData(scene, `region-fill-${region.id}`, fill, fillMaterial, { settlement: true, kind: 'region', item: region });
+  polygon.renderingGroupId = 2;
+  polygon.isVisible = state.buildingViewMode === 'districts';
+  polygon.isPickable = state.activeTool === 'region';
 
   outline.metadata = {
     settlement: true,
@@ -318,6 +488,8 @@ function createBabylonRegionMesh(scene, region, state, heightSampler) {
   };
 
   labelPlane.billboardMode = Mesh.BILLBOARDMODE_ALL;
+  labelPlane.renderingGroupId = 3;
+  labelPlane.isVisible = state.buildingViewMode === 'districts' || state.activeTool === 'region';
 
   const dynamicTexture = new DynamicTexture(
     `dynamic-tex-${region.id}`,
@@ -353,17 +525,17 @@ function createBabylonRegionMesh(scene, region, state, heightSampler) {
 
   labelPlane.material = textMaterial;
 
-  return [outline, labelPlane];
+  return [polygon, outline, labelPlane];
 }
 
 
-function createBabylonWaterMesh(scene, body, state, bounds, heightSampler) {
+function createBabylonWaterMesh(scene, body, state, bounds, heightSampler, bumpTexture) {
   if (body.water_type === 'river') {
     return meshFromData(
       scene,
       `water-${body.id}`,
       riverVertexData(body, state.strokes, state.heightMap, heightSampler),
-      waterMaterial(scene, `water-material-${body.id}`, '#338ca0', state.animateWater),
+      waterMaterial(scene, `water-material-${body.id}`, '#338ca0', bumpTexture),
       {
         settlement: true,
         kind: 'water',
@@ -389,7 +561,7 @@ function createBabylonWaterMesh(scene, body, state, bounds, heightSampler) {
           scene,
           `water-${body.id}`,
           data,
-          waterMaterial(scene, `water-material-${body.id}`, '#176b91', state.animateWater),
+          waterMaterial(scene, `water-material-${body.id}`, '#176b91', bumpTexture),
           {
             settlement: true,
             kind: 'water',
@@ -414,7 +586,7 @@ function createBabylonWaterMesh(scene, body, state, bounds, heightSampler) {
         scene,
         `water-${body.id}`,
         data,
-        waterMaterial(scene, `water-material-${body.id}`, '#176b91', state.animateWater),
+        waterMaterial(scene, `water-material-${body.id}`, '#176b91', bumpTexture),
         {
           settlement: true,
           kind: 'water',
@@ -454,7 +626,7 @@ function createBabylonWaterMesh(scene, body, state, bounds, heightSampler) {
     scene,
     `water-material-${body.id}`,
     '#338ca0',
-    state.animateWater
+    bumpTexture
   );
 
   lake.metadata = {
@@ -467,34 +639,61 @@ function createBabylonWaterMesh(scene, body, state, bounds, heightSampler) {
 }
 
 
-function createBabylonExternalAssetModel(scene, buildingMesh, asset, building, mapColor) {
+function loadExternalAssetContainer(scene, url, cache) {
+  if (cache.has(url)) return cache.get(url);
+
+  const pending = LoadAssetContainerAsync(url, scene).catch(error => {
+    if (cache.get(url) === pending) cache.delete(url);
+    throw error;
+  });
+  cache.set(url, pending);
+  return pending;
+}
+
+
+function createBabylonExternalAssetModel(scene, buildingMesh, asset, building, mapColor, cache) {
   if (!asset.model_url) return;
 
-  SceneLoader.ImportMeshAsync('', '', asset.model_url, scene)
-    .then(result => {
+  loadExternalAssetContainer(scene, asset.model_url, cache)
+    .then(container => {
       // A streamed terrain-window change may cull the parent while the model
       // is still downloading. Do not let a late response resurrect it.
-      if (buildingMesh.isDisposed()) {
-        result.meshes.forEach(mesh => mesh.dispose());
-        return;
-      }
+      if (buildingMesh.isDisposed() || scene.isDisposed) return;
 
-      result.meshes.forEach(mesh => {
-        mesh.parent = buildingMesh;
-        mesh.scaling.scaleInPlace(0.01);
-        mesh.metadata = {
+      const instance = container.instantiateModelsToScene(
+        name => `${buildingMesh.name}-${name}`,
+        true
+      );
+      const surfaces = [];
+      instance.rootNodes.forEach(root => {
+        root.parent = buildingMesh;
+        root.scaling.scaleInPlace(0.01);
+        root.metadata = {
           settlement: true,
           kind: 'building',
           item: building
         };
+        if (root.material) surfaces.push(root);
+        root.getChildMeshes?.().forEach(mesh => {
+          mesh.metadata = {
+            settlement: true,
+            kind: 'building',
+            item: building
+          };
+          surfaces.push(mesh);
+        });
       });
-      applyBuildingMapColor(buildingMesh, mapColor, result.meshes);
+      buildingMesh.onDisposeObservable.addOnce(() => {
+        instance.animationGroups.forEach(group => group.dispose());
+        instance.skeletons.forEach(skeleton => skeleton.dispose());
+      });
+      applyBuildingMapColor(buildingMesh, mapColor, surfaces);
     })
     .catch(() => { });
 }
 
 
-function createBabylonBuiltInBuilding(scene, building, asset, state, heightSampler) {
+function createBabylonBuiltInBuilding(scene, building, asset, state, heightSampler, assetCache) {
   const sampledElevation = heightSampler?.(building.x, building.y);
 
   const groundElevation = Number.isFinite(sampledElevation)
@@ -507,7 +706,7 @@ function createBabylonBuiltInBuilding(scene, building, asset, state, heightSampl
     );
 
   const heightFeet = Number(asset.height_feet || 30);
-  const elevation = groundElevation + Number(building.elevation || 0);
+  const elevation = structureWorldElevation(building, groundElevation);
 
   const buildingMesh = MeshBuilder.CreateBox(
     `building-${building.id}`,
@@ -542,11 +741,11 @@ function createBabylonBuiltInBuilding(scene, building, asset, state, heightSampl
     ? buildingViewColor(building, asset, state.buildingViewMode, state.businesses, state.buildings)
     : null;
   applyBuildingMapColor(buildingMesh, mapColor);
-  createBabylonExternalAssetModel(scene, buildingMesh, asset, building, mapColor);
+  createBabylonExternalAssetModel(scene, buildingMesh, asset, building, mapColor, assetCache);
 
   return buildingMesh;
 }
-function applyBabylonCameraCommand(
+export function applyBabylonCameraCommand(
   camera,
   command,
   bounds,
@@ -566,6 +765,18 @@ function applyBabylonCameraCommand(
   if (command.mode === 'camera' && command.camera) {
     camera.setPosition(Vector3.FromArray(command.camera.position));
     camera.setTarget(Vector3.FromArray(command.camera.target));
+  }
+
+  else if (command.mode === 'point' && command.point) {
+    const { x, y } = command.point;
+    camera.setTarget(worldToBabylon(x, y, sampleHeight?.(x, y) ?? terrainHeightAt(strokes, x, y, heightMap)));
+    camera.radius = Number(command.radiusFeet) > 0 ? command.radiusFeet / FEET_PER_SCENE_UNIT : Math.min(camera.radius, 5);
+    if (command.topdown) { camera.alpha = -Math.PI / 2; camera.beta = 0.02; }
+    camera.inertialAlphaOffset = 0;
+    camera.inertialBetaOffset = 0;
+    camera.inertialRadiusOffset = 0;
+    camera.inertialPanningX = 0;
+    camera.inertialPanningY = 0;
   }
 
   else if (command.mode === 'fit') {
@@ -619,21 +830,25 @@ function applyBabylonCameraCommand(
       ? sampledHeight
       : terrainHeightAt(strokes, worldX, worldY, heightMap);
 
-    camera.setPosition(
-      new Vector3(
-        target.x,
-        (groundHeight + (Number(settings.eyeHeight) || 6)) / FEET_PER_SCENE_UNIT,
-        target.z
-      )
+    const eye = new Vector3(
+      target.x,
+      (groundHeight + (Number(settings.eyeHeight) || 6)) / FEET_PER_SCENE_UNIT,
+      target.z
     );
-
-    camera.radius = 0.4;
+    camera.metadata.firstPersonEye = eye;
+    camera.lowerRadiusLimit = FIRST_PERSON_LOOK_FEET / FEET_PER_SCENE_UNIT;
+    camera.radius = FIRST_PERSON_LOOK_FEET / FEET_PER_SCENE_UNIT;
+    camera.beta = Math.PI / 2;
+    const look = firstPersonTarget(eye, camera.alpha, camera.beta);
+    camera.setTarget(new Vector3(look.x, look.y, look.z), false, true, true);
+    camera.position.copyFrom(eye);
   }
 }
 
 
 function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
   const keys = new Set();
+  const tappedKeys = new Set();
 
   const editable = target =>
     target instanceof HTMLInputElement ||
@@ -643,14 +858,18 @@ function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
     target?.isContentEditable;
 
   const key = event =>
-    event.code === 'ShiftLeft'
+    event.code === 'ShiftLeft' || event.code === 'ShiftRight'
       ? 'shift'
-      : event.code === 'ControlLeft'
+      : event.code === 'ControlLeft' || event.code === 'ControlRight'
         ? 'lower'
         : event.key.toLowerCase();
 
   const down = event => {
-    if (!editable(event.target)) keys.add(key(event));
+    if (!editable(event.target)) {
+      const pressed = key(event);
+      keys.add(pressed);
+      if (!event.repeat) tappedKeys.add(pressed);
+    }
   };
 
   const up = event => keys.delete(key(event));
@@ -707,6 +926,16 @@ function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
     const active = value => keys.has(value) || state.virtualKeys?.has(value);
     const command = state.viewCommand;
 
+    if (!state.firstPerson && camera.metadata.firstPersonActive) {
+      const eye = camera.metadata.firstPersonEye || camera.position;
+      camera.lowerRadiusLimit = camera.metadata.orbitLowerRadiusLimit;
+      camera.setTarget(new Vector3(eye.x, eye.y - 6 / FEET_PER_SCENE_UNIT, eye.z));
+      camera.radius = Math.max(20, camera.lowerRadiusLimit);
+      camera.beta = 0.8;
+      camera.metadata.firstPersonEye = null;
+    }
+    camera.metadata.firstPersonActive = Boolean(state.firstPerson);
+
     if (command && command.nonce !== camera.metadata?.lastCommandNonce) {
       applyBabylonCameraCommand(
         camera,
@@ -743,7 +972,7 @@ function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
       }
 
       else {
-        pointersInput.buttons = [0, 1, 2];
+        pointersInput.buttons = state.firstPerson ? [] : [0, 1, 2];
       }
     }
 
@@ -754,7 +983,10 @@ function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
 
     let elevationMovement = 0;
 
-    if (active('shift')) elevationMovement += 1;
+    // Shift is reserved for additive road selection while refining. Keeping
+    // the camera still also prevents a held modifier from moving the map
+    // before the pointer reaches the next handle.
+    if (active('shift') && !(state.activeTool === 'road' && state.roadMode === 'refine')) elevationMovement += 1;
     if (active('lower')) elevationMovement -= 1;
 
     if (elevationMovement !== 0 && !state.firstPerson) {
@@ -772,9 +1004,19 @@ function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
 
     camera.alpha += turn * 1.5 * delta;
     camera.beta = Math.max(
-      0.02,
-      Math.min(1.55, camera.beta - pitch * 1.2 * delta)
+      state.firstPerson ? 0.05 : 0.02,
+      Math.min(state.firstPerson ? Math.PI - 0.05 : 1.55,
+        camera.beta + (state.firstPerson ? pitch : -pitch) * 1.2 * delta)
     );
+    if (state.firstPerson && camera.metadata.firstPersonEye) {
+      const look = firstPersonTarget(camera.metadata.firstPersonEye, camera.alpha, camera.beta);
+      camera.target.copyFromFloats(look.x, look.y, look.z);
+      camera.position.copyFrom(camera.metadata.firstPersonEye);
+      camera.radius = FIRST_PERSON_LOOK_FEET / FEET_PER_SCENE_UNIT;
+      camera.inertialRadiusOffset = 0;
+      camera.inertialAlphaOffset = 0;
+      camera.inertialBetaOffset = 0;
+    }
 
 
     // -------------------------------------------------------------------------
@@ -795,19 +1037,51 @@ function installBabylonCameraControls(scene, camera, getState, onCameraChange) {
 
     if (movement.lengthSquared() > 0) {
       movement.normalize();
+      const canvasHeight = canvas?.clientHeight || 900;
+      const scaleFeet = settlementScaleFeet(camera.radius, camera.fov, canvasHeight);
+      const tapDistanceFeet = state.firstPerson
+        ? null
+        : settlementCameraTapDistanceFeet(scaleFeet);
+      const movementKeys = ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
+      const hasFreshTap = movementKeys.some(value => active(value) && tappedKeys.has(value));
 
-      const baseSpeed = state.firstPerson
-        ? Number(state.firstPersonSettings?.walkSpeed) || 8
-        : settlementCameraPanSpeed(camera.radius);
+      if (tapDistanceFeet != null) {
+        if (hasFreshTap) {
+          camera.target.addInPlace(
+            movement.scale(tapDistanceFeet / FEET_PER_SCENE_UNIT)
+          );
+        }
+      }
 
-      camera.target.addInPlace(movement.scale(baseSpeed * delta));
+      else {
+        const baseSpeed = state.firstPerson
+          ? firstPersonWalkSceneUnits(state.firstPersonSettings?.walkSpeed, 1)
+          : settlementCameraPanSpeed(camera.radius);
+        if (state.firstPerson && camera.metadata.firstPersonEye) {
+          camera.metadata.firstPersonEye.addInPlace(movement.scale(baseSpeed * delta));
+        } else {
+          camera.target.addInPlace(movement.scale(baseSpeed * delta));
+        }
+      }
+
+      movementKeys.forEach(value => tappedKeys.delete(value));
     }
 
 
     // Keep the target and camera above streamed terrain.
     const sampleHeight = state.sampleTerrainHeight;
 
-    if (typeof sampleHeight === 'function') {
+    if (state.firstPerson && camera.metadata.firstPersonEye) {
+      const eye = camera.metadata.firstPersonEye;
+      const ground = sampleHeight?.(eye.x * FEET_PER_SCENE_UNIT, eye.z * FEET_PER_SCENE_UNIT);
+      if (Number.isFinite(ground)) {
+        eye.y = (ground + (Number(state.firstPersonSettings?.eyeHeight) || 6)) / FEET_PER_SCENE_UNIT;
+      }
+      const look = firstPersonTarget(eye, camera.alpha, camera.beta);
+      camera.target.copyFromFloats(look.x, look.y, look.z);
+      camera.position.copyFrom(eye);
+      camera.radius = FIRST_PERSON_LOOK_FEET / FEET_PER_SCENE_UNIT;
+    } else if (typeof sampleHeight === 'function') {
       let targetLift = 0;
 
       const targetGround = sampleHeight(
@@ -916,6 +1190,12 @@ function installBabylonFirstPersonLook(
         (state.firstPersonSettings?.invertY ? 1 : -1)
       )
     );
+    if (camera.metadata?.firstPersonEye) {
+      const eye = camera.metadata.firstPersonEye;
+      const look = firstPersonTarget(eye, camera.alpha, camera.beta);
+      camera.target.copyFromFloats(look.x, look.y, look.z);
+      camera.position.copyFrom(eye);
+    }
   };
 
   const lock = () => {
@@ -1005,6 +1285,7 @@ function installBabylonScaleObserver(
 
 
 function SceneContent({
+  scene,
   tileStore,
   tileStoreVersion,
   state,
@@ -1015,8 +1296,6 @@ function SceneContent({
   onScaleChange,
   onSceneReady
 }) {
-  const scene = useScene();
-
   scene.fogMode = BabylonScene.FOGMODE_LINEAR;
 
   const workflowRef = useRef(null);
@@ -1053,6 +1332,75 @@ function SceneContent({
 
   const terrainMaterialRef = useRef(null);
   const [isMaterialReady, setIsMaterialReady] = useState(false);
+  const waterNormalTextureRef = useRef(null);
+  const assetContainerCacheRef = useRef(new Map());
+  const animatedWaterMeshesRef = useRef([]);
+  const animatedShipsRef = useRef([]);
+  const animationTimeRef = useRef(0);
+
+  useEffect(() => {
+    if (!scene) return undefined;
+
+    waterNormalTextureRef.current = createWaterNormalTexture(scene);
+    const cache = assetContainerCacheRef.current;
+
+    return () => {
+      waterNormalTextureRef.current?.dispose();
+      waterNormalTextureRef.current = null;
+      const pending = [...cache.values()];
+      cache.clear();
+      pending.forEach(value => value.then(container => container.dispose()).catch(() => {}));
+    };
+  }, [scene]);
+
+  useEffect(() => {
+    if (!scene) return undefined;
+
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      if (stateRef.current?.activeTool === 'terrain') return;
+
+      const delta = scene.getEngine().getDeltaTime() / 1000;
+      animationTimeRef.current += delta;
+      const time = animationTimeRef.current;
+      const bumpTexture = waterNormalTextureRef.current;
+
+      if (stateRef.current?.animateWater && bumpTexture) {
+        bumpTexture.uOffset += 0.012 * delta;
+        bumpTexture.vOffset += 0.006 * delta;
+      }
+
+      animatedWaterMeshesRef.current.forEach(({ mesh, originalPositions }) => {
+        const positions = mesh.getVerticesData(VertexData.PositionKind);
+        if (!positions) return;
+
+        for (let index = 0; index < positions.length; index += 3) {
+          const waveHeightFeet = getGerstnerWaveHeightAt(
+            originalPositions[index] * FEET_PER_SCENE_UNIT,
+            originalPositions[index + 2] * FEET_PER_SCENE_UNIT,
+            time
+          );
+          positions[index + 1] = animatedWaterSurfaceY(
+            originalPositions[index + 1],
+            waveHeightFeet
+          );
+        }
+        mesh.updateVerticesData(VertexData.PositionKind, positions);
+      });
+
+      animatedShipsRef.current.forEach(mesh => {
+        const xFeet = mesh.position.x * FEET_PER_SCENE_UNIT;
+        const zFeet = mesh.position.z * FEET_PER_SCENE_UNIT;
+        const waveHeight = getGerstnerWaveHeightAt(xFeet, zFeet, time);
+        const forwardOffset = getGerstnerWaveHeightAt(xFeet, zFeet + 25, time);
+        const lateralOffset = getGerstnerWaveHeightAt(xFeet + 25, zFeet, time);
+        mesh.position.y = waveHeight / FEET_PER_SCENE_UNIT + 0.15;
+        mesh.rotation.x = (forwardOffset - waveHeight) * 0.8;
+        mesh.rotation.z = (lateralOffset - waveHeight) * 0.8;
+      });
+    });
+
+    return () => scene.onBeforeRenderObservable.remove(observer);
+  }, [scene]);
 
   useEffect(() => {
     onCameraChangeRef.current = onCameraChange;
@@ -1129,6 +1477,7 @@ function SceneContent({
       ) /
       FEET_PER_SCENE_UNIT
     );
+    camera.metadata = { ...camera.metadata, orbitLowerRadiusLimit: camera.lowerRadiusLimit };
 
     camera.upperRadiusLimit = Math.max(
       600,
@@ -1150,6 +1499,14 @@ function SceneContent({
       new Vector3(0, -1, 0),
       scene
     );
+    const moonLight = new DirectionalLight('settlement-moon', new Vector3(0, -1, 0), scene);
+    moonLight.diffuse = new Color3(0.62, 0.72, 1);
+    moonLight.specular = Color3.Black();
+    moonLight.intensity = 0;
+    // Atmosphere accepts one source. This light feeds its scattering LUT only.
+    const skyLight = new DirectionalLight('settlement-atmosphere-source', new Vector3(0, -1, 0), scene);
+    skyLight.includeOnlyWithLayerMask = 0x10000000;
+    skyLight.intensity = 0;
 
     const ambientSky = new HemisphericLight(
       'settlement-ambient',
@@ -1205,7 +1562,198 @@ function SceneContent({
       pipeline.imageProcessing.toneMappingEnabled = true;
       pipeline.imageProcessing.toneMappingType =
         ImageProcessingConfiguration.TONEMAPPING_ACES;
+      pipeline.imageProcessing.colorCurves = new ColorCurves();
+      pipeline.imageProcessing.colorCurvesEnabled = true;
     }
+
+    // Use Babylon's scattering sky, while the existing feet-based linear fog
+    // remains responsible for authored terrain occlusion. Applying both aerial
+    // perspective systems would haze surfaces twice and bypass the fog sliders.
+    const atmosphere = Atmosphere.IsSupported(scene.getEngine())
+      ? new Atmosphere('settlement-atmosphere', scene, [skyLight], {
+        isLinearSpaceLight: true,
+        isLinearSpaceComposition: pipeline.isSupported,
+        skyRenderingGroup: 0,
+        aerialPerspectiveRenderingGroup: -1,
+        globeAtmosphereRenderingGroup: -1,
+        aerialPerspectiveIntensity: 0,
+        isAerialPerspectiveLutEnabled: false,
+        isDiffuseSkyIrradianceLutEnabled: false,
+        minimumMultiScatteringColor: new Color3(0.008, 0.012, 0.025),
+        minimumMultiScatteringIntensity: 0.025,
+      })
+      : null;
+
+    // Sky is composited after terrain (group 0). Keep terrain depth for the
+    // celestial layer and clouds, so weather cannot paint over nearer ground.
+    scene.setRenderingAutoClearDepthStencil(1, false);
+    scene.setRenderingAutoClearDepthStencil(2, false);
+
+    const skyDome = MeshBuilder.CreateSphere(
+      'settlement-sky-dome',
+      { diameter: 200, segments: 24, sideOrientation: Mesh.BACKSIDE },
+      scene
+    );
+    const skyMaterial = new StandardMaterial('settlement-sky-material', scene);
+    skyMaterial.disableLighting = true;
+    skyMaterial.backFaceCulling = false;
+    skyMaterial.fogEnabled = false;
+    // Background geometry must never hide terrain outside the dome radius.
+    skyMaterial.disableDepthWrite = true;
+    skyDome.material = skyMaterial;
+    skyDome.isPickable = false;
+    skyDome.infiniteDistance = true;
+    skyDome.renderingGroupId = 0;
+    skyDome.setEnabled(!atmosphere);
+
+    const starTexture = createAtmosphereTexture(scene, 'settlement-stars', (context, width, height) => {
+      let seed = 0x5e1e7e;
+      const random = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967296;
+      };
+      for (let index = 0; index < 560; index += 1) {
+        const x = random() * width;
+        const y = random() * height;
+        const radius = random() > 0.94 ? 1.35 : 0.45 + random() * 0.65;
+        context.fillStyle = random() > 0.8 ? '#cbdcff' : '#fffce8';
+        context.globalAlpha = 0.45 + random() * 0.55;
+        context.beginPath();
+        context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.globalAlpha = 1;
+    });
+    const starDome = MeshBuilder.CreateSphere(
+      'settlement-star-dome',
+      { diameter: 196, segments: 24, sideOrientation: Mesh.BACKSIDE },
+      scene
+    );
+    const starMaterial = new StandardMaterial('settlement-star-material', scene);
+    starMaterial.disableLighting = true;
+    starMaterial.backFaceCulling = false;
+    starMaterial.fogEnabled = false;
+    starMaterial.disableDepthWrite = true;
+    starMaterial.emissiveTexture = starTexture;
+    starMaterial.opacityTexture = starTexture;
+    starMaterial.useAlphaFromDiffuseTexture = true;
+    starDome.material = starMaterial;
+    starDome.isPickable = false;
+    starDome.infiniteDistance = true;
+    starDome.renderingGroupId = 0;
+
+    const cloudVolume = MeshBuilder.CreateBox(
+      'settlement-cloud-volume',
+      { size: 1 },
+      scene
+    );
+    const cloudMaterial = new ShaderMaterial(
+      'settlement-cloud-material',
+      scene,
+      { vertex: 'settlementCloud', fragment: 'settlementCloud' },
+      {
+        attributes: ['position'],
+        uniforms: [
+          'world',
+          'worldViewProjection',
+          'cameraPosition',
+          'cloudHeights',
+          'windOffset',
+          'cloudCoverage',
+          'cloudDensity',
+          'daylight',
+          'celestialDirection',
+          'sampleCount',
+          'previousSampleCount',
+          'qualityBlend',
+          'evolution',
+        ],
+        needAlphaBlending: true,
+      }
+    );
+    cloudMaterial.backFaceCulling = true;
+    cloudMaterial.disableDepthWrite = true;
+    cloudVolume.material = cloudMaterial;
+    cloudVolume.isPickable = false;
+    cloudVolume.alwaysSelectAsActiveMesh = true;
+    cloudVolume.renderingGroupId = 2;
+    let cloudElapsed = 0;
+    let cloudQualityElapsed = 0;
+    let cloudSampleCount = 18;
+    let previousCloudSampleCount = 18;
+    let cloudQualityBlend = 1;
+    const cloudWindOffset = new Vector2(0, 0);
+
+    const sunDisc = MeshBuilder.CreateDisc(
+      'settlement-sun-disc',
+      { radius: 2.6, tessellation: 48, sideOrientation: Mesh.DOUBLESIDE },
+      scene
+    );
+    const sunMaterial = new StandardMaterial('settlement-sun-disc-material', scene);
+    sunMaterial.disableLighting = true;
+    sunMaterial.fogEnabled = false;
+    sunMaterial.emissiveColor = new Color3(1, 0.86, 0.58);
+    sunDisc.material = sunMaterial;
+    sunDisc.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    sunDisc.isPickable = false;
+    sunDisc.renderingGroupId = 1;
+
+    const moonTexture = new DynamicTexture(
+      'settlement-moon-phase',
+      { width: 256, height: 256 },
+      scene,
+      false
+    );
+    moonTexture.hasAlpha = true;
+    drawMoonPhase(moonTexture, 0.5);
+    const moonDisc = MeshBuilder.CreateDisc(
+      'settlement-moon-disc',
+      { radius: 2.1, tessellation: 48, sideOrientation: Mesh.DOUBLESIDE },
+      scene
+    );
+    const moonMaterial = new StandardMaterial('settlement-moon-disc-material', scene);
+    moonMaterial.disableLighting = true;
+    moonMaterial.fogEnabled = false;
+    moonMaterial.emissiveTexture = moonTexture;
+    moonMaterial.opacityTexture = moonTexture;
+    moonMaterial.useAlphaFromDiffuseTexture = true;
+    moonDisc.material = moonMaterial;
+    moonDisc.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    moonDisc.isPickable = false;
+    moonDisc.renderingGroupId = 1;
+    let renderedMoonPhase = null;
+
+    const rainTexture = createAtmosphereTexture(scene, 'settlement-rain-particle', (context, width, height) => {
+      const gradient = context.createLinearGradient(width / 2, 0, width / 2, height);
+      gradient.addColorStop(0, 'rgba(190,220,255,0)');
+      gradient.addColorStop(0.35, 'rgba(190,220,255,0.75)');
+      gradient.addColorStop(1, 'rgba(220,238,255,0)');
+      context.fillStyle = gradient;
+      context.fillRect(width * 0.30, 0, width * 0.40, height);
+    });
+    const snowTexture = createAtmosphereTexture(scene, 'settlement-snow-particle', (context, width, height) => {
+      const gradient = context.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, width / 2);
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.7, 'rgba(238,246,255,0.85)');
+      gradient.addColorStop(1, 'rgba(238,246,255,0)');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, width, height);
+    });
+    const precipitation = new ParticleSystem('settlement-precipitation', 2400, scene);
+    precipitation.particleTexture = rainTexture;
+    precipitation.emitter = new Vector3(0, 0, 0);
+    precipitation.minEmitBox = new Vector3(-8, -6, -8);
+    precipitation.maxEmitBox = new Vector3(8, 8, 8);
+    precipitation.minLifeTime = 0.55;
+    precipitation.maxLifeTime = 1.1;
+    precipitation.minEmitPower = 1;
+    precipitation.maxEmitPower = 1;
+    precipitation.updateSpeed = 1 / 60;
+    precipitation.blendMode = ParticleSystem.BLENDMODE_STANDARD;
+    precipitation.renderingGroupId = 1;
+    precipitation.emitRate = 0;
+    precipitation.start();
+    const streetLampRenderer = createStreetLampRenderer(scene, camera);
 
     ambientSky.intensity = 0.95;
     ambientSky.groundColor = new Color3(0.25, 0.25, 0.28);
@@ -1240,6 +1788,9 @@ function SceneContent({
       }
     );
 
+    const moonDirection = new Vector3();
+    const precipitationDirection1 = new Vector3();
+    const precipitationDirection2 = new Vector3();
 
     const unifiedSceneObserver = scene.onBeforeRenderObservable.add(() => {
       const curState = stateRef.current;
@@ -1268,6 +1819,7 @@ function SceneContent({
         fogColor: '#a9c9dc',
         masterVolume: 0.5
       };
+      const weatherVisuals = normalizeWeatherVisuals(config);
 
       const atmos = curState?.atmosphereSettings || {
         sunIntensity: 2.2,
@@ -1276,14 +1828,21 @@ function SceneContent({
       };
 
       const delta = scene.getEngine().getDeltaTime() / 1000;
+      streetLampRenderer.update(curState, terrainWindowBoundsRef.current, delta);
       const volumeScale = config.masterVolume ?? 0.5;
 
+      const moon = selectedMoon(curState?.celestial);
+      const phaseFraction = moonPhaseFraction(moon);
+      const orbit = moonOrbit({ hour: safeHour, minute: safeMinute, phaseFraction });
+      moonDirection.copyFromFloats(orbit.azimuthX, orbit.altitude, orbit.azimuthZ).normalize();
       const lighting = calculateSettlementLighting({
         hour: safeHour,
         minute: safeMinute,
         sunIntensity: atmos.sunIntensity,
         moonIntensity: atmos.moonIntensity,
         cloudCover: config.cloudCover,
+        moonIllumination: moonIllumination(moon),
+        moonAltitude: moon ? orbit.altitude : 0,
       });
 
       const {
@@ -1292,26 +1851,159 @@ function SceneContent({
         daylightStrength,
       } = lighting;
 
-      const sunLightNode = scene.getLightByName('settlement-sun');
-
-      if (sunLightNode) {
-        sunLightNode.direction = new Vector3(
-          cosAngle,
-          -sinAngle,
-          0.2
-        ).normalize();
-
-        sunLightNode.intensity = lighting.sunIntensity;
-
-        if (daylightStrength > 0) {
-
-          sunLightNode.diffuse = Color3.Lerp(
-            new Color3(1, 0.78, 0.58),
-            new Color3(1, 0.98, 0.95),
-            daylightStrength
-          );
-        }
+      const colorGrade = daylightColorGrade(
+        daylightStrength,
+        atmos.daylightSaturation ?? 1.12
+      );
+      if (pipeline.isSupported) {
+        pipeline.imageProcessing.contrast = colorGrade.contrast;
+        pipeline.imageProcessing.colorCurves.globalSaturation =
+          (colorGrade.saturation - 1) * 100;
       }
+
+      sunLight.direction.copyFromFloats(cosAngle, -sinAngle, 0.2).normalize();
+      sunLight.intensity = lighting.sunIntensity;
+      if (daylightStrength > 0) {
+        sunLight.diffuse = Color3.Lerp(
+          SUNSET_LIGHT_COLOR,
+          DAY_LIGHT_COLOR,
+          daylightStrength
+        );
+      }
+      moonLight.direction.copyFrom(moonDirection.scale(-1));
+      moonLight.intensity = lighting.moonStrength;
+      const sunDirection = sunLight.direction.scale(-1).normalize();
+      const skyBlend = lighting.moonStrength /
+        Math.max(0.000001, lighting.sunIntensity + lighting.moonStrength);
+      const blendedDirection = Vector3.Lerp(sunDirection, moonDirection, skyBlend);
+      skyLight.direction.copyFrom((blendedDirection.lengthSquared() > 0.00001
+        ? blendedDirection : sunDirection).normalize().scale(-1));
+      skyLight.intensity = lighting.sunIntensity + lighting.moonStrength;
+      skyLight.diffuse = Color3.Lerp(sunLight.diffuse, moonLight.diffuse, skyBlend);
+
+      const skyDayColor = Color3.Lerp(
+        NIGHT_SKY_COLOR,
+        DAY_SKY_COLOR,
+        daylightStrength
+      );
+      // Keep the background inside the far clip plane at every editor zoom.
+      skyDome.scaling.setAll(camera.maxZ * 0.9 / 100);
+      starDome.scaling.setAll(camera.maxZ * 0.89 / 98);
+      const overcastAmount = Math.max(0, Math.min(1, weatherVisuals.cloudCover));
+      skyMaterial.emissiveColor = Color3.Lerp(
+        skyDayColor,
+        OVERCAST_SKY_COLOR,
+        overcastAmount * (0.25 + daylightStrength * 0.35)
+      );
+      if (atmosphere) {
+        atmosphere.physicalProperties.rayleighScatteringScale =
+          Math.max(0.05, Number(atmos.scatteringScale) || 1);
+        // The add-on converts scene units from meters to kilometers. Correct
+        // only its origin height so camera geometry and terrain scale stay intact.
+        const metersPerSceneUnit = FEET_PER_SCENE_UNIT * 0.3048;
+        const seaLevelMeters =
+          (Number(curState?.terrainMaterial?.sea_level_feet) || 0) * 0.3048;
+        atmosphere.originHeight =
+          (camera.position.y * (metersPerSceneUnit - 1) - seaLevelMeters) / 1000;
+      }
+      starMaterial.alpha = Math.max(0, lighting.nightStrength - overcastAmount * 0.72);
+
+      const celestialDistance = Math.min(86, Math.max(45, camera.maxZ * 0.72));
+      sunDisc.position.copyFrom(camera.position.add(sunDirection.scale(celestialDistance)));
+      sunDisc.scaling.setAll(celestialDistance * 0.0047 / 2.6);
+      sunMaterial.alpha = Math.max(0, daylightStrength * (1 - overcastAmount * 0.65));
+
+      if (renderedMoonPhase === null || Math.abs(renderedMoonPhase - phaseFraction) > 0.00001) {
+        renderedMoonPhase = phaseFraction;
+        drawMoonPhase(moonTexture, phaseFraction);
+      }
+      moonDisc.position.copyFrom(camera.position.add(moonDirection.scale(celestialDistance * 0.96)));
+      moonDisc.scaling.setAll(celestialDistance * 0.0044 / 2.1);
+      moonMaterial.alpha = moon ? Math.max(
+        0,
+        orbit.altitude * Math.sqrt(moonIllumination(moon)) *
+        (1 - daylightStrength * 0.86) * (1 - overcastAmount * 0.68)
+      ) : 0;
+
+      const windRadians = weatherVisuals.windDirectionDegrees * Math.PI / 180;
+      const windSceneSpeed = weatherVisuals.windSpeedMph / 35;
+      cloudElapsed += delta;
+      cloudQualityElapsed += delta;
+      cloudQualityBlend = Math.min(1, cloudQualityBlend + delta / 1.5);
+      if (cloudQualityElapsed >= 8 && cloudQualityBlend === 1) {
+        const fps = scene.getEngine().getFps();
+        const nextSampleCount = fps < 30 ? 10 : fps < 45 ? 16 : fps > 55 ? 24 : cloudSampleCount;
+        if (nextSampleCount !== cloudSampleCount) {
+          previousCloudSampleCount = cloudSampleCount;
+          cloudSampleCount = nextSampleCount;
+          cloudQualityBlend = 0;
+        }
+        cloudQualityElapsed = 0;
+      }
+      cloudWindOffset.x += Math.cos(windRadians) * delta * weatherVisuals.windSpeedMph * 0.0015;
+      cloudWindOffset.y += Math.sin(windRadians) * delta * weatherVisuals.windSpeedMph * 0.0015;
+      const baseFeet = weatherVisuals.cloudBaseFeet +
+        (Number(curState?.terrainMaterial?.sea_level_feet) || 0);
+      const topFeet = Math.max(baseFeet + 50, weatherVisuals.cloudTopFeet +
+        (Number(curState?.terrainMaterial?.sea_level_feet) || 0));
+      const baseScene = baseFeet / FEET_PER_SCENE_UNIT;
+      const topScene = topFeet / FEET_PER_SCENE_UNIT;
+      const cloudDepth = Math.max(1, topScene - baseScene);
+      const cloudSpan = Math.max(420, Math.min(1200, camera.maxZ * 1.6));
+      cloudMaterial.backFaceCulling = !(
+        camera.position.y >= baseScene && camera.position.y <= topScene
+      );
+      cloudVolume.position.set(camera.position.x, (baseScene + topScene) / 2, camera.position.z);
+      cloudVolume.scaling.set(cloudSpan, cloudDepth, cloudSpan);
+      cloudVolume.setEnabled(overcastAmount > 0.015);
+      cloudMaterial.setVector3('cameraPosition', camera.position);
+      cloudMaterial.setVector2('cloudHeights', new Vector2(baseScene, topScene));
+      cloudMaterial.setVector2('windOffset', cloudWindOffset);
+      cloudMaterial.setFloat('evolution', cloudElapsed * 0.003);
+      cloudMaterial.setFloat('cloudCoverage', overcastAmount);
+      cloudMaterial.setFloat(
+        'cloudDensity',
+        weatherVisuals.cloudType === 'cumulonimbus' ? 1.35 :
+          weatherVisuals.cloudType === 'ground-fog' ? 0.78 : 1
+      );
+      cloudMaterial.setFloat('daylight', Math.min(1, daylightStrength + lighting.moonStrength * 0.7));
+      cloudMaterial.setVector3('celestialDirection', skyLight.direction.scale(-1));
+      cloudMaterial.setFloat('sampleCount', cloudSampleCount);
+      cloudMaterial.setFloat('previousSampleCount', previousCloudSampleCount);
+      cloudMaterial.setFloat('qualityBlend', cloudQualityBlend);
+
+      // Populate the space in front of the camera, including downward views.
+      // Spawning only above an overhead camera keeps short-lived drops offscreen.
+      precipitation.emitter.copyFrom(
+        camera.position.add(camera.getForwardRay().direction.scale(12))
+      );
+      const isSnow = config.activeWeather === 'snowing';
+      const precipitationStrength = weatherVisuals.precipitationIntensity;
+      precipitation.particleTexture = isSnow ? snowTexture : rainTexture;
+      precipitation.emitRate = precipitationStrength * (isSnow ? 650 : 1800);
+      precipitation.minSize = isSnow ? 0.035 : 0.045;
+      precipitation.maxSize = isSnow ? 0.08 : 0.09;
+      precipitation.minScaleX = isSnow ? 1 : 0.35;
+      precipitation.maxScaleX = isSnow ? 1 : 0.5;
+      precipitation.minScaleY = isSnow ? 1 : 3;
+      precipitation.maxScaleY = isSnow ? 1 : 5;
+      precipitation.billboardMode = isSnow
+        ? ParticleSystem.BILLBOARDMODE_ALL
+        : ParticleSystem.BILLBOARDMODE_STRETCHED;
+      precipitation.minLifeTime = isSnow ? 5 : 1.5;
+      precipitation.maxLifeTime = isSnow ? 8 : 2.4;
+      precipitationDirection1.copyFromFloats(
+        Math.cos(windRadians) * windSceneSpeed - 0.12,
+        isSnow ? -0.5 : -10,
+        Math.sin(windRadians) * windSceneSpeed - 0.12
+      );
+      precipitationDirection2.copyFromFloats(
+        Math.cos(windRadians) * windSceneSpeed + 0.12,
+        isSnow ? -1.1 : -14,
+        Math.sin(windRadians) * windSceneSpeed + 0.12
+      );
+      precipitation.direction1 = precipitationDirection1;
+      precipitation.direction2 = precipitationDirection2;
 
 
       const terrainWindow = dynamicTerrainRef.current?._windowDebug;
@@ -1325,6 +2017,7 @@ function SceneContent({
 
       const fog = calculateTerrainFog({
         cameraRadius: camera.radius,
+        cameraBeta: camera.beta,
         spanFeet: terrainSpanFeet,
         fogDensity:
           (config.fogDensity ?? 0.01) *
@@ -1345,14 +2038,25 @@ function SceneContent({
         Number(atmos.fogEndRatio ?? 1.03)
       );
 
-      const adjustedFogStart = Math.max(
+      const ratioFogStart = Math.max(
         fog.centerDistanceFeet,
         visibleFarFeet * fogStartRatio
       );
 
+      const ratioFogEnd = Math.max(
+        ratioFogStart + 50,
+        visibleFarFeet * fogEndRatio
+      );
+
+      const adjustedFogStart = Math.max(
+        fog.startFeet,
+        ratioFogStart
+      );
+
       const adjustedFogEnd = Math.max(
         adjustedFogStart + 50,
-        visibleFarFeet * fogEndRatio
+        fog.endFeet,
+        ratioFogEnd
       );
 
       if (scene.fogMode !== BabylonScene.FOGMODE_LINEAR) {
@@ -1366,18 +2070,22 @@ function SceneContent({
       const fogColor = Color3.FromHexString(
         config.fogColor || '#a9c9dc'
       );
+      const nightVisibility = Math.min(1,
+        0.13 + daylightStrength * 0.87 + lighting.twilight * 0.17 +
+        lighting.moonStrength * 1.1);
+      const litFogColor = fogColor.scale(nightVisibility);
 
-      scene.fogColor = fogColor;
+      scene.fogColor = litFogColor;
 
       scene.clearColor = new Color4(
-        fogColor.r,
-        fogColor.g,
-        fogColor.b,
+        litFogColor.r,
+        litFogColor.g,
+        litFogColor.b,
         1
       );
 
-      horizonFloorMaterial.diffuseColor.copyFrom(fogColor);
-      horizonFloorMaterial.emissiveColor.copyFrom(fogColor);
+      horizonFloorMaterial.diffuseColor.copyFrom(litFogColor);
+      horizonFloorMaterial.emissiveColor.copyFrom(litFogColor);
 
       horizonFloor.position.x = camera.position.x;
       horizonFloor.position.z = camera.position.z;
@@ -1421,17 +2129,17 @@ function SceneContent({
       };
 
 
-      // Babylon's physical atmosphere assumes different world scale units.
-      // Linear fog is more stable for the editor's feet-based terrain scale.
+      // Keep the existing authored occlusion and continuous scene lighting;
+      // the Atmosphere add-on composites only into background sky pixels.
       ambientSky.intensity = lighting.ambientIntensity;
       ambientSky.diffuse = Color3.Lerp(
-        new Color3(0.45, 0.52, 0.68),
-        new Color3(0.92, 0.96, 1),
+        NIGHT_AMBIENT_COLOR,
+        DAY_AMBIENT_COLOR,
         daylightStrength
       );
       ambientSky.groundColor = Color3.Lerp(
-        new Color3(0.12, 0.14, 0.2),
-        new Color3(0.25, 0.25, 0.28),
+        NIGHT_GROUND_COLOR,
+        DAY_GROUND_COLOR,
         daylightStrength
       );
       topDownKey.intensity = lighting.topDownIntensity;
@@ -1576,8 +2284,28 @@ function SceneContent({
       horizonFloor.dispose();
       horizonFloorMaterial.dispose();
 
+      precipitation.dispose();
+      streetLampRenderer.dispose();
+      rainTexture.dispose();
+      snowTexture.dispose();
+      moonDisc.dispose();
+      moonMaterial.dispose();
+      moonTexture.dispose();
+      sunDisc.dispose();
+      sunMaterial.dispose();
+      starDome.dispose();
+      starMaterial.dispose();
+      starTexture.dispose();
+      cloudVolume.dispose();
+      cloudMaterial.dispose();
+      skyDome.dispose();
+      skyMaterial.dispose();
+      atmosphere?.dispose();
+
       topDownKey.dispose();
       ambientSky.dispose();
+      skyLight.dispose();
+      moonLight.dispose();
       sunLight.dispose();
 
       pipeline.dispose();
@@ -1610,6 +2338,11 @@ function SceneContent({
         }
 
         terrainMaterialRef.current = nodeMaterial;
+        nodeMaterial.textureRepetitionMode =
+          Constants.TEXTURE_REPETITION_HEX_TILING;
+        nodeMaterial.textureRepetitionHexTilingParams = [1, 0.6, 7, 0.5];
+        const tileSizeBlock = nodeMaterial.getBlockByName('computedTileSize');
+        if (tileSizeBlock) tileSizeBlock.value = 1;
         nodeMaterial.needDepthPrePass = true;
         nodeMaterial.disableDepthWrite = false;
         nodeMaterial.forceDepthWrite = true;
@@ -2004,6 +2737,7 @@ function SceneContent({
     };
 
     let currentKey = null;
+    let lastDebugSignature = '';
 
     const maybeRebuild = () => {
       const plan = planWindow();
@@ -2021,6 +2755,15 @@ function SceneContent({
         buildTerrainWindow(plan);
       }
 
+      const windowDebug = dynamicTerrainRef.current?._windowDebug;
+      const debugSignature = [
+        plan.key,
+        windowDebug?.loadedTiles,
+        windowDebug?.totalTiles,
+      ].join(':');
+      if (debugSignature === lastDebugSignature) return;
+      lastDebugSignature = debugSignature;
+
       onCameraChangeRef.current?.({
         position: camera.position.asArray(),
         target: camera.target.asArray(),
@@ -2030,7 +2773,7 @@ function SceneContent({
         bounds: boundsRef.current,
         terrainBounds: dynamicTerrainRef.current?._worldBufferMeta?.bounds ?? null,
         lodValue: dynamicTerrainRef.current?._lastDebugLOD ?? null,
-        window: { ...dynamicTerrainRef.current?._windowDebug },
+        window: { ...windowDebug },
         fog: fogDebugRef.current
       });
     };
@@ -2289,6 +3032,35 @@ function SceneContent({
     state.heightmapPlacement
   ]);
 
+  useEffect(() => {
+    if (!scene || !state.referenceCalibrationMode || !state.calibrationPoints?.length || !worldSamplerRef.current) return undefined;
+    const material = new StandardMaterial('reference-calibration-marker-material', scene);
+    material.disableLighting = true;
+    material.disableDepthWrite = true;
+    material.emissiveColor = Color3.FromHexString('#ffe08a');
+    const points = state.calibrationPoints.map(point =>
+      worldToBabylon(point.x, point.y, worldSamplerRef.current(point.x, point.y) + 4));
+    const meshes = points.map((point, index) => {
+      const marker = MeshBuilder.CreateSphere(`reference-calibration-point-${index + 1}`,
+        { diameter: 8 / FEET_PER_SCENE_UNIT, segments: 12 }, scene);
+      marker.position.copyFrom(point);
+      marker.material = material;
+      marker.isPickable = false;
+      marker.renderingGroupId = 3;
+      return marker;
+    });
+    if (points.length === 2) {
+      const line = MeshBuilder.CreateTube('reference-calibration-distance', {
+        path: points, radius: 0.8 / FEET_PER_SCENE_UNIT, tessellation: 6
+      }, scene);
+      line.material = material;
+      line.isPickable = false;
+      line.renderingGroupId = 3;
+      meshes.push(line);
+    }
+    return () => { meshes.forEach(mesh => mesh.dispose()); material.dispose(); };
+  }, [scene, state.referenceCalibrationMode, state.calibrationPoints]);
+
   // Draft geometry lives outside the committed mesh rebuild so every new point
   // and cursor move is visible immediately, even above projected map images.
   useEffect(() => {
@@ -2325,7 +3097,7 @@ function SceneContent({
     const meshes = [];
     const material = new StandardMaterial(`draft-${kind}-points`, scene);
     material.disableLighting = true;
-    material.emissiveColor = Color3.FromHexString('#50e6e0');
+    material.emissiveColor = Color3.FromHexString(EDITOR_ACCENT_HEX);
     if (displayPath.length > 1) {
       const line = MeshBuilder.CreateTube(`draft-${kind}-line`, {
         path: displayPath.map(point => worldToBabylon(point.x, point.y, groundAt(point))),
@@ -2436,11 +3208,60 @@ function SceneContent({
   // ===========================================================================
 
   useEffect(() => {
+    const draft = state.blueprintDraft;
+    const corners = draft?.levels?.[0]?.corners || [];
+    if (!scene || state.activeTool !== 'build' || state.buildMode !== 'draw-blueprint' ||
+      !corners.length || !worldSamplerRef.current) return undefined;
+
+    const material = new StandardMaterial('blueprint-footprint-guide-material', scene);
+    material.disableLighting = true;
+    material.disableDepthWrite = true;
+    material.emissiveColor = Color3.FromHexString(EDITOR_ACCENT_HEX);
+    const previewMaterial = new StandardMaterial('blueprint-footprint-preview-material', scene);
+    previewMaterial.disableLighting = true;
+    previewMaterial.disableDepthWrite = true;
+    previewMaterial.emissiveColor = Color3.FromHexString(EDITOR_ACCENT_HEX);
+    const meshes = [];
+    const worldCorners = sceneFootprintPreview(draft, state.footprintTool, state.footprintPoints || [], state.blueprintHoverPoint);
+    const drawSegment = (start, end, preview = false) => {
+      if (Math.hypot(end.x - start.x, end.y - start.y) < 0.01) return;
+      const count = Math.max(1, Math.ceil(Math.hypot(end.x - start.x, end.y - start.y) / 10));
+      const path = Array.from({ length: count + 1 }, (_, index) => {
+        const fraction = index / count;
+        const x = start.x + (end.x - start.x) * fraction;
+        const y = start.y + (end.y - start.y) * fraction;
+        return worldToBabylon(x, y, worldSamplerRef.current(x, y) + 2);
+      });
+      const line = MeshBuilder.CreateTube(preview ? 'blueprint-footprint-next-edge' : 'blueprint-footprint-edge', {
+        path, radius: (preview ? 0.15 : 0.22) / FEET_PER_SCENE_UNIT, tessellation: 6
+      }, scene);
+      line.material = preview ? previewMaterial : material;
+      line.isPickable = false;
+      line.renderingGroupId = 3;
+      meshes.push(line);
+    };
+    worldCorners.forEach((point, index) => {
+      if (index) drawSegment(worldCorners[index - 1], point);
+    });
+    corners.map(corner => ({ x: draft.x + corner.x, y: draft.y + corner.y })).forEach((point, index) => {
+      const marker = MeshBuilder.CreateSphere(`blueprint-footprint-point-${index + 1}`, {
+        diameter: 1.2 / FEET_PER_SCENE_UNIT, segments: 12
+      }, scene);
+      marker.position = worldToBabylon(point.x, point.y, worldSamplerRef.current(point.x, point.y) + 2);
+      marker.material = material;
+      marker.isPickable = false;
+      marker.renderingGroupId = 3;
+      meshes.push(marker);
+    });
+
+    return () => { meshes.forEach(mesh => mesh.dispose()); material.dispose(); previewMaterial.dispose(); };
+  }, [scene, state.activeTool, state.buildMode, state.blueprintDraft, state.blueprintHoverPoint, state.footprintTool, state.footprintPoints, terrainWindowKey, tileStoreVersion]);
+
+  useEffect(() => {
     if (!scene) return undefined;
 
     const currentState = stateRef.current;
     const transientMeshes = [];
-    const activeObservers = [];
 
     const heightSampler =
       worldSamplerRef.current ||
@@ -2452,16 +3273,6 @@ function SceneContent({
     const visibleTerrainBounds =
       terrainWindowBoundsRef.current ||
       bounds;
-
-
-    // Remove previous streamed settlement features, but leave terrain intact.
-    scene.meshes
-      .filter(
-        mesh =>
-          mesh.metadata?.settlement &&
-          mesh.metadata?.kind !== 'terrain'
-      )
-      .forEach(mesh => mesh.dispose());
 
 
     // -------------------------------------------------------------------------
@@ -2543,22 +3354,21 @@ function SceneContent({
           tower: isFortificationTowerPoint(wall, index)
         }));
 
-        polylinePartsInBounds(
-          pointsWithRoles,
-          visibleTerrainBounds,
-          halfWidth
-        ).forEach((points, partIndex) => {
+        pointsWithRoles.slice(1).forEach((_, partIndex) => {
+          const properties = wallSegmentProperties(wall, partIndex);
+          if (!featureIntersectsBounds({ points: pointsWithRoles.slice(partIndex, partIndex + 2) }, visibleTerrainBounds, halfWidth)) return;
           const data = fortificationVertexData(
-            { ...wall, points },
+            { ...wall, points: pointsWithRoles },
             currentState.strokes,
             currentState.heightMap,
-            heightSampler
+            heightSampler,
+            partIndex
           );
 
           const mat = material(
             scene,
             `wall-material-${wall.id}-${partIndex}`,
-            '#82786a'
+            wallSegmentMaterialColor(wall, partIndex)
           );
 
           const wallMesh = meshFromData(
@@ -2575,25 +3385,47 @@ function SceneContent({
           );
 
           transientMeshes.push(wallMesh);
+          if (properties.battlements) {
+            wallSegmentBattlements(wall, partIndex, heightSampler).forEach((placement, crenel) => {
+              const merlon = MeshBuilder.CreateBox(`wall-merlon-${wall.id}-${partIndex}-${crenel}`, {
+                width: 5 / FEET_PER_SCENE_UNIT, depth: properties.width_feet / FEET_PER_SCENE_UNIT, height: 4 / FEET_PER_SCENE_UNIT
+              }, scene);
+              merlon.position = worldToBabylon(placement.x, placement.y, placement.elevation);
+              merlon.rotation.y = placement.rotation;
+              merlon.material = mat;
+              merlon.metadata = wallMesh.metadata;
+              transientMeshes.push(merlon);
+            });
+          }
         });
 
         (wall.points || [])
           .map((point, index) => ({ point, index }))
           .filter(({ point, index }) => (
+            !point.junction_id &&
             isFortificationTowerPoint(wall, index) &&
             featureIntersectsBounds(point, visibleTerrainBounds)
           ))
           .forEach(({ point, index }) => {
             const base = heightSampler(point.x, point.y);
-            const wallHeight = Number(wall.height_feet) || 35;
-            const radiusFeet = ((Number(wall.width_feet) || 24) * 1.65) / 2;
-
-            const tower = MeshBuilder.CreateCylinder(
+            const specification = attachedWallTower(wall, point, index);
+            const wallHeight = Number(specification?.height_feet ?? wall.height_feet) || 35;
+            const widthFeet = Number(specification?.width_feet) || (Number(wall.width_feet) || 24) * 1.65;
+            const depthFeet = Number(specification?.depth_feet) || widthFeet;
+            const shape = specification?.shape || 'circular';
+            const sides = shape === 'triangular' ? 3 : shape === 'square' ? 4 : shape === 'polygonal' ? Math.max(5, Number(specification?.sides) || 6) : 12;
+            const tower = shape === 'rectangular'
+              ? MeshBuilder.CreateBox(
+                `tower-${wall.id}-${specification?.id || index}`,
+                { width: widthFeet / FEET_PER_SCENE_UNIT, depth: depthFeet / FEET_PER_SCENE_UNIT, height: wallHeight / FEET_PER_SCENE_UNIT },
+                scene
+              )
+              : MeshBuilder.CreateCylinder(
               `tower-${wall.id}-${index}`,
               {
-                diameter: (radiusFeet * 2) / FEET_PER_SCENE_UNIT,
+                diameter: widthFeet / FEET_PER_SCENE_UNIT,
                 height: wallHeight / FEET_PER_SCENE_UNIT,
-                tessellation: 12
+                tessellation: sides
               },
               scene
             );
@@ -2603,6 +3435,7 @@ function SceneContent({
               point.y,
               base + wallHeight / 2
             );
+            tower.rotation.y = Number(specification?.rotation) || 0;
 
             tower.material = material(
               scene,
@@ -2619,6 +3452,37 @@ function SceneContent({
             transientMeshes.push(tower);
           });
       });
+
+    (currentState.wallJunctions || []).forEach(junction => {
+      if (!featureIntersectsBounds(junction, visibleTerrainBounds)) return;
+      const wall = (currentState.fortifications || []).find(candidate =>
+        candidate.visible !== false &&
+        (candidate.points || []).some(point => point.junction_id === junction.id));
+      if (!wall) return;
+      const height = Math.max(1, Number(junction.height_feet) || 35);
+      const width = Math.max(1, Number(junction.width_feet) || 36);
+      const depth = Math.max(1, Number(junction.depth_feet) || width);
+      const guardhouse = junction.kind === 'guardhouse';
+      const shape = junction.shape || 'circular';
+      const sides = shape === 'triangular' ? 3 : shape === 'square' ? 4
+        : shape === 'polygonal' ? 6 : 12;
+      const tower = guardhouse || shape === 'rectangular'
+        ? MeshBuilder.CreateBox(`wall-junction-${junction.id}`, {
+          width: width / FEET_PER_SCENE_UNIT, depth: depth / FEET_PER_SCENE_UNIT,
+          height: height / FEET_PER_SCENE_UNIT
+        }, scene)
+        : MeshBuilder.CreateCylinder(`wall-junction-${junction.id}`, {
+          diameter: width / FEET_PER_SCENE_UNIT, height: height / FEET_PER_SCENE_UNIT,
+          tessellation: sides
+        }, scene);
+      tower.position = worldToBabylon(junction.x, junction.y,
+        heightSampler(junction.x, junction.y) + height / 2);
+      tower.rotation.y = Number(junction.rotation) || 0;
+      tower.material = material(scene, `wall-junction-mat-${junction.id}`,
+        wallSegmentMaterialColor({ material: junction.material }, 0));
+      tower.metadata = { settlement: true, kind: 'wall', item: wall, junction_id: junction.id };
+      transientMeshes.push(tower);
+    });
 
 
     // -------------------------------------------------------------------------
@@ -2640,336 +3504,11 @@ function SceneContent({
             heightSampler
           )
         );
-      });    // -------------------------------------------------------------------------
-    // 4. Water systems
-    // -------------------------------------------------------------------------
-
-    const activeTimeTracker = { current: 0 };
-    const waterBounds = terrainWindowBoundsRef.current || bounds;
-
-    (currentState.waterBodies || []).forEach(body => {
-      const waterMesh = createBabylonWaterMesh(
-        scene,
-        body,
-        currentState,
-        waterBounds,
-        worldSamplerRef.current
-      );
-
-      if (!waterMesh) return;
-
-      // Keep translucent water in the terrain group so opaque terrain renders
-      // first and correctly occludes water along shorelines and mountains.
-      waterMesh.renderingGroupId = 0;
-      waterMesh.alphaIndex = -100;
-
-      transientMeshes.push(waterMesh);
-
-      if (
-        currentState.animateWater &&
-        body.water_type !== 'river' &&
-        waterMesh.isVerticesDataPresent(VertexData.PositionKind)
-      ) {
-        const originalPositions = waterMesh
-          .getVerticesData(VertexData.PositionKind)
-          ?.slice();
-
-        if (originalPositions) {
-          const waveDeformerObserver = scene.onBeforeRenderObservable.add(() => {
-            if (stateRef.current?.activeTool === 'terrain') return;
-
-            activeTimeTracker.current += scene.getEngine().getDeltaTime() / 1000;
-
-            const time = activeTimeTracker.current;
-            const positions = waterMesh.getVerticesData(VertexData.PositionKind);
-
-            if (!positions) return;
-
-            const totalVertices = positions.length / 3;
-
-            for (let i = 0; i < totalVertices; i += 1) {
-              const index = i * 3;
-              const baseWorldX = originalPositions[index] * FEET_PER_SCENE_UNIT;
-              const baseWorldZ = originalPositions[index + 2] * FEET_PER_SCENE_UNIT;
-
-              const waveHeightFeet = getGerstnerWaveHeightAt(
-                baseWorldX,
-                baseWorldZ,
-                time
-              );
-
-              positions[index + 1] = animatedWaterSurfaceY(
-                originalPositions[index + 1],
-                waveHeightFeet
-              );
-            }
-
-            waterMesh.updateVerticesData(
-              VertexData.PositionKind,
-              positions
-            );
-          });
-
-          activeObservers.push(waveDeformerObserver);
-        }
-      }
-    });
-
-
-    // -------------------------------------------------------------------------
-    // 5. Interactive spline control points
-    // -------------------------------------------------------------------------
-
-    let activeSpline = null;
-    let splineType = '';
-
-    if (
-      currentState.activeTool === 'road' &&
-      currentState.selectedRoadId
-    ) {
-      activeSpline = (currentState.roads || []).find(
-        road => road.id === currentState.selectedRoadId
-      );
-
-      splineType = 'road-point';
-    }
-
-    else if (
-      currentState.activeTool === 'fortification' &&
-      currentState.fortificationMode === 'refine' &&
-      currentState.selectedFortificationId
-    ) {
-      activeSpline = (currentState.fortifications || []).find(
-        wall => wall.id === currentState.selectedFortificationId
-      );
-
-      splineType = 'wall-point';
-    }
-
-    else if (
-      currentState.activeTool === 'region' &&
-      currentState.regionMode === 'refine' &&
-      currentState.selectedRegionId
-    ) {
-      activeSpline = (currentState.regions || []).find(
-        region => region.id === currentState.selectedRegionId
-      );
-
-      splineType = 'region-point';
-    }
-
-
-    if (activeSpline?.points) {
-      activeSpline.points.forEach((point, index) => {
-        if (!featureIntersectsBounds(point, visibleTerrainBounds)) return;
-
-        const groundElevation = heightSampler(point.x, point.y);
-        const isWallHandle = splineType === 'wall-point';
-        const seaLevel = Number(
-          currentState.terrainMaterial?.sea_level_feet
-        ) || 0;
-
-        // Road and region handles remain above the water surface even when the
-        // spline itself lies underwater.
-        const finalElevation = isWallHandle
-          ? groundElevation + (Number(activeSpline.height_feet) || 35) + 5
-          : Math.max(groundElevation + 2, seaLevel + 4);
-
-        const isTowerHandle = isWallHandle &&
-          isFortificationTowerPoint(activeSpline, index);
-        const handleDiameterFeet = isTowerHandle ? 20 : isWallHandle ? 12 : 12;
-
-        const handle = isTowerHandle
-          ? MeshBuilder.CreateCylinder(
-            `spline-handle-${activeSpline.id}-${index}`,
-            {
-              diameter: handleDiameterFeet / FEET_PER_SCENE_UNIT,
-              height: 10 / FEET_PER_SCENE_UNIT,
-              tessellation: 12
-            },
-            scene
-          )
-          : MeshBuilder.CreateSphere(
-            `spline-handle-${activeSpline.id}-${index}`,
-            { diameter: handleDiameterFeet / FEET_PER_SCENE_UNIT },
-            scene
-          );
-
-        handle.position = worldToBabylon(
-          point.x,
-          point.y,
-          finalElevation
-        );
-
-        const handleMat = new StandardMaterial(
-          `spline-handle-mat-${activeSpline.id}-${index}`,
-          scene
-        );
-
-        handleMat.disableLighting = true;
-        handleMat.emissiveColor = Color3.FromHexString(EDITOR_ACCENT_HEX);
-
-        handle.material = handleMat;
-        handle.isPickable = true;
-        handle.renderingGroupId = 3;
-
-        handle.metadata = {
-          settlement: true,
-          kind: 'spline-handle',
-          type: splineType,
-          id: activeSpline.id,
-          index,
-          item: activeSpline
-        };
-
-        transientMeshes.push(handle);
-
-
-        const selectedPointIndex =
-          splineType === 'road-point'
-            ? currentState.selectedRoadPointIndex
-            : splineType === 'wall-point'
-              ? currentState.selectedFortificationPointIndex
-              : null;
-
-        if (selectedPointIndex === index) {
-          const ring = MeshBuilder.CreateTorus(
-            `spline-selected-ring-${activeSpline.id}-${index}`,
-            {
-              diameter: (handleDiameterFeet + 10) / FEET_PER_SCENE_UNIT,
-              thickness: 2.5 / FEET_PER_SCENE_UNIT,
-              tessellation: 48
-            },
-            scene
-          );
-
-          ring.position = worldToBabylon(
-            point.x,
-            point.y,
-            finalElevation
-          );
-
-          ring.rotation.x = Math.PI / 2;
-
-          const ringMat = new StandardMaterial(
-            `spline-selected-ring-material-${activeSpline.id}-${index}`,
-            scene
-          );
-
-          ringMat.disableLighting = true;
-          ringMat.emissiveColor = new Color3(1, 0.85, 0.25);
-
-          ring.material = ringMat;
-          ring.isPickable = false;
-          ring.renderingGroupId = 3;
-
-          transientMeshes.push(ring);
-        }
-      });
-    }
-
-
-    // -------------------------------------------------------------------------
-    // 6. Buildings and sailing ships
-    // -------------------------------------------------------------------------
-
-    const assets = Object.fromEntries(
-      (currentState.assets || []).map(asset => [asset.key, asset])
-    );
-
-    const physicsObserver = scene.onBeforeRenderObservable.add(() => {
-      if (stateRef.current?.activeTool === 'terrain') return;
-      activeTimeTracker.current += scene.getEngine().getDeltaTime() / 1000;
-    });
-
-    activeObservers.push(physicsObserver);
-
-    [
-      ...(currentState.buildings || []),
-      ...(currentState.blueprintDraft ? [currentState.blueprintDraft] : [])
-    ]
-      .filter(building => {
-        const asset = assets[building.asset_key] || {};
-
-        return (
-          building.visible !== false &&
-          featureIntersectsBounds(
-            {
-              ...building,
-              width_feet: building.width_feet ?? asset.width_feet,
-              depth_feet: building.depth_feet ?? asset.depth_feet
-            },
-            visibleTerrainBounds
-          )
-        );
-      })
-      .forEach(building => {
-        const asset = assets[building.asset_key] || {};
-        if (building.is_blueprint && building.levels) {
-          const mesh = createBlueprintMesh(
-            scene,
-            building,
-            heightSampler(building.x, building.y),
-            heightSampler
-          );
-          if (currentState.buildingViewMode !== 'satellite') {
-            applyBuildingMapColor(mesh, buildingViewColor(building, asset, currentState.buildingViewMode, currentState.businesses, currentState.buildings));
-          }
-
-          transientMeshes.push(mesh);
-          return;
-        }
-
-        const mesh = createBabylonBuiltInBuilding(
-          scene,
-          building,
-          asset,
-          currentState,
-          heightSampler
-        );
-
-        transientMeshes.push(mesh);
-
-        if (
-          ['ship', 'boat', 'longship', 'barge', 'galleon'].includes(
-            asset.category || asset.key
-          )
-        ) {
-          const meshTimeObserver = scene.onBeforeRenderObservable.add(() => {
-            if (stateRef.current?.activeTool === 'terrain') return;
-
-            const time = activeTimeTracker.current;
-
-            const waveHeight = getGerstnerWaveHeightAt(
-              mesh.position.x,
-              mesh.position.z,
-              time
-            );
-
-            const forwardOffset = getGerstnerWaveHeightAt(
-              mesh.position.x,
-              mesh.position.z + 0.5,
-              time
-            );
-
-            const lateralOffset = getGerstnerWaveHeightAt(
-              mesh.position.x + 0.5,
-              mesh.position.z,
-              time
-            );
-
-            mesh.position.y = waveHeight / FEET_PER_SCENE_UNIT + 0.15;
-            mesh.rotation.x = (forwardOffset - waveHeight) * 0.8;
-            mesh.rotation.z = (lateralOffset - waveHeight) * 0.8;
-          });
-
-          activeObservers.push(meshTimeObserver);
-        }
       });
 
 
     // -------------------------------------------------------------------------
-    // 7. Points of interest
+    // 4. Points of interest
     // -------------------------------------------------------------------------
 
     (currentState.pointsOfInterest || []).forEach(point => {
@@ -3035,33 +3574,284 @@ function SceneContent({
         }
       });
 
-      activeObservers.forEach(observer => {
-        if (observer) scene.onBeforeRenderObservable.remove(observer);
-      });
     };
   }, [
     scene,
-    meshState.buildings,
-    state.blueprintDraft,
     meshState.roads,
     meshState.fortifications,
+    meshState.wallJunctions,
     meshState.regions,
-    meshState.waterBodies,
     meshState.pointsOfInterest,
-    meshState.assets,
     bounds,
     terrainWindowKey,
-    state.activeTool,
-    state.fortificationMode,
-    state.selectedRoadId,
-    state.selectedRoadPointIndex,
-    state.selectedFortificationId,
-    state.selectedFortificationPointIndex,
     state.selectedRegionId,
-    state.regionMode,
-    state.buildingViewMode,
-    state.businesses
   ]);
+
+  useEffect(() => {
+    if (!scene || !worldSamplerRef.current) return undefined;
+
+    const currentState = stateRef.current;
+    const meshes = [];
+    const animated = [];
+    const waterBounds = terrainWindowBoundsRef.current || bounds;
+
+    (currentState.waterBodies || []).forEach(body => {
+      const mesh = createBabylonWaterMesh(
+        scene,
+        body,
+        currentState,
+        waterBounds,
+        worldSamplerRef.current,
+        waterNormalTextureRef.current
+      );
+      if (!mesh) return;
+
+      mesh.renderingGroupId = 0;
+      mesh.alphaIndex = -100;
+      meshes.push(mesh);
+
+      if (currentState.animateWater && body.water_type !== 'river' &&
+        mesh.isVerticesDataPresent(VertexData.PositionKind)) {
+        const originalPositions = mesh.getVerticesData(VertexData.PositionKind)?.slice();
+        if (originalPositions) animated.push({ mesh, originalPositions });
+      }
+    });
+
+    animatedWaterMeshesRef.current = animated;
+
+    return () => {
+      if (animatedWaterMeshesRef.current === animated) animatedWaterMeshesRef.current = [];
+      meshes.forEach(mesh => {
+        if (mesh.material?.bumpTexture === waterNormalTextureRef.current) {
+          mesh.material.bumpTexture = null;
+        }
+        mesh.dispose(false, true);
+      });
+    };
+  }, [scene, meshState.waterBodies, bounds, terrainWindowKey, meshState.animateWater]);
+
+  useEffect(() => {
+    if (!scene) return undefined;
+
+    const currentState = stateRef.current;
+    const heightSampler = worldSamplerRef.current || createTerrainHeightSampler(
+      currentState.strokes,
+      currentState.heightMap
+    );
+    const visibleBounds = terrainWindowBoundsRef.current || bounds;
+    const assets = Object.fromEntries(
+      (currentState.assets || []).map(asset => [asset.key, asset])
+    );
+    const meshes = [];
+    const ships = [];
+
+    [
+      ...(currentState.buildings || []),
+      ...(currentState.blueprintDraft?.levels?.[0]?.closed ? [currentState.blueprintDraft] : [])
+    ]
+      .filter(building => {
+        const asset = assets[building.asset_key] || {};
+        return building.visible !== false && featureIntersectsBounds({
+          ...building,
+          width_feet: building.width_feet ?? asset.width_feet,
+          depth_feet: building.depth_feet ?? asset.depth_feet
+        }, visibleBounds);
+      })
+      .forEach(building => {
+        const asset = assets[building.asset_key] || {};
+        let mesh;
+
+        if (building.is_blueprint && building.levels) {
+          const selected = String(currentState.selected?.id) === String(building.id);
+          const displayBuilding = selected
+            ? building
+            : { ...building, level_view: 'all', show_roofs: true };
+          mesh = createBlueprintMesh(
+            scene,
+            displayBuilding,
+            heightSampler(building.x, building.y),
+            heightSampler
+          );
+          if (currentState.buildingViewMode !== 'satellite') {
+            applyBuildingMapColor(
+              mesh,
+              buildingViewColor(
+                building,
+                asset,
+                currentState.buildingViewMode,
+                currentState.businesses,
+                currentState.buildings
+              )
+            );
+          }
+        } else {
+          mesh = createBabylonBuiltInBuilding(
+            scene,
+            building,
+            asset,
+            currentState,
+            heightSampler,
+            assetContainerCacheRef.current
+          );
+        }
+
+        meshes.push(mesh);
+        if (['ship', 'boat', 'longship', 'barge', 'galleon'].includes(
+          asset.category || asset.key
+        )) {
+          ships.push(mesh);
+        }
+      });
+
+    animatedShipsRef.current = ships;
+
+    return () => {
+      if (animatedShipsRef.current === ships) animatedShipsRef.current = [];
+      meshes.forEach(mesh => mesh?.dispose(false, true));
+    };
+  }, [scene, meshState.buildings, meshState.assets, state.blueprintDraft,
+    state.selected?.id, state.buildingViewMode, state.businesses, bounds, terrainWindowKey]);
+
+  useEffect(() => {
+    if (!scene) return undefined;
+    const sample = worldSamplerRef.current || (() => 0);
+    const rendered = createPropertyMeshes(scene, meshState.properties, sample, state.activeTool === 'build');
+    const draft = state.propertyDraft || [];
+    const previewMeshes = [];
+    const material = new StandardMaterial('property-polygon-guide-material', scene);
+    material.disableLighting = true;
+    material.disableDepthWrite = true;
+    material.emissiveColor = Color3.FromHexString(EDITOR_ACCENT_HEX);
+    const toWorld = point => worldToBabylon(point.x, point.y, sample(point.x, point.y) + 1);
+    const drawEdge = (start, end) => {
+      if (Math.hypot(end.x - start.x, end.y - start.y) < 0.01) return;
+      const count = Math.max(1, Math.ceil(Math.hypot(end.x - start.x, end.y - start.y) / 10));
+      const path = Array.from({ length: count + 1 }, (_, index) => toWorld({
+        x: start.x + (end.x - start.x) * index / count,
+        y: start.y + (end.y - start.y) * index / count,
+      }));
+      const line = MeshBuilder.CreateTube('property-polygon-preview', { path, radius: 0.6 / FEET_PER_SCENE_UNIT, tessellation: 8 }, scene);
+      line.material = material;
+      line.isPickable = false;
+      line.renderingGroupId = 3;
+      previewMeshes.push(line);
+    };
+    draft.forEach((point, index) => {
+      if (index) drawEdge(draft[index - 1], point);
+      const marker = MeshBuilder.CreateSphere(`property-corner-${index}`, { diameter: 2 / FEET_PER_SCENE_UNIT, segments: 12 }, scene);
+      marker.position = toWorld(point);
+      marker.material = material;
+      marker.renderingGroupId = 3;
+      marker.isPickable = Boolean(state.editingPropertyBoundaryId);
+      marker.metadata = { kind: 'property-boundary-handle', propertyId: state.editingPropertyBoundaryId, index };
+      previewMeshes.push(marker);
+    });
+    if (draft.length >= 3) drawEdge(draft[draft.length - 1], draft[0]);
+    if (draft.length && !state.editingPropertyBoundaryId && state.blueprintHoverPoint) drawEdge(draft[draft.length - 1], state.blueprintHoverPoint);
+    return () => { rendered.dispose(); previewMeshes.forEach(mesh => mesh.dispose()); material.dispose(); };
+  }, [scene, meshState.properties, state.propertyDraft, state.editingPropertyBoundaryId, state.blueprintHoverPoint, state.activeTool, terrainWindowKey]);
+
+  useEffect(() => {
+    if (!scene || !worldSamplerRef.current) return undefined;
+
+    const currentState = stateRef.current;
+    const visibleBounds = terrainWindowBoundsRef.current || bounds;
+    let activeSpline = null;
+    let splineType = '';
+
+    if (currentState.activeTool === 'road' && currentState.roadMode === 'refine' &&
+      currentState.selectedRoadId) {
+      activeSpline = (currentState.roads || []).find(road => road.id === currentState.selectedRoadId);
+      splineType = 'road-point';
+    } else if (currentState.activeTool === 'fortification' &&
+      currentState.fortificationMode === 'refine' && currentState.selectedFortificationId) {
+      activeSpline = (currentState.fortifications || []).find(
+        wall => wall.id === currentState.selectedFortificationId
+      );
+      splineType = 'wall-point';
+    } else if (currentState.activeTool === 'region' && currentState.regionMode === 'refine' &&
+      currentState.selectedRegionId) {
+      activeSpline = (currentState.regions || []).find(
+        region => region.id === currentState.selectedRegionId
+      );
+      splineType = 'region-point';
+    }
+
+    if (!activeSpline?.points) return undefined;
+
+    const meshes = [];
+    const material = new StandardMaterial(`spline-handle-material-${activeSpline.id}`, scene);
+    material.disableLighting = true;
+    material.emissiveColor = Color3.FromHexString(EDITOR_ACCENT_HEX);
+    const ringMaterial = new StandardMaterial(`spline-ring-material-${activeSpline.id}`, scene);
+    ringMaterial.disableLighting = true;
+    ringMaterial.emissiveColor = new Color3(1, 0.85, 0.25);
+
+    activeSpline.points.forEach((point, index) => {
+      if (!featureIntersectsBounds(point, visibleBounds)) return;
+      const groundElevation = worldSamplerRef.current(point.x, point.y);
+      const isWallHandle = splineType === 'wall-point';
+      const seaLevel = Number(currentState.terrainMaterial?.sea_level_feet) || 0;
+      const finalElevation = isWallHandle
+        ? groundElevation + (Number(activeSpline.height_feet) || 35) + 5
+        : Math.max(groundElevation + 2, seaLevel + 4);
+      const isTowerHandle = isWallHandle && isFortificationTowerPoint(activeSpline, index);
+      const handleDiameterFeet = isTowerHandle ? 20 : 12;
+      const handle = isTowerHandle
+        ? MeshBuilder.CreateCylinder(`spline-handle-${activeSpline.id}-${index}`, {
+          diameter: handleDiameterFeet / FEET_PER_SCENE_UNIT,
+          height: 10 / FEET_PER_SCENE_UNIT,
+          tessellation: 12
+        }, scene)
+        : MeshBuilder.CreateSphere(`spline-handle-${activeSpline.id}-${index}`, {
+          diameter: handleDiameterFeet / FEET_PER_SCENE_UNIT
+        }, scene);
+      handle.position = worldToBabylon(point.x, point.y, finalElevation);
+      handle.material = material;
+      handle.isPickable = true;
+      handle.renderingGroupId = 3;
+      handle.metadata = {
+        settlement: true,
+        kind: 'spline-handle',
+        type: splineType,
+        id: activeSpline.id,
+        index,
+        item: activeSpline
+      };
+      meshes.push(handle);
+
+      const selectedPointIndex = splineType === 'road-point'
+        ? currentState.selectedRoadPointIndex
+        : splineType === 'wall-point'
+          ? currentState.selectedFortificationPointIndex
+          : currentState.selectedRegionPointIndex;
+      if (selectedPointIndex !== index && !(splineType === 'road-point' &&
+        currentState.selectedRoadPointIndexes?.includes(index))) return;
+
+      const ring = MeshBuilder.CreateTorus(`spline-selected-ring-${activeSpline.id}-${index}`, {
+        diameter: (handleDiameterFeet + 10) / FEET_PER_SCENE_UNIT,
+        thickness: 2.5 / FEET_PER_SCENE_UNIT,
+        tessellation: 48
+      }, scene);
+      ring.position.copyFrom(handle.position);
+      ring.rotation.x = Math.PI / 2;
+      ring.material = ringMaterial;
+      ring.isPickable = false;
+      ring.renderingGroupId = 3;
+      meshes.push(ring);
+    });
+
+    return () => {
+      meshes.forEach(mesh => mesh.dispose());
+      material.dispose();
+      ringMaterial.dispose();
+    };
+  }, [scene, bounds, terrainWindowKey, tileStoreVersion, meshState.roads,
+    meshState.fortifications, meshState.regions, state.activeTool, state.roadMode, state.fortificationMode,
+    state.regionMode, state.selectedRoadId, state.selectedRoadPointIndex,
+    state.selectedRoadPointIndexes,
+    state.selectedFortificationId, state.selectedFortificationPointIndex,
+    state.selectedRegionId, state.selectedRegionPointIndex]);
 
   useEffect(() => {
     if (!scene || !['inspect', 'player'].includes(state.activeTool)
@@ -3131,15 +3921,50 @@ export default function BabylonSettlementHost({
   onSceneReady
 }) {
   const tileStoreRef = useRef(tileStore);
+  const canvasRef = useRef(null);
+  const [scene, setScene] = useState(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+
+    const engine = new BabylonEngine(canvas, true, undefined, true);
+    const nextScene = new BabylonScene(engine);
+
+    engine.runRenderLoop(() => {
+      if (!nextScene.isDisposed) nextScene.render();
+    });
+
+    const resize = () => engine.resize();
+    window.addEventListener('resize', resize);
+
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(resize);
+    resizeObserver?.observe(canvas);
+
+    setScene(nextScene);
+    resize();
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', resize);
+      engine.stopRenderLoop();
+      nextScene.dispose();
+      engine.dispose();
+    };
+  }, []);
 
   return (
-    <Engine
-      antialias
-      adaptToDeviceRatio
-      canvasId="settlement-babylon-canvas"
-    >
-      <Scene>
+    <>
+      <canvas
+        ref={canvasRef}
+        id="settlement-babylon-canvas"
+        style={{ display: 'block', width: '100%', height: '100%' }}
+      />
+      {scene && (
         <SceneContent
+          scene={scene}
           tileStore={tileStoreRef.current}
           tileStoreVersion={tileStoreVersion}
           state={state}
@@ -3150,7 +3975,7 @@ export default function BabylonSettlementHost({
           onScaleChange={onScaleChange}
           onSceneReady={onSceneReady}
         />
-      </Scene>
-    </Engine>
+      )}
+    </>
   );
 }

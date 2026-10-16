@@ -1,5 +1,216 @@
 import { PointerEventTypes } from '@babylonjs/core';
+import { NullEngine } from '@babylonjs/core/Engines/nullEngine';
+import { Scene } from '@babylonjs/core/scene';
+import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { createSettlementBabylonWorkflow } from './settlementBabylonWorkflow';
+import { closeBlueprintFootprint } from './settlementEditor';
+
+test('terrain sculpting creates, moves, and disposes its visible brush cursor', () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  const brushMeshRef = { current: null };
+  const state = { activeTool: 'terrain', brushMeshRef, brushRadius: 100 };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  const brush = brushMeshRef.current;
+
+  expect(brush).toBeTruthy();
+  expect(brush.isEnabled()).toBe(false);
+  expect(brush.isPickable).toBe(false);
+
+  scene.onPointerObservable.notifyObservers({
+    type: PointerEventTypes.POINTERMOVE,
+    event: { buttons: 0 },
+    pickInfo: { hit: true, pickedMesh: { name: 'terrain' }, pickedPoint: new Vector3(1, 2, 3) }
+  }, PointerEventTypes.POINTERMOVE);
+
+  expect(brush.isEnabled()).toBe(true);
+  expect(brush.position.x).toBe(1);
+  expect(brush.position.z).toBe(3);
+  expect(brush.scaling.x).toBe(2);
+
+  dispose();
+  expect(brushMeshRef.current).toBeNull();
+  expect(brush.isDisposed()).toBe(true);
+  scene.dispose();
+  engine.dispose();
+});
+
+test('blueprint footprint collects terrain points, previews the next edge, and stops adding corners when closed', () => {
+  let listener;
+  let ground = new Vector3(0, 0, 0);
+  const terrain = { name: 'terrain', metadata: { kind: 'terrain' }, isEnabled: () => true };
+  const state = { activeTool: 'build', buildMode: 'draw-blueprint', blueprintDraft: null,
+    setBlueprintDraft: value => { state.blueprintDraft = value; },
+    setBlueprintHoverPoint: jest.fn(), setSelected: jest.fn() };
+  const scene = { pointerX: 0, pointerY: 0,
+    getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(terrain)
+      ? { hit: true, pickedMesh: terrain, pickedPoint: ground } : { hit: false } };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  const click = () => listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 },
+    pickInfo: { hit: true, pickedMesh: terrain, pickedPoint: ground } });
+  click();
+  ground = new Vector3(2, 0, 0);
+  listener({ type: PointerEventTypes.POINTERMOVE, event: { buttons: 0 },
+    pickInfo: { hit: true, pickedMesh: terrain, pickedPoint: ground } });
+  expect(state.setBlueprintHoverPoint).toHaveBeenCalledWith(expect.objectContaining({ x: 100, y: 0 }));
+  click();
+  ground = new Vector3(2, 0, 2);
+  click();
+  expect(state.blueprintDraft.levels[0].corners).toHaveLength(3);
+  state.blueprintDraft = closeBlueprintFootprint(state.blueprintDraft);
+  ground = new Vector3(4, 0, 2);
+  click();
+  expect(state.blueprintDraft.levels[0].corners).toHaveLength(3);
+  dispose();
+});
+
+test('property boundary and outdoor area tools send terrain clicks to the polygon editor', () => {
+  let listener;
+  let ground = new Vector3(1, 0, 2);
+  const terrain = { name: 'terrain', metadata: { kind: 'terrain' }, isEnabled: () => true };
+  const onPropertyPolygonPoint = jest.fn();
+  const state = { activeTool: 'build', buildMode: 'draw-property-boundary', onPropertyPolygonPoint };
+  const scene = { pointerX: 0, pointerY: 0,
+    getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(terrain)
+      ? { hit: true, pickedMesh: terrain, pickedPoint: ground } : { hit: false } };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  const click = () => listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 },
+    pickInfo: { hit: true, pickedMesh: terrain, pickedPoint: ground } });
+
+  click();
+  expect(onPropertyPolygonPoint).toHaveBeenLastCalledWith(expect.objectContaining({ x: 50, y: 100 }));
+  state.buildMode = 'draw-outdoor-area';
+  ground = new Vector3(3, 0, 4);
+  click();
+  expect(onPropertyPolygonPoint).toHaveBeenLastCalledWith(expect.objectContaining({ x: 150, y: 200 }));
+  expect(onPropertyPolygonPoint).toHaveBeenCalledTimes(2);
+  dispose();
+});
+
+test('editing a property corner follows terrain and never places another building', () => {
+  let listener;
+  const terrain = { name: 'terrain', metadata: { kind: 'terrain' }, isEnabled: () => true };
+  const handle = { metadata: { kind: 'property-boundary-handle', propertyId: 'estate', index: 2 } };
+  const state = { activeTool: 'build', buildMode: 'edit-property-boundary', editingPropertyBoundaryId: 'estate',
+    onPropertyBoundaryVertexMove: jest.fn(), setBuildings: jest.fn() };
+  const scene = { pointerX: 0, pointerY: 0,
+    getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(handle)
+      ? { hit: true, pickedMesh: handle, pickedPoint: new Vector3(0, 0, 0) }
+      : { hit: true, pickedMesh: terrain, pickedPoint: new Vector3(2, 0, 3) } };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 }, pickInfo: { hit: true, pickedMesh: handle, pickedPoint: new Vector3(0, 0, 0) } });
+  listener({ type: PointerEventTypes.POINTERMOVE, event: { buttons: 1 }, pickInfo: { hit: true, pickedMesh: handle, pickedPoint: new Vector3(0, 0, 0) } });
+  expect(state.onPropertyBoundaryVertexMove).toHaveBeenCalledWith(2, expect.objectContaining({ x: 100, y: 150 }));
+  listener({ type: PointerEventTypes.POINTERUP, event: { button: 0 } });
+  expect(state.setBuildings).not.toHaveBeenCalled();
+  dispose();
+});
+
+test('Shift-click selects multiple road handles and drags them as a group', () => {
+  let listener;
+  const road = { id: 'road', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 200, y: 0 }] };
+  const terrain = { name: 'terrain', metadata: { kind: 'terrain' }, isEnabled: () => true };
+  const state = { activeTool: 'road', roadMode: 'refine', selectedRoadId: 'road',
+    selectedRoadPointIndexes: [], roadSnapEnabled: false, roads: [road],
+    setSelectedRoadId: jest.fn(), setSelectedRoadPointIndex: jest.fn(),
+    setSelectedRoadPointIndexes: jest.fn(value => { state.selectedRoadPointIndexes = value; }),
+    setRoads: updater => { state.roads = updater(state.roads); }, recordSplineUndo: jest.fn() };
+  const scene = { pointerX: 0, pointerY: 0,
+    getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(terrain)
+      ? { hit: true, pickedMesh: terrain, pickedPoint: { x: 1, y: 0, z: 0 } }
+      : { hit: false } };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  const click = (index, shiftKey) => listener({ type: PointerEventTypes.POINTERDOWN,
+    event: { button: 0, shiftKey }, pickInfo: { hit: true,
+      pickedMesh: { metadata: { kind: 'spline-handle', type: 'road-point', id: 'road', index, item: road } },
+      pickedPoint: { x: road.points[index].x / 50, y: 0, z: 0 } } });
+  click(0, true);
+  click(1, true);
+  expect(state.selectedRoadPointIndexes).toEqual([0, 1]);
+  expect(state.setSelectedRoadPointIndex).toHaveBeenLastCalledWith(null);
+  click(0, false);
+  listener({ type: PointerEventTypes.POINTERMOVE, event: { buttons: 1 },
+    pickInfo: { hit: true, pickedMesh: terrain, pickedPoint: { x: 1, y: 0, z: 0 } } });
+  expect(state.roads[0].points).toEqual([{ x: 50, y: 0 }, { x: 150, y: 0 }, { x: 200, y: 0 }]);
+  expect(state.recordSplineUndo).toHaveBeenCalledTimes(1);
+  dispose();
+});
+
+test('region handle wins over a wall when refining a shared vertex', () => {
+  let listener;
+  const region = { id: 'ward', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 }] };
+  const wall = { metadata: { kind: 'wall', item: { id: 'wall' } } };
+  const handle = { metadata: { kind: 'spline-handle', type: 'region-point', id: 'ward', index: 1, item: region } };
+  const state = { activeTool: 'region', regionMode: 'refine', selectedRegionId: 'ward',
+    setSelectedRegionId: jest.fn(), setSelectedRegionPointIndex: jest.fn(),
+    setSelected: jest.fn() };
+  const scene = { pointerX: 0, pointerY: 0,
+    getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(handle)
+      ? { hit: true, pickedMesh: handle, pickedPoint: { x: 2, y: 0, z: 0 } }
+      : { hit: false } };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 },
+    pickInfo: { hit: true, pickedMesh: wall, pickedPoint: { x: 2, y: 0, z: 0 } } });
+  expect(state.setSelectedRegionPointIndex).toHaveBeenCalledWith(1);
+  expect(state.setSelected).not.toHaveBeenCalled();
+  dispose();
+});
+
+test('right-clicking a region point opens its spline edit menu through a wall', () => {
+  let listener;
+  const region = { id: 'ward', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 }] };
+  const wall = { metadata: { kind: 'wall', item: { id: 'wall' } } };
+  const handle = { metadata: { kind: 'spline-handle', type: 'region-point', id: 'ward', index: 0, item: region } };
+  const state = { activeTool: 'region', regionMode: 'refine', selectedRegionId: 'ward',
+    setSelectedRegionId: jest.fn(), setSelectedRegionPointIndex: jest.fn(),
+    openSplineContextMenu: jest.fn() };
+  const scene = { pointerX: 0, pointerY: 0,
+    getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(handle)
+      ? { hit: true, pickedMesh: handle, pickedPoint: { x: 0, y: 0, z: 0 } }
+      : { hit: false } };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  listener({ type: PointerEventTypes.POINTERDOWN,
+    event: { button: 2, clientX: 20, clientY: 30, preventDefault: jest.fn() },
+    pickInfo: { hit: true, pickedMesh: wall, pickedPoint: { x: 0, y: 0, z: 0 } } });
+  expect(state.openSplineContextMenu).toHaveBeenCalledWith(expect.objectContaining({
+    kind: 'region', id: 'ward', index: 0, pointCount: 3, clientX: 20, clientY: 30
+  }));
+  dispose();
+});
+
+test.each([true, false])('region refinement survives a delayed update after pointer-up (snap=%s)', regionSnapEnabled => {
+  let listener;
+  const updates = [];
+  const region = { id: 'ward', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 }] };
+  const terrain = { name: 'terrain', metadata: { kind: 'terrain' }, isEnabled: () => true };
+  const state = { activeTool: 'region', regionMode: 'refine', regionSnapEnabled, roadSnapToleranceFeet: 10,
+    roads: [{ points: [{ x: 100, y: 100 }] }], fortifications: [], setRegions: updater => updates.push(updater) };
+  const scene = { getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(terrain) ? { hit: true, pickedMesh: terrain, pickedPoint: { x: 1.96, y: 0, z: 1.94 } } : { hit: false } };
+  const workflow = createSettlementBabylonWorkflow(() => state);
+  const dispose = workflow.attach(scene);
+  workflow.beginPointDrag('region-point', 'ward', 1);
+  listener({ type: PointerEventTypes.POINTERMOVE, event: { buttons: 1 }, pickInfo: { pickedMesh: terrain, pickedPoint: { x: 1.96, y: 0, z: 1.94 } } });
+  workflow.endPointer();
+  expect(updates).toHaveLength(1);
+  const result = updates[0]([region]);
+  expect(result[0].points[1]).toEqual(regionSnapEnabled ? { x: 100, y: 100 } : { x: 98, y: 97 });
+  expect(result[0].points[0]).toEqual(region.points[0]);
+  dispose();
+});
 
 test('drawing a road through an existing road adds a snapped point instead of selecting it', () => {
   let listener, draft = [];
@@ -163,6 +374,38 @@ test('selected structure can be moved and its updater survives pointer-up', () =
   expect(movedBuildings[0].x).not.toBe(building.x);
   expect(movedBuildings[0].y).not.toBe(building.y);
 
+  dispose();
+});
+
+test('clicking terrain in move mode relocates the selected building without placing a copy', () => {
+  let listener;
+  const building = { id: 'existing', x: 0, y: 0, asset_key: 'house' };
+  const terrain = { metadata: { kind: 'terrain' }, isEnabled: () => true };
+  const setBuildings = jest.fn();
+  const setSelected = jest.fn();
+  const setBuildMode = jest.fn();
+  const state = {
+    activeTool: 'build', buildMode: 'move-selected', selected: building,
+    selectedAssetKey: 'house', buildings: [building], roads: [],
+    setBuildings, setSelected, setBuildMode,
+  };
+  const scene = {
+    pointerX: 0, pointerY: 0,
+    getEngine: () => ({ getRenderingCanvas: () => document.createElement('canvas') }),
+    onPointerObservable: { add: callback => { listener = callback; return callback; }, remove: jest.fn() },
+    pick: (_x, _y, predicate) => predicate(terrain)
+      ? { hit: true, pickedMesh: terrain, pickedPoint: { x: 2, y: 0, z: 3 } }
+      : { hit: false },
+  };
+  const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
+  listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 },
+    pickInfo: { pickedMesh: terrain, pickedPoint: { x: 2, y: 0, z: 3 } } });
+  expect(setBuildings).toHaveBeenCalledTimes(1);
+  const result = setBuildings.mock.calls[0][0]([building]);
+  expect(result).toHaveLength(1);
+  expect(result[0]).toMatchObject({ id: 'existing', x: 100, y: 150 });
+  expect(setSelected).toHaveBeenCalledWith(result[0]);
+  expect(setBuildMode).toHaveBeenCalledWith('select-placed');
   dispose();
 });
 

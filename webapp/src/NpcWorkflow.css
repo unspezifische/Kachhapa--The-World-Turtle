@@ -1,0 +1,19 @@
+/* NPCs use the shared core palette. Keep only workflow layout and stacking here. */
+:where(html[data-kachhapa-ui="core"]) .modal.npc-workflow-modal { z-index:2700; --bs-modal-zindex:2700; }
+:where(html[data-kachhapa-ui="core"]) .modal-backdrop.npc-workflow-backdrop { z-index:2690; --bs-backdrop-zindex:2690; }
+:where(html[data-kachhapa-ui="core"]) .npc-workflow-modal .modal-body { max-height:76vh; overflow:auto; }
+:where(html[data-kachhapa-ui="core"]) :is(.npc-step-nav,.npc-inline-actions) { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:14px 0; }
+:where(html[data-kachhapa-ui="core"]) .npc-step-nav .btn { flex:1; min-width:130px; }
+:where(html[data-kachhapa-ui="core"]) .npc-creator-layout { display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:24px; }
+:where(html[data-kachhapa-ui="core"]) .npc-live-card { background:var(--bg-surface-2); padding:20px; border:1px solid var(--border-main); border-radius:8px; align-self:start; position:sticky; top:0; }
+:where(html[data-kachhapa-ui="core"]) .npc-field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:16px 0; }
+:where(html[data-kachhapa-ui="core"]) :is(.npc-field-actions,.npc-ability-preview) { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+:where(html[data-kachhapa-ui="core"]) .npc-edit-field textarea { min-height:96px; }
+:where(html[data-kachhapa-ui="core"]) .npc-schedule-rule { padding:16px; border:1px solid var(--border-main); border-radius:6px; margin:12px 0; }
+:where(html[data-kachhapa-ui="core"]) .npc-timeline { position:relative; height:48px; margin:16px 0; background:var(--bg-surface-2); border:1px solid var(--border-main); }
+:where(html[data-kachhapa-ui="core"]) .npc-timeline>div { position:absolute; height:100%; padding:10px 4px; background:var(--bg-surface-3); border:1px solid var(--border-main); border-bottom:3px solid var(--accent-2); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+:where(html[data-kachhapa-ui="core"]) .npc-library-workspace .npc-inline-actions>.form-control { flex:1; min-width:200px; }
+@media(max-width:800px) {
+  :where(html[data-kachhapa-ui="core"]) :is(.npc-creator-layout,.npc-field-grid) { grid-template-columns:1fr; }
+  :where(html[data-kachhapa-ui="core"]) .npc-live-card { position:static; }
+}

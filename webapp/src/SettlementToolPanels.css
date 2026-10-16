@@ -5,10 +5,10 @@
   gap: 6px;
   height: 34px;
   padding: 0 12px;
-  border: 1px solid #526258;
+  border: 1px solid var(--border-main);
   border-radius: 6px;
-  background: #14201c;
-  color: #d8c28f;
+  background: var(--bg-surface);
+  color: var(--text-main);
   font-family: Inter, system-ui, sans-serif;
   font-size: 11px;
   font-weight: 700;
@@ -25,9 +25,9 @@
 }
 
 .button:hover {
-  border-color: #ba8c42;
-  background: #ba8c42;
-  color: #18221e;
+  border-color: var(--border-main);
+  background: var(--accent-hover);
+  color: var(--text-on-accent);
 }
 
 .button svg {
@@ -41,14 +41,43 @@
   z-index: 50;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
+
+.property-estate-list { display: grid; gap: 8px; color: var(--text-main); }
+.property-list-item { border: 1px solid var(--border-main); border-radius: 5px; background: var(--bg-surface); }
+.property-list-item.is-selected { border-color: var(--primary-border); }
+.property-list-heading { display: flex; align-items: stretch; gap: 4px; padding: 6px; }
+.property-list-heading .property-select { display: grid; flex: 1; gap: 3px; text-align: left; margin: 0; border: 0; background: transparent; text-transform: none; }
+.property-list-label { color: var(--text-main); font-size: 10px; letter-spacing: .06em; }
+.property-select strong { color: var(--text-main); font-size: 13px; }
+.property-list-heading .property-details { flex: 0 0 auto; margin: 0; align-self: center; padding: 5px 7px; font-size: 11px; }
+.property-building-drawer { border-top: 1px solid var(--border-main); }
+.property-building-drawer summary, .property-coordinate-details summary { cursor: pointer; padding: 9px; color: var(--text-main); font-size: 11px; }
+.property-building-drawer summary span { float: right; border: 1px solid var(--border-main); border-radius: 10px; padding: 0 6px; }
+.property-building-list { display: grid; gap: 5px; padding: 0 8px 8px; max-height: 210px; overflow-y: auto; }
+.property-building-list button { display: grid; gap: 2px; text-align: left; margin: 0; padding: 7px 9px; text-transform: none; }
+.property-building-list span, .property-building-list small { color: var(--text-main); font-size: 10px; }
+.property-building-list strong { color: var(--text-main); font-size: 12px; }
+.property-existing-building { display: grid; gap: 5px; color: var(--text-main); font-size: 11px; }
+.property-coordinate-details { border: 1px solid var(--border-main); border-radius: 4px; }
+.estate-details-dialog.MuiPaper-root, .building-details-dialog.MuiPaper-root { background: var(--bg-surface); color: var(--text-main); border: 1px solid var(--primary-border); }
+.estate-details-dialog .MuiTypography-root, .building-details-dialog .MuiTypography-root,
+.estate-details-dialog .MuiInputBase-root, .building-details-dialog .MuiInputBase-root,
+.estate-details-dialog .MuiInputLabel-root, .building-details-dialog .MuiInputLabel-root,
+.estate-details-dialog .MuiFormHelperText-root, .building-details-dialog .MuiFormHelperText-root,
+.estate-details-dialog .MuiButton-root, .building-details-dialog .MuiButton-root,
+.estate-details-dialog .MuiSvgIcon-root, .building-details-dialog .MuiSvgIcon-root { color: var(--text-main) !important; }
+.estate-details-dialog input, .building-details-dialog input, .building-details-dialog textarea { color: var(--text-main) !important; -webkit-text-fill-color: var(--text-main) !important; color-scheme: inherit; }
+.estate-details-dialog .MuiButton-root, .building-details-dialog .MuiButton-root { background-color: var(--bg-surface-2) !important; border: 1px solid var(--border-main); }
+.estate-details-dialog .property-delete-action { border-color: var(--danger-border); margin-right: auto; }
+.building-details-dialog .MuiOutlinedInput-notchedOutline, .estate-details-dialog .MuiOutlinedInput-notchedOutline { border-color: var(--border-main) !important; }
 
 /* .editor-menu,
 .secondary-tool-panel {
@@ -72,31 +101,50 @@
   z-index: 50;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
 
-.road-menu .region-settings { display: grid; gap: 9px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #637366; }
-.road-menu .region-settings > .MuiTypography-root { color: #f0d79a; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.road-menu .region-settings { display: grid; gap: 9px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-main); }
+.road-menu .region-settings .region-snap-toggle { width: 100%; min-height: 38px; padding: 7px 10px; white-space: normal; text-align: center; line-height: 1.25; color: var(--text-main); border-color: var(--border-main); text-transform: none; }
+.road-menu .region-settings .region-snap-toggle.Mui-selected { color: var(--info); background: var(--bg-surface); border-color: var(--primary-border); }
+.road-menu .region-settings > .MuiTypography-root { color: var(--text-main); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .road-menu .region-settings-list { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 3px; }
-.road-menu .region-settings-list button { flex: 0 0 auto; border: 1px solid #69796e; border-radius: 4px; background: #172820; color: #e6e3d3; padding: 6px 8px; }
-.road-menu .region-settings-list button[aria-pressed=true] { border-color: #efc875; background: #394636; }
-.road-menu .region-settings label { display: grid; gap: 4px; color: #becbbf; font-size: 11px; text-transform: capitalize; }
-.road-menu .region-settings select { min-height: 30px; padding: 4px 6px; background: #14251d; border: 1px solid #69796e; border-radius: 4px; color: #f3ead7; }
-.road-menu .region-settings p { margin: 0; color: #a9b9ac; font-size: 11px; line-height: 1.4; }
-.road-menu .region-settings p[role=alert] { color: #ffd38b; }
-.road-menu .spline-draft-actions { position: sticky; top: -12px; z-index: 2; padding: 8px 0; background: #14201c; }
-.road-menu .spline-save-status { color: #f0d79a; font-size: 11px; min-height: 16px; margin: 4px 0 10px; }
-.editor-menu.road-menu { background: #14201c !important; }
+.road-menu .region-settings-list button { flex: 0 0 auto; border: 1px solid var(--border-main); border-radius: 4px; background: var(--bg-surface); color: var(--text-main); padding: 6px 8px; }
+.road-menu .region-settings-list button[aria-pressed=true] { border-color: var(--primary-border); background: var(--bg-surface-2); }
+.road-menu .region-settings label { display: grid; gap: 4px; color: var(--text-muted); font-size: 11px; text-transform: capitalize; }
+.road-menu .region-settings select { min-height: 30px; padding: 4px 6px; background: var(--bg-surface); border: 1px solid var(--border-main); border-radius: 4px; color: var(--text-main); }
+.road-menu .region-settings p { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.road-menu .region-settings p[role=alert] { color: var(--text-main); }
+.road-menu .spline-draft-actions { position: sticky; top: -12px; z-index: 2; padding: 8px 0; background: var(--bg-surface); }
+.road-menu .spline-save-status { color: var(--text-main); font-size: 11px; min-height: 16px; margin: 4px 0 10px; }
+.editor-menu.road-menu { background: var(--bg-surface) !important; }
 .road-menu .spline-draft-actions button { font-size: 12px; min-height: 38px; }
-.road-menu .spline-draft-actions button:last-child:not(:disabled) { background: #c39a53; color: #14201c; font-weight: 700; }
+.road-menu .spline-draft-actions button:last-child:not(:disabled) { background: var(--accent); color: var(--text-on-accent); font-weight: 700; }
 .road-menu .region-mode-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .road-menu .region-mode-controls button { font-size: 11px; min-height: 36px; border-radius: 4px; }
+.editor-menu .tool-mode-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  flex: 0 0 auto;
+  margin: -14px -14px 0;
+  padding: 14px 14px 10px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-main);
+}
+.editor-menu .tool-mode-header .MuiToggleButtonGroup-root { margin-bottom: 0; }
+.editor-menu.terrain-menu .terrain-mode-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.editor-menu.terrain-menu .terrain-mode-controls .MuiToggleButton-root { min-width: 0; min-height: 34px; border-radius: 4px; font-size: 9px; padding: 4px 2px; }
+.editor-menu.road-menu.secondary-editor-menu .road-existing-list { order: 10; display: grid; gap: 8px; min-height: 0; border-top: 1px solid var(--border-main); padding-top: 12px; }
+.editor-menu.road-menu.secondary-editor-menu .spline-draft-actions,
+.editor-menu.region-tools-panel .spline-draft-actions { position: static; }
+.editor-menu .tool-existing-list { display: grid; gap: 8px; min-height: 0; border-top: 1px solid var(--border-main); padding-top: 12px; }
 
 .editor-menu.secondary-editor-menu {
   top: 150px;
@@ -104,11 +152,11 @@
   z-index: 49;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
@@ -119,11 +167,11 @@
   z-index: 48;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
@@ -134,11 +182,11 @@
   z-index: 47;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
@@ -149,11 +197,11 @@
   z-index: 46;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
@@ -164,11 +212,11 @@
   z-index: 45;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
@@ -179,11 +227,11 @@
   z-index: 44;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
@@ -194,11 +242,11 @@
   z-index: 43;
   width: 280px;
   padding: 12px;
-  border: 1px solid #ffffff2c;
+  border: 1px solid var(--border-main);
   border-radius: 7px;
-  background: #14201cce;
-  box-shadow: 0 8px 22px #07100bbb;
-  color: #d7dfda;
+  background: var(--overlay);
+  box-shadow: 0 8px 22px var(--overlay);
+  color: var(--text-main);
   font-size: 9px;
   user-select: none;
 }
@@ -206,19 +254,19 @@
 .editor-menu button {
   min-height: 32px;
   padding: 4px;
-  border: 1px solid #53645a;
+  border: 1px solid var(--border-main);
   border-radius: 4px;
-  background: #23352d;
-  color: #d5ddd7;
+  background: var(--bg-surface-2);
+  color: var(--text-main);
   font-size: 8px;
   touch-action: none;
 }
 
 .editor-menu button:hover,
 .editor-menu button:active {
-  border-color: #d0a957;
-  background: #a87e3e;
-  color: #17211c;
+  border-color: var(--primary-border);
+  background: var(--accent-hover);
+  color: var(--text-on-accent);
 }
 
 .editor-menu label {
@@ -228,33 +276,33 @@
 
 .editor-menu input[type="range"] {
   width: 100%;
-  accent-color: #bd9149;
+  accent-color: var(--text-main);
 }
 
 .editor-menu input[type="checkbox"] {
-  accent-color: #bd9149;
+  accent-color: var(--text-main);
 }
 
 .editor-menu select {
   width: 100%;
   padding: 4px;
-  border: 1px solid #53645a;
+  border: 1px solid var(--border-main);
   border-radius: 4px;
-  background: #23352d;
-  color: #d5ddd7;
+  background: var(--bg-surface-2);
+  color: var(--text-main);
   font-size: 8px;
 }
 
 .editor-menu small {
   display: block;
   margin-top: 8px;
-  color: #aebbb3;
+  color: var(--text-muted);
   line-height: 1.45;
 }
 
 /* Moved from SettlementManager.css */
 .editor-menu>span {
-  color: #cbbd9d;
+  color: var(--text-muted);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: .13em
@@ -262,7 +310,7 @@
 
 .editor-menu p {
   margin: 2px 0 0;
-  color: #8f9d95;
+  color: var(--text-subtle);
   font-size: .75rem;
   line-height: 1.4
 }
@@ -274,20 +322,20 @@
   top: 55px;
   left: 310px;
   /* Positions perfectly adjacent to your primary tools menu container */
-  background: #14201ce8;
-  border: 1px solid #ffffff2c;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-main);
   width: 260px;
   border-radius: 6px;
   padding: 10px;
   z-index: 50;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 15px var(--overlay);
 }
 
 .time-control-menu span {
   display: block;
   font-size: 9px;
   font-weight: 800;
-  color: #ecd89f;
+  color: var(--text-main);
   letter-spacing: .06em;
   margin-bottom: 8px;
   text-transform: uppercase;
@@ -301,9 +349,9 @@
 }
 
 .time-adjustment-grid button {
-  background: #23352d;
-  border: 1px solid #53645a;
-  color: #d5ddd7;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-main);
+  color: var(--text-main);
   border-radius: 4px;
   padding: 6px;
   font-size: 9px;
@@ -313,16 +361,16 @@
 }
 
 .time-adjustment-grid button:hover {
-  border-color: #d0a957;
-  background: #a87e3e;
-  color: #17211c;
+  border-color: var(--primary-border);
+  background: var(--accent-hover);
+  color: var(--text-on-accent);
 }
 
 .manual-time-override-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-top: 1px solid #33443b;
+  border-top: 1px solid var(--border-main);
   padding-top: 8px;
 }
 
@@ -336,17 +384,17 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  color: #b5c0b9;
+  color: var(--text-muted);
   font-size: 8px;
   font-weight: bold;
   text-transform: uppercase;
 }
 
 .override-inputs-row input {
-  background: #101815;
-  border: 1px solid #3d4d43;
+  background: var(--bg-app);
+  border: 1px solid var(--border-main);
   border-radius: 4px;
-  color: #fff;
+  color: var(--text-main);
   padding: 4px;
   font-size: 11px;
   text-align: center;
@@ -354,8 +402,8 @@
 }
 
 .apply-time-button {
-  background: #bd9149;
-  color: #17211c;
+  background: var(--accent);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 4px;
   padding: 6px;
@@ -366,23 +414,23 @@
 }
 
 .apply-time-button:hover {
-  background: #d4a75b;
+  background: var(--accent-hover);
 }
 
 .editor-menu.secondary-tool-panel {
   top: 215px;
   /* Stacks cleanly beneath the Time Panel to prevent overlapping */
   left: 310px;
-  background: #14201ce8;
-  border: 1px solid #ffffff2c;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-main);
   width: 260px;
   z-index: 51;
 }
 
 .editor-menu.secondary-tool-panel select {
-  background: #23352d;
-  border: 1px solid #53645a;
-  color: #d5ddd7;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-main);
+  color: var(--text-main);
   margin-top: 4px;
   padding: 6px;
   font-size: 10px;
@@ -391,34 +439,34 @@
 
 /* Keep MUI TextField controls consistent with the dark tool-panel inputs. */
 .editor-menu .MuiOutlinedInput-root {
-  background: #23352d;
-  color: #d5ddd7;
+  background: var(--bg-surface-2);
+  color: var(--text-main);
   font-size: 11px;
 }
 
 .editor-menu .MuiOutlinedInput-root .MuiOutlinedInput-notchedOutline {
-  border-color: #53645a;
+  border-color: var(--border-main);
 }
 
 .editor-menu .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
-  border-color: #7a8b80;
+  border-color: var(--border-main);
 }
 
 .editor-menu .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
-  border-color: #bd9149;
+  border-color: var(--border-main);
 }
 
 .editor-menu .MuiInputBase-input,
 .editor-menu .MuiOutlinedInput-input {
-  color: #d5ddd7;
-  -webkit-text-fill-color: #d5ddd7;
+  color: var(--text-main);
+  -webkit-text-fill-color: var(--text-main);
 }
 
 .editor-menu .MuiInputLabel-root {
-  color: #aebbb3;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .editor-menu .MuiInputLabel-root.Mui-focused {
-  color: #d8c28f;
+  color: var(--text-main);
 }

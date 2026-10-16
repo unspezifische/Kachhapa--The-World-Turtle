@@ -37,6 +37,21 @@ test('existing placement is staged, proportional, cancellable, and only saved on
   await screen.findByText('Edit placement');
   expect(screen.queryByLabelText('Width (ft)')).not.toBeInTheDocument();
 });
+test('rotation is adjusted with the compact dial instead of a number field', async () => {
+  const apply = jest.fn().mockResolvedValue(undefined);
+  render(<Harness apply={apply} />);
+  fireEvent.click(screen.getByText('Edit placement'));
+  const dial = screen.getByRole('slider', { name: 'Rotation (°)' });
+  expect(dial).toHaveAttribute('aria-valuenow', '0');
+  expect(screen.queryByRole('spinbutton', { name: 'Rotation (°)' })).not.toBeInTheDocument();
+  fireEvent.keyDown(dial, { key: 'ArrowRight', shiftKey: true });
+  expect(dial).toHaveAttribute('aria-valuenow', '15');
+  fireEvent.click(screen.getByText('Apply changes'));
+  await waitFor(() => expect(apply).toHaveBeenCalledWith(
+    expect.objectContaining({ rotation_degrees: 15 }),
+    null
+  ));
+});
 test('a cleared dimension remains empty while editing and restores on blur', () => {
   render(<Harness apply={jest.fn()} />);
   fireEvent.click(screen.getByText('Edit placement'));
@@ -58,6 +73,7 @@ test('a cleared dimension remains empty while editing and restores on blur', () 
 });
 test('distance calibration remains available inside Edit placement', () => {
   render(<Harness apply={jest.fn()} calibration={<details><summary>Distance calibration</summary></details>} />);
+  expect(screen.queryByText('Distance calibration')).not.toBeInTheDocument();
   fireEvent.click(screen.getByText('Edit placement'));
   expect(screen.getByText('Distance calibration')).toBeInTheDocument();
 });

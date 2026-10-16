@@ -67,10 +67,19 @@ import { radiusToSlider, sliderToRadius, radiusStops } from './brushRadius';
 
 import {
   terrainHeightAt,
+  terrainStrokeBounds,
   insertRoadControlPoint,
   insertOpenSplineControlPoint,
+  insertClosedSplineControlPoint,
   deleteSplineControlPoint,
   isFortificationTowerPoint,
+  materializeFortificationTowerRoles,
+  updateRoadSegments,
+  updateFortificationSegment,
+  wallSegmentProperties,
+  restoreFortificationSegmentDefaults,
+  normalizeWallTopology,
+  attachedWallTower,
 } from './settlementEditor';
 
 import {
@@ -87,13 +96,17 @@ import HeightmapImportTool from './HeightmapImportTool';
 import { ValidatedNumberField } from './ValidatedNumberInput';
 import { buildingOpenStatus, linkedBusinessForBuilding } from './settlementInspection';
 import { resolveLinkedRegion } from './settlementRegionLinks';
+import { DEFAULT_STREET_LIGHTING } from './settlementStreetLighting';
+import { applyRegionalRoadClassDefaults, regionalRoadSurfaceForSegment } from './regionRoadMaterials';
+import { appendWallAndJoin, detachWallJunction, findWallSnapTarget, joinWallPoints,
+  moveWallJunction, updateWallJunction } from './wallJunctions';
 
 import './SettlementPresentation.css';
 import './SettlementToolPanels.css';
 
 const TERRAIN_SIZE_FEET = 1800;
 const DEFAULT_FIRST_PERSON_SETTINGS = { sensitivity: 50, invertX: false, invertY: false, fov: 75, walkSpeed: 8, eyeHeight: 6 };
-const DEFAULT_BRUSH_STRENGTHS = { raise: 8, lower: 8, flatten: 35, smooth: 35 };
+const DEFAULT_BRUSH_STRENGTHS = { raise: 8, lower: 8, flatten: 35, smooth: 35, 'set-elevation': 100, slope: 100 };
 
 const ROAD_CLASS_DEFAULTS = {
   trail: { label: 'Trail', width: 8, surface: 'dirt' },
@@ -169,6 +182,8 @@ export function ToolWorkflow({
   roadDraft,
   setRoadDraft,
   finishRoad,
+  roadName,
+  setRoadName,
   roadWidth,
   setRoadWidth,
   roadClass,
@@ -208,6 +223,13 @@ export function ToolWorkflow({
   setBrushRadius,
   brushStrength,
   setBrushStrength,
+  targetElevation,
+  setTargetElevation,
+  pickTerrainElevation,
+  setPickTerrainElevation,
+  slopeDraft,
+  setSlopeDraft,
+  applySlope,
   viewCommand,
   atmosphereSettings,
   setAtmosphereSettings,
@@ -263,21 +285,21 @@ export function ToolWorkflow({
 
     return (
       <aside className="editor-menu inspect-menu-panel" aria-label="Inspector">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+        <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
           INSPECTOR OVERVIEW
         </Typography>
 
         {inspectSelection ? (
           <Box className="inspect-record">
-            <Typography variant="caption" sx={{ color: '#7ce6ff', fontWeight: 'bold', letterSpacing: '1px', mb: 0.5, fontSize: '10px' }}>
+            <Typography variant="caption" sx={{ color: "var(--info)", fontWeight: 'bold', letterSpacing: '1px', mb: 0.5, fontSize: '10px' }}>
               {inspectedBuilding ? 'BUILDING RECORD' : 'FEATURE SELECTION'}
             </Typography>
 
-            <Typography variant="h6" sx={{ fontSize: '1.2rem', color: '#fff', fontWeight: 700, lineHeight: 1.2, mb: 0.5 }}>
+            <Typography variant="h6" sx={{ fontSize: '1.2rem', color: "var(--text-main)", fontWeight: 700, lineHeight: 1.2, mb: 0.5 }}>
               {inspectedBuilding?.name || inspectSelection.name || 'Unnamed Landmark'}
             </Typography>
 
-            <Typography variant="caption" sx={{ display: 'inline-block', fontSize: '11px', textTransform: 'uppercase', color: '#ffe08a', mb: 1.5 }}>
+            <Typography variant="caption" sx={{ display: 'inline-block', fontSize: '11px', textTransform: 'uppercase', color: "var(--text-main)", mb: 1.5 }}>
               {inspectedBuilding
                 ? inspectedBuilding.business_type || linkedBusiness?.business_type || inspectedBuilding.building_type || inspectedAsset?.category || 'Mapped building'
                 : inspectSelection.kind || 'Point of Interest'}
@@ -295,7 +317,7 @@ export function ToolWorkflow({
               </Box>
             )}
 
-            <Typography variant="body2" sx={{ fontSize: '0.9rem', lineHeight: 1.4, color: '#cbd5e1', mb: 1.5 }}>
+            <Typography variant="body2" sx={{ fontSize: '0.9rem', lineHeight: 1.4, color: "var(--text-main)", mb: 1.5 }}>
               {inspectedBuilding?.public_description || inspectedBuilding?.description
                 || inspectSelection.public_description
                 || inspectSelection.description
@@ -319,7 +341,7 @@ export function ToolWorkflow({
                 variant="outlined"
                 fullWidth
                 onClick={state.onManageInspectedBuilding}
-                sx={{ mt: 1, textTransform: 'none', fontWeight: 'bold', color: '#e7d6ae', borderColor: '#bd9149' }}
+                sx={{ mt: 1, textTransform: 'none', fontWeight: 'bold', color: "var(--text-main)", borderColor: "var(--border-main)" }}
               >
                 {inspectedBuilding.is_blueprint ? 'Building details & levels' : 'Manage building'}
               </Button>
@@ -341,14 +363,14 @@ export function ToolWorkflow({
             sx={{
               padding: '24px 8px',
               textAlign: 'center',
-              color: '#94a3b8',
+              color: "var(--text-muted)",
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               gap: 1
             }}
           >
-            <VisibilityIcon sx={{ fontSize: '2rem', color: '#47423a' }} />
+            <VisibilityIcon sx={{ fontSize: '2rem', color: "var(--text-on-accent)" }} />
             <Typography variant="body2" sx={{ fontSize: '0.9rem', lineHeight: 1.3 }}>
               Click directly on a mapped building, street line, or point of interest marker to display its contextual database entries.
             </Typography>
@@ -367,32 +389,31 @@ export function ToolWorkflow({
 
     return (
       <aside className="editor-menu road-menu secondary-editor-menu">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
-          STREETS &amp; HIGHWAYS
-        </Typography>
-
-        {/* Mode selectors ribbon using standard ToggleButtonGroup */}
-        <ToggleButtonGroup
+        <Box className="tool-mode-header road-mode-header">
+          <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+            STREETS &amp; HIGHWAYS
+          </Typography>
+          <ToggleButtonGroup
           value={roadMode}
           exclusive
           fullWidth
           size="small"
           onChange={(e, nextMode) => {
             if (nextMode !== null) {
-              if (nextMode === 'draw-new') setRoadDraft([]);
+              if (nextMode === 'draw-new') { setRoadDraft([]); setRoadName?.(''); }
               setRoadMode(nextMode);
             }
           }}
           sx={{
             mb: 2,
-            backgroundColor: '#10231f',
+            backgroundColor: "var(--bg-surface)",
             '& .MuiToggleButton-root': {
-              color: '#94a3b8',
-              borderColor: '#47423a',
+              color: "var(--text-muted)",
+              borderColor: "var(--border-main)",
               textTransform: 'none',
               fontSize: '11px',
               gap: '4px',
-              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+              '&.Mui-selected': { color: "var(--info)", backgroundColor: "var(--bg-surface)" }
             }
           }}
         >
@@ -400,7 +421,8 @@ export function ToolWorkflow({
           <ToggleButton value="refine" disabled={!selectedRoad}><EditIcon fontSize="small" /> Refine</ToggleButton>
           <ToggleButton value="move-spline" disabled={!selectedRoad}><OpenInNewIcon fontSize="small" /> Move</ToggleButton>
           <ToggleButton value="draw-new"><AddIcon fontSize="small" /> Draw</ToggleButton>
-        </ToggleButtonGroup>
+          </ToggleButtonGroup>
+        </Box>
 
         {['draw-new', 'refine', 'move-spline'].includes(roadMode) && (
           <Box sx={{ mb: 1.5, px: 0.5 }}>
@@ -410,40 +432,70 @@ export function ToolWorkflow({
                   size="small"
                   checked={roadSnapEnabled}
                   onChange={event => setRoadSnapEnabled(event.target.checked)}
-                  sx={{ color: '#718079', '&.Mui-checked': { color: '#bd9149' } }}
+                  sx={{ color: "var(--text-subtle)", '&.Mui-checked': { color: "var(--text-main)" } }}
                 />
               }
               label={
-                <Typography variant="caption" sx={{ color: '#d5ddd7', fontSize: '11px' }}>
+                <Typography variant="caption" sx={{ color: "var(--text-main)", fontSize: '11px' }}>
                   Snap to road network
                 </Typography>
               }
               sx={{ m: 0 }}
             />
-            <Typography variant="caption" sx={{ display: 'block', color: '#718079', fontSize: '10px', ml: 4 }}>
+            <Typography variant="caption" sx={{ display: 'block', color: "var(--text-subtle)", fontSize: '10px', ml: 4 }}>
               Snap radius: {Math.round(roadSnapToleranceFeet)} ft · automatically scales with zoom
             </Typography>
           </Box>
         )}
 
         {roadMode === 'refine' && selectedRoad && (
-          <Typography variant="caption" sx={{ display: 'block', color: '#94a3b8', lineHeight: 1.4, mb: 1.5 }}>
-            Drag a control point to reshape the road. Right-click the road or a control point for add/delete options.
+          <Typography variant="caption" sx={{ display: 'block', color: "var(--text-muted)", lineHeight: 1.4, mb: 1.5 }}>
+            Click a span or point to select it; Shift-click to select several. Drag selected spans or points together, or right-click for add/delete options.
           </Typography>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
-          <Button variant="outlined" size="small" startIcon={<UndoIcon />} disabled={!canUndoSplineEdit} onClick={undoSplineEdit} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+        {roadMode === 'move-spline' && selectedRoad && <Typography variant="caption" sx={{ color: "var(--text-muted)", mb: 1.5 }}>
+          Drag {selectedRoad.name || 'the selected road'} on the map to move it.
+        </Typography>}
+
+        {roadMode === 'refine' && selectedRoad && state.selectedRoadSegmentIndexes?.length > 0 && (() => {
+          const indexes = state.selectedRoadSegmentIndexes;
+          const first = selectedRoad.segments?.[indexes[0]] || {};
+          const width = Number(first.width_feet ?? selectedRoad.width_feet) || 30;
+          const surface = first.surface_type || selectedRoad.surface_type || 'dirt';
+          return <Box sx={{ mb: 1.5, p: 1.25, border: "1px solid var(--border-main)", borderRadius: 1, backgroundColor: "var(--bg-surface)" }}>
+            <Typography variant="caption" sx={{ color: "var(--text-main)", display: 'block', fontWeight: 700, mb: .75 }}>
+              {indexes.length === 1 ? `Selected span ${indexes[0] + 1}` : `${indexes.length} selected spans`} · Shift-click to add or remove
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+              <ValidatedNumberField label="Span width (ft)" size="small" value={width} onCommit={value => {
+                state.recordSplineUndo('road', selectedRoad);
+                state.setRoads(values => values.map(road => road.id === selectedRoad.id ? updateRoadSegments(road, indexes, { width_feet: value }) : road));
+              }} />
+              <Select size="small" value={surface} onChange={event => {
+                state.recordSplineUndo('road', selectedRoad);
+                state.setRoads(values => values.map(road => road.id === selectedRoad.id ? updateRoadSegments(road, indexes, { surface_type: event.target.value }) : road));
+              }} sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}>
+                {ROAD_SURFACE_OPTIONS.map(value => <MenuItem key={value} value={value}>{value.charAt(0).toUpperCase() + value.slice(1)}</MenuItem>)}
+              </Select>
+            </Box>
+          </Box>;
+        })()}
+
+        {roadMode === 'refine' && <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
+          <Button variant="outlined" size="small" startIcon={<UndoIcon />} disabled={!canUndoSplineEdit} onClick={undoSplineEdit} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
             Undo Edit
           </Button>
-          <Button variant="outlined" size="small" disabled={state.selectedRoadPointIndex == null} onClick={() => state.setSelectedRoadPointIndex(null)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
-            Clear Point
+          <Button variant="outlined" size="small" disabled={!state.selectedRoadPointIndexes?.length && state.selectedRoadPointIndex == null}
+            onClick={() => { state.setSelectedRoadPointIndex(null); state.setSelectedRoadPointIndexes?.([]); }}
+            sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
+            Clear Points
           </Button>
-        </Box>
+        </Box>}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
+        {roadMode === 'draw-new' && <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
           <Box>
-            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>New Road Class</Typography>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5 }}>New Road Class</Typography>
             <Select
               size="small"
               fullWidth
@@ -453,24 +505,25 @@ export function ToolWorkflow({
                 const defaults = ROAD_CLASS_DEFAULTS[nextClass] || ROAD_CLASS_DEFAULTS.street;
                 setRoadClass(nextClass);
                 setRoadWidth(defaults.width);
-                setRoadSurface(defaults.surface);
+                setRoadSurface('regional-default');
               }}
-              sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
+              sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}
             >
               {Object.entries(ROAD_CLASS_DEFAULTS).map(([key, config]) => <MenuItem key={key} value={key}>{config.label}</MenuItem>)}
             </Select>
           </Box>
           <Box>
-            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>New Surface</Typography>
-            <Select size="small" fullWidth value={roadSurface} onChange={e => setRoadSurface(e.target.value)} sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5 }}>New Surface</Typography>
+            <Select size="small" fullWidth value={roadSurface} onChange={e => setRoadSurface(e.target.value)} sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}>
+              <MenuItem value="regional-default">Region or class default</MenuItem>
               {ROAD_SURFACE_OPTIONS.map(surface => <MenuItem key={surface} value={surface}>{surface.charAt(0).toUpperCase() + surface.slice(1)}</MenuItem>)}
             </Select>
           </Box>
-        </Box>
+        </Box>}
 
         {/* New Width Slider Control Input packaging */}
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+        {roadMode === 'draw-new' && <Box sx={{ mb: 2 }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
             <span>New Width</span>
             <strong>{roadWidth} ft</strong>
           </Typography>
@@ -480,73 +533,38 @@ export function ToolWorkflow({
             step={2}
             value={roadWidth}
             onChange={event => setRoadWidth(Number(event.target.value))}
-            sx={{ color: '#bd9149' }}
+            sx={{ color: "var(--text-main)" }}
           />
-        </Box>
+        </Box>}
+
+        {roadMode === 'draw-new' && <TextField label="New road name" size="small" fullWidth
+          value={roadName || ''} onChange={event => setRoadName?.(event.target.value)} />}
 
         {/* Real-time draft spline builder buttons using CSS Grid on Box */}
-        <Box className="spline-draft-actions" sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
-          <Button variant="outlined" size="small" disabled={!roadDraft.length} onClick={() => setRoadDraft(p => p.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a' }}>
+        {roadMode === 'draw-new' && <Box className="spline-draft-actions" sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
+          <Button variant="outlined" size="small" disabled={!roadDraft.length} onClick={() => setRoadDraft(p => p.slice(0, -1))} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)" }}>
             Undo Point
           </Button>
-          <Button variant="contained" size="small" disabled={roadDraft.length < 2} onClick={finishRoad} sx={{ backgroundColor: '#bd9149', color: '#17211c' }}>
+          <Button variant="contained" size="small" disabled={roadDraft.length < 2} onClick={finishRoad} sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}>
             Save Road
           </Button>
-        </Box>
-        {roadMode === 'draw-new' && <Box sx={{ mb: 2, color: '#aabfb2', fontSize: 12 }}>
-          {roadDraft.length} points · Click the map to add points.
-          <Button size="small" onClick={() => { setRoadDraft([]); setRoadMode('select'); }}>Cancel draft</Button>
         </Box>}
-        <p role="status" className="spline-save-status">{saveStatus}</p>
-
-        <TextField
-          type="search"
-          placeholder="Filter existing roads..."
-          size="small"
-          fullWidth
-          value={roadSearch}
-          onChange={e => setRoadSearch(e.target.value)}
-          sx={{ mb: 1.5, input: { color: '#fff', fontSize: '11px' } }}
-        />
-
-        {/* Existing Streets Scrollable Stack List wrapper */}
-        <Box className="street-list" sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', mb: selectedRoad ? 2 : 0 }}>
-          {filteredRoads.map(r => (
-            <Button
-              key={r.id}
-              fullWidth
-              onClick={() => { state.setSelectedRoadId(r.id); state.setSelectedRoadPointIndex(null); state.setSelected(r); }}
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'flex-start',
-                textTransform: 'none',
-                padding: '6px 10px',
-                backgroundColor: r.id === state.selectedRoadId ? '#1e3a34' : '#10231f',
-                border: '1px solid',
-                borderColor: r.id === state.selectedRoadId ? '#ffe08a' : '#47423a',
-                borderRadius: '4px',
-                color: '#fff',
-                textAlign: 'left',
-                '&:hover': { backgroundColor: '#16322c' }
-              }}
-            >
-              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{r.name || 'Unnamed street'}</Typography>
-              <Typography variant="caption" sx={{ color: '#94a3b8' }}>{r.points?.length || 0} nodes mapped</Typography>
-            </Button>
-          ))}
-        </Box>
+        {roadMode === 'draw-new' && <Box sx={{ mb: 2, color: "var(--text-muted)", fontSize: 12 }}>
+          {roadDraft.length} points · Click the map to add points.
+          <Button size="small" onClick={() => { setRoadDraft([]); setRoadName?.(''); setRoadMode('select'); }}>Cancel draft</Button>
+        </Box>}
+        {roadMode === 'draw-new' && <p role="status" className="spline-save-status">{saveStatus}</p>}
 
         {/* Contextual Selected Road Metadata Sub-Panel Form */}
         {
-          selectedRoad && (
-            <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          roadMode === 'refine' && selectedRoad && (
+            <Box sx={{ borderTop: "1px solid var(--border-main)", pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
                 <Select
                   size="small"
                   value={selectedRoad.road_class || 'street'}
                   onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, road_class: e.target.value } : road))}
-                  sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
+                  sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}
                 >
                   {Object.entries(ROAD_CLASS_DEFAULTS).map(([key, config]) => <MenuItem key={key} value={key}>{config.label}</MenuItem>)}
                 </Select>
@@ -554,7 +572,7 @@ export function ToolWorkflow({
                   size="small"
                   value={selectedRoad.surface_type || 'dirt'}
                   onChange={e => state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, surface_type: e.target.value } : road))}
-                  sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
+                  sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}
                 >
                   {ROAD_SURFACE_OPTIONS.map(surface => <MenuItem key={surface} value={surface}>{surface.charAt(0).toUpperCase() + surface.slice(1)}</MenuItem>)}
                 </Select>
@@ -580,9 +598,11 @@ export function ToolWorkflow({
                   variant="outlined"
                   onClick={() => {
                     const defaults = ROAD_CLASS_DEFAULTS[selectedRoad.road_class || 'street'] || ROAD_CLASS_DEFAULTS.street;
-                    state.setRoads(values => values.map(road => road.id === selectedRoad.id ? { ...road, width_feet: defaults.width, surface_type: defaults.surface } : road));
+                    state.recordSplineUndo?.('road', selectedRoad);
+                    state.setRoads(values => values.map(road => road.id === selectedRoad.id
+                      ? applyRegionalRoadClassDefaults(road, defaults, state.regions) : road));
                   }}
-                  sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
+                  sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}
                 >
                   Apply Class Defaults
                 </Button>
@@ -594,14 +614,21 @@ export function ToolWorkflow({
                   <Button
                     key={idx}
                     size="small"
-                    onClick={() => state.setSelectedRoadPointIndex(idx)}
+                    onClick={event => {
+                      const current = state.selectedRoadPointIndexes || [];
+                      const next = event.shiftKey
+                        ? (current.includes(idx) ? current.filter(value => value !== idx) : [...current, idx])
+                        : [idx];
+                      state.setSelectedRoadPointIndexes?.(next);
+                      state.setSelectedRoadPointIndex(next.length === 1 ? next[0] : null);
+                    }}
                     sx={{
                       minWidth: '28px',
                       height: '28px',
                       padding: 0,
-                      backgroundColor: state.selectedRoadPointIndex === idx ? '#ffe08a' : '#23352d',
-                      color: state.selectedRoadPointIndex === idx ? '#17211c' : '#d5ddd7',
-                      '&:hover': { backgroundColor: '#a87e3e' }
+                      backgroundColor: (state.selectedRoadPointIndexes || []).includes(idx) || state.selectedRoadPointIndex === idx ? "var(--accent)" : "var(--bg-surface-2)",
+                      color: (state.selectedRoadPointIndexes || []).includes(idx) || state.selectedRoadPointIndex === idx ? "var(--text-on-accent)" : "var(--text-main)",
+                      '&:hover': { backgroundColor: "var(--accent)" }
                     }}
                   >
                     {idx + 1}
@@ -653,7 +680,7 @@ export function ToolWorkflow({
                         const { width_feet, ...rest } = point;
                         return rest;
                       })
-                    } : road))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+                    } : road))} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
                       Use Road Width
                     </Button>
                     <Button size="small" variant="outlined" color="error"
@@ -677,6 +704,47 @@ export function ToolWorkflow({
             </Box>
           )
         }
+        <Box className="road-existing-list">
+        <TextField
+          type="search"
+          placeholder="Filter existing roads..."
+          size="small"
+          fullWidth
+          value={roadSearch}
+          onChange={e => setRoadSearch(e.target.value)}
+          sx={{ mb: 1.5, input: { color: "var(--text-main)", fontSize: '11px' } }}
+        />
+
+        {/* Existing Streets Scrollable Stack List wrapper */}
+        <Box className="street-list" sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', mb: selectedRoad ? 2 : 0 }}>
+          {filteredRoads.map(r => (
+            <Button
+              key={r.id}
+              fullWidth
+              onClick={() => { state.setSelectedRoadId(r.id); state.setSelectedRoadPointIndex(null);
+                state.setSelectedRoadPointIndexes?.([]); state.setSelectedRoadSegmentIndexes?.([]); state.setSelected(r); }}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                textTransform: 'none',
+                padding: '6px 10px',
+                backgroundColor: r.id === state.selectedRoadId ? "var(--bg-surface-2)" : "var(--bg-surface)",
+                border: '1px solid',
+                borderColor: r.id === state.selectedRoadId ? "var(--primary-border)" : "var(--border-main)",
+                borderRadius: '4px',
+                color: "var(--text-main)",
+                textAlign: 'left',
+                '&:hover': { backgroundColor: "var(--bg-surface)" }
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{r.name || 'Unnamed street'}</Typography>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>{r.points?.length || 0} nodes mapped</Typography>
+            </Button>
+          ))}
+        </Box>
+        </Box>
+
       </aside >
     );
   }
@@ -686,9 +754,61 @@ export function ToolWorkflow({
   if (activeTool === 'terrain') {
     return (
       <aside className="editor-menu terrain-menu">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+        <Box className="tool-mode-header">
+        <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
           TERRAIN SCULPT
         </Typography>
+
+        {/* Segmented Brush Mode Ribbon */}
+        <ToggleButtonGroup
+          value={terrainMode}
+          className="terrain-mode-controls"
+          exclusive
+          fullWidth
+          size="small"
+          onChange={(e, nextMode) => { if (nextMode !== null) setTerrainMode(nextMode); }}
+          sx={{
+            mb: 2.5,
+            backgroundColor: "var(--bg-surface)",
+            '& .MuiToggleButton-root': {
+              color: "var(--text-muted)",
+              borderColor: "var(--border-main)",
+              fontSize: '10px',
+              fontWeight: 'bold',
+              '&.Mui-selected': { color: "var(--info)", backgroundColor: "var(--bg-surface)" }
+            }
+          }}
+        >
+          <ToggleButton value="raise">RAISE</ToggleButton>
+          <ToggleButton value="lower">LOWER</ToggleButton>
+          <ToggleButton value="flatten">FLATTEN</ToggleButton>
+          <ToggleButton value="smooth">SMOOTH</ToggleButton>
+          <ToggleButton value="set-elevation">SET LEVEL</ToggleButton>
+          <ToggleButton value="slope">SLOPE</ToggleButton>
+        </ToggleButtonGroup>
+        </Box>
+
+        {terrainMode === 'set-elevation' && <Box sx={{ display: 'grid', gap: 1 }}>
+          <ValidatedNumberField label="Target elevation (ft)" size="small" value={targetElevation}
+            onCommit={setTargetElevation} />
+          <Button size="small" variant="outlined" onClick={() => setPickTerrainElevation(true)}>
+            {pickTerrainElevation ? 'Click terrain to sample height' : 'Pick height from terrain'}
+          </Button>
+        </Box>}
+
+        {terrainMode === 'slope' && <Box sx={{ display: 'grid', gap: 1 }}>
+          <Typography variant="caption">Click the slope start and end on the terrain. The brush radius sets half the strip width.</Typography>
+          {slopeDraft?.start && <Typography variant="caption">Start: {Math.round(slopeDraft.start.x)}, {Math.round(slopeDraft.start.y)}</Typography>}
+          {slopeDraft?.end && <Typography variant="caption">End: {Math.round(slopeDraft.end.x)}, {Math.round(slopeDraft.end.y)}</Typography>}
+          {slopeDraft?.start && <ValidatedNumberField label="Start elevation (ft)" size="small"
+            value={slopeDraft.start_elevation_feet}
+            onCommit={value => setSlopeDraft(current => ({ ...current, start_elevation_feet: value }))} />}
+          {slopeDraft?.end && <ValidatedNumberField label="End elevation (ft)" size="small"
+            value={slopeDraft.end_elevation_feet}
+            onCommit={value => setSlopeDraft(current => ({ ...current, end_elevation_feet: value }))} />}
+          {slopeDraft?.end && <Button variant="contained" onClick={applySlope}>Apply Slope</Button>}
+          {slopeDraft && <Button variant="outlined" onClick={() => setSlopeDraft(null)}>Cancel Slope</Button>}
+        </Box>}
 
         {/* History Actions using standard CSS Grid on a Box container */}
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
@@ -698,7 +818,7 @@ export function ToolWorkflow({
             startIcon={<UndoIcon />}
             disabled={!state.handleUndo || state.pastRef?.current?.length === 0}
             onClick={state.handleUndo}
-            sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
+            sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}
           >
             Undo
           </Button>
@@ -708,43 +828,20 @@ export function ToolWorkflow({
             endIcon={<RedoIcon />}
             disabled={!state.handleRedo || state.futureRef?.current?.length === 0}
             onClick={state.handleRedo}
-            sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}
+            sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}
           >
             Redo
           </Button>
         </Box>
 
-        {/* Segmented Brush Mode Ribbon */}
-        <ToggleButtonGroup
-          value={terrainMode}
-          exclusive
-          fullWidth
-          size="small"
-          onChange={(e, nextMode) => { if (nextMode !== null) setTerrainMode(nextMode); }}
-          sx={{
-            mb: 2.5,
-            backgroundColor: '#10231f',
-            '& .MuiToggleButton-root': {
-              color: '#94a3b8',
-              borderColor: '#47423a',
-              fontSize: '10px',
-              fontWeight: 'bold',
-              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
-            }
-          }}
-        >
-          <ToggleButton value="raise">RAISE</ToggleButton>
-          <ToggleButton value="lower">LOWER</ToggleButton>
-          <ToggleButton value="flatten">FLATTEN</ToggleButton>
-          <ToggleButton value="smooth">SMOOTH</ToggleButton>
-        </ToggleButtonGroup>
+
 
         {/* Sliders + Coaligned Manual Text Fields Row */}
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
           {/* Brush Radius Controls */}
           <Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-              <Typography variant="caption" sx={{ color: '#aab4ad' }}>Brush Radius (ft)</Typography>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>Brush Radius (ft)</Typography>
               <TextField
                 type="number"
                 size="small"
@@ -755,7 +852,7 @@ export function ToolWorkflow({
                 onKeyDown={event => { if (event.key === 'Enter') commitRadiusInput(); }}
                 sx={{
                   width: '75px',
-                  '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: '#fff', fontSize: '12px' }
+                  '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: "var(--text-main)", fontSize: '12px' }
                 }}
               />
             </Box>
@@ -771,17 +868,17 @@ export function ToolWorkflow({
               aria-label="Brush radius"
               onChange={(e, val) => setBrushRadius(sliderToRadius(Number(val)))}
               sx={{
-                color: '#bd9149', py: 1, '& .MuiSlider-mark': { opacity: 0 },
+                color: "var(--text-main)", py: 1, '& .MuiSlider-mark': { opacity: 0 },
                 ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`& .MuiSlider-mark[data-index="${97 + i}"]`, { opacity: 1 }])),
-                '& .MuiSlider-markLabel': { color: '#cbbd9d', fontSize: '10px' }
+                '& .MuiSlider-markLabel': { color: "var(--text-muted)", fontSize: '10px' }
               }}
             />
           </Box>
 
           {/* Brush Strength Controls */}
-          <Box>
+          {!['set-elevation', 'slope'].includes(terrainMode) && <Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-              <Typography variant="caption" sx={{ color: '#aab4ad' }}>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
                 Brush Strength {['flatten', 'smooth'].includes(terrainMode) ? '(%)' : '(ft)'}
               </Typography>
               <ValidatedNumberField
@@ -791,7 +888,7 @@ export function ToolWorkflow({
                 onCommit={setBrushStrength}
                 sx={{
                   width: '75px',
-                  '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: '#fff', fontSize: '12px' }
+                  '& .MuiInputBase-input': { padding: '2px 6px', textAlign: 'right', color: "var(--text-main)", fontSize: '12px' }
                 }}
               />
             </Box>
@@ -800,16 +897,18 @@ export function ToolWorkflow({
               max={100}
               value={brushStrength}
               onChange={(e, val) => setBrushStrength(Number(val))}
-              sx={{ color: '#bd9149', py: 1 }}
+              sx={{ color: "var(--text-main)", py: 1 }}
             />
-          </Box>
+          </Box>}
         </Box>
 
         {/* Dynamic Descriptor Caption Helper */}
-        <Typography variant="caption" sx={{ mt: 2, display: 'block', color: '#94a3b8', lineHeight: '1.45' }}>
+        <Typography variant="caption" sx={{ mt: 2, display: 'block', color: "var(--text-muted)", lineHeight: '1.45' }}>
           {terrainMode === 'flatten' ? 'The first point clicked anchors the elevation target for the rest of that continuous drag stroke.' :
-            terrainMode === 'smooth' ? 'Blends and averages terrain height vectors dynamically beneath the active brush footprint.' :
-              'Left-click and drag across the landscape grid to deform vertices. The brush circle scales automatically.'}
+            terrainMode === 'smooth' ? 'Averages neighboring terrain and blends toward that local shape without flattening the whole brush.' :
+              terrainMode === 'set-elevation' ? 'Paint an exact elevation inside the brush, with a soft outer edge.' :
+                terrainMode === 'slope' ? 'Preview a graded strip between the two points before applying it.' :
+                  'Left-click and drag across the landscape grid to deform vertices. The brush circle scales automatically.'}
         </Typography>
         <Button
           variant="outlined"
@@ -817,7 +916,7 @@ export function ToolWorkflow({
           fullWidth
           startIcon={<UploadFileIcon />}
           onClick={() => setShowHeightmapImport(true)}
-          sx={{ mt: 1, borderColor: '#526258', color: '#cbbd9d', textTransform: 'none', fontSize: '11px' }}
+          sx={{ mt: 1, borderColor: "var(--border-main)", color: "var(--text-muted)", textTransform: 'none', fontSize: '11px' }}
         >
           Import Heightmap Image
         </Button>
@@ -845,10 +944,13 @@ export function ToolWorkflow({
     const selectedWall = state.fortifications?.find(r => r.id === state.selectedFortificationId);
     const filteredWalls = state.fortifications?.filter(r => !wallSearch || (r.name || '').toLowerCase().includes(wallSearch.toLowerCase())) || [];
     const selectedPoint = selectedWall?.points?.[state.selectedFortificationPointIndex];
+    const selectedSegment = state.selectedFortificationSegmentIndex == null ? null
+      : wallSegmentProperties(selectedWall, state.selectedFortificationSegmentIndex);
 
     return (
-      <aside className="editor-menu road-menu secondary-editor-menu">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+      <aside className="editor-menu road-menu secondary-editor-menu fortification-tools-panel">
+        <Box className="tool-mode-header">
+        <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
           FORTIFICATIONS
         </Typography>
 
@@ -866,14 +968,14 @@ export function ToolWorkflow({
           }}
           sx={{
             mb: 2,
-            backgroundColor: '#10231f',
+            backgroundColor: "var(--bg-surface)",
             '& .MuiToggleButton-root': {
-              color: '#94a3b8',
-              borderColor: '#47423a',
+              color: "var(--text-muted)",
+              borderColor: "var(--border-main)",
               textTransform: 'none',
               fontSize: '11px',
               gap: '4px',
-              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+              '&.Mui-selected': { color: "var(--info)", backgroundColor: "var(--bg-surface)" }
             }
           }}
         >
@@ -882,16 +984,82 @@ export function ToolWorkflow({
           <ToggleButton value="move-spline" disabled={!selectedWall}><OpenInNewIcon fontSize="small" /> Move</ToggleButton>
           <ToggleButton value="draw-new"><AddIcon fontSize="small" /> Draw</ToggleButton>
         </ToggleButtonGroup>
+        </Box>
 
         {wallMode === 'refine' && selectedWall && (
-          <Typography variant="caption" sx={{ display: 'block', color: '#94a3b8', lineHeight: 1.4, mb: 1.5 }}>
+          <Typography variant="caption" sx={{ display: 'block', color: "var(--text-muted)", lineHeight: 1.4, mb: 1.5 }}>
             Drag a point above the wall to reshape it. Tower points permit a corner; direction points keep the wall smooth.
           </Typography>
         )}
 
+        {wallMode === 'move-spline' && selectedWall && <Typography variant="caption" sx={{ color: "var(--text-muted)", mb: 1.5 }}>
+          Drag {selectedWall.name || 'the selected wall'} on the map to move it.
+        </Typography>}
+
+        {wallMode === 'refine' && selectedWall && state.selectedFortificationSegmentIndex != null && (
+          <Box sx={{ mb: 1.5, p: 1.25, border: "1px solid var(--border-main)", borderRadius: 1, backgroundColor: "var(--bg-surface)" }}>
+            <Typography variant="caption" sx={{ color: "var(--text-main)", display: 'block', fontWeight: 700, mb: .75 }}>
+              Selected wall span {state.selectedFortificationSegmentIndex + 1}
+            </Typography>
+            <Select size="small" fullWidth value={selectedSegment.gate_type || 'none'} onChange={event => {
+              state.recordSplineUndo('wall', selectedWall);
+              state.setFortifications(values => values.map(wall => wall.id === selectedWall.id
+                ? updateFortificationSegment(materializeFortificationTowerRoles(wall), state.selectedFortificationSegmentIndex, { gate_type: event.target.value === 'none' ? null : event.target.value })
+                : wall));
+            }} sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}>
+              <MenuItem value="none">Wall span — no gate</MenuItem>
+              <MenuItem value="open">Open gate — road passage</MenuItem>
+              <MenuItem value="gatehouse">Gatehouse — covered, closable passage</MenuItem>
+            </Select>
+            <Typography variant="caption" sx={{ display: 'block', color: "var(--text-muted)", mt: .75, lineHeight: 1.35 }}>
+              A gate makes both end points tower joints automatically.
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mt: 1 }}>
+              <ValidatedNumberField label="Width (ft)" size="small" value={selectedSegment.width_feet} onCommit={value => {
+                state.recordSplineUndo('wall', selectedWall);
+                state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? updateFortificationSegment(wall, state.selectedFortificationSegmentIndex, { width_feet: value }) : wall));
+              }} />
+              <ValidatedNumberField label="Height (ft)" size="small" value={selectedSegment.height_feet} onCommit={value => {
+                state.recordSplineUndo('wall', selectedWall);
+                state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? updateFortificationSegment(wall, state.selectedFortificationSegmentIndex, { height_feet: value }) : wall));
+              }} />
+              <ValidatedNumberField label="Base offset (ft)" size="small" value={selectedSegment.base_elevation_feet} onCommit={value => {
+                state.recordSplineUndo('wall', selectedWall);
+                state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? updateFortificationSegment(wall, state.selectedFortificationSegmentIndex, { base_elevation_feet: value }) : wall));
+              }} />
+              <Select size="small" value={selectedSegment.material} onChange={event => {
+                state.recordSplineUndo('wall', selectedWall);
+                state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? updateFortificationSegment(wall, state.selectedFortificationSegmentIndex, { material: event.target.value }) : wall));
+              }} sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}>
+                {['stone', 'brick', 'wood', 'earth'].map(value => <MenuItem key={value} value={value}>{value.charAt(0).toUpperCase() + value.slice(1)}</MenuItem>)}
+              </Select>
+            </Box>
+            <FormControlLabel control={<Checkbox size="small" checked={Boolean(selectedSegment.battlements)} onChange={event => {
+              state.recordSplineUndo('wall', selectedWall);
+              state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? updateFortificationSegment(wall, state.selectedFortificationSegmentIndex, { battlements: event.target.checked }) : wall));
+            }} />} label={<Typography variant="caption">Battlements</Typography>} sx={{ mt: .5 }} />
+            <Button size="small" onClick={() => state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? restoreFortificationSegmentDefaults(wall, state.selectedFortificationSegmentIndex) : wall))} sx={{ color: "var(--text-muted)", textTransform: 'none' }}>Restore wall defaults</Button>
+          </Box>
+        )}
+
+        {['draw-new', 'refine', 'move-spline'].includes(wallMode) && (
+          <Box sx={{ mb: 1.5, px: 0.5 }}>
+            <FormControlLabel
+              control={<Checkbox size="small" checked={state.wallSnapEnabled}
+                onChange={event => state.setWallSnapEnabled(event.target.checked)}
+                sx={{ color: "var(--text-subtle)", '&.Mui-checked': { color: "var(--text-main)" } }} />}
+              label={<Typography variant="caption" sx={{ color: "var(--text-main)", fontSize: '11px' }}>Snap wall points</Typography>}
+              sx={{ m: 0 }}
+            />
+            <Typography variant="caption" sx={{ display: 'block', color: "var(--text-subtle)", fontSize: '10px', ml: 4 }}>
+              Joins to another wall node within {Math.round(state.roadSnapToleranceFeet)} ft.
+            </Typography>
+          </Box>
+        )}
+
         {wallMode === 'draw-new' && (
           <Box sx={{ mb: 2 }}>
-            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.75 }}>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.75 }}>
               Next point type
             </Typography>
             <ToggleButtonGroup
@@ -901,27 +1069,27 @@ export function ToolWorkflow({
               size="small"
               onChange={(event, value) => value && setWallPointRole(value)}
             >
-              <ToggleButton value="direction" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Direction</ToggleButton>
-              <ToggleButton value="tower" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Tower</ToggleButton>
+              <ToggleButton value="direction" sx={{ color: "var(--text-main)", textTransform: 'none' }}>Direction</ToggleButton>
+              <ToggleButton value="tower" sx={{ color: "var(--text-main)", textTransform: 'none' }}>Tower</ToggleButton>
             </ToggleButtonGroup>
-            <Typography variant="caption" sx={{ color: '#7f9187', display: 'block', mt: 0.75, lineHeight: 1.35 }}>
+            <Typography variant="caption" sx={{ color: "var(--text-subtle)", display: 'block', mt: 0.75, lineHeight: 1.35 }}>
               Direction points bend smoothly. Tower points can form a sharp turn. Wall ends always begin as towers.
             </Typography>
           </Box>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
-          <Button variant="outlined" size="small" startIcon={<UndoIcon />} disabled={!canUndoSplineEdit} onClick={undoSplineEdit} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+        {wallMode === 'refine' && <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1.5 }}>
+          <Button variant="outlined" size="small" startIcon={<UndoIcon />} disabled={!canUndoSplineEdit} onClick={undoSplineEdit} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
             Undo Edit
           </Button>
-          <Button variant="outlined" size="small" disabled={state.selectedFortificationPointIndex == null} onClick={() => state.setSelectedFortificationPointIndex(null)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+          <Button variant="outlined" size="small" disabled={state.selectedFortificationPointIndex == null} onClick={() => state.setSelectedFortificationPointIndex(null)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
             Clear Point
           </Button>
-        </Box>
+        </Box>}
 
         {/* Slider Ribbon Controls */}
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+        {wallMode === 'draw-new' && <Box sx={{ mb: 2 }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
             <span>New Width</span>
             <strong>{wallWidth} ft</strong>
           </Typography>
@@ -931,61 +1099,23 @@ export function ToolWorkflow({
             step={2}
             value={wallWidth}
             onChange={event => setWallWidth(Number(event.target.value))}
-            sx={{ color: '#bd9149' }}
+            sx={{ color: "var(--text-main)" }}
           />
-        </Box>
+        </Box>}
 
         {/* Action Buttons using modern Box instead of deprecated Grid */}
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
-          <Button variant="outlined" size="small" disabled={!wallDraft.length} onClick={() => setWallDraft(p => p.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a' }}>
+        {wallMode === 'draw-new' && <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>
+          <Button variant="outlined" size="small" disabled={!wallDraft.length} onClick={() => setWallDraft(p => p.slice(0, -1))} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)" }}>
             Undo Point
           </Button>
-          <Button variant="contained" size="small" disabled={wallDraft.length < 2} onClick={finishWall} sx={{ backgroundColor: '#bd9149', color: '#17211c' }}>
+          <Button variant="contained" size="small" disabled={wallDraft.length < 2} onClick={finishWall} sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)" }}>
             Finish Wall
           </Button>
-        </Box>
-
-        <TextField
-          type="search"
-          placeholder="Filter existing walls..."
-          size="small"
-          fullWidth
-          value={wallSearch}
-          onChange={e => setWallSearch(e.target.value)}
-          sx={{ mb: 1.5, input: { color: '#fff', fontSize: '11px' } }}
-        />
-
-        {/* Existing Spline Items List Group */}
-        <Box className="street-list" sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', mb: selectedWall ? 2 : 0 }}>
-          {filteredWalls.map(r => (
-            <Button
-              key={r.id}
-              fullWidth
-              onClick={() => { state.setSelectedFortificationId(r.id); state.setSelectedFortificationPointIndex(null); state.setSelected(r); }}
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'flex-start',
-                textTransform: 'none',
-                padding: '6px 10px',
-                backgroundColor: r.id === state.selectedFortificationId ? '#1e3a34' : '#10231f',
-                border: '1px solid',
-                borderColor: r.id === state.selectedFortificationId ? '#ffe08a' : '#47423a',
-                borderRadius: '4px',
-                color: '#fff',
-                textAlign: 'left',
-                '&:hover': { backgroundColor: '#16322c' }
-              }}
-            >
-              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{r.name || 'Unnamed wall'}</Typography>
-              <Typography variant="caption" sx={{ color: '#94a3b8' }}>{r.points?.length || 0} nodes mapped</Typography>
-            </Button>
-          ))}
-        </Box>
+        </Box>}
 
         {/* Selected Node Parameters Editor Metadata Box */}
-        {selectedWall && (
-          <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        {wallMode === 'refine' && selectedWall && (
+          <Box sx={{ borderTop: "1px solid var(--border-main)", pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
             <TextField
               label="Rename Wall"
               size="small"
@@ -1005,9 +1135,9 @@ export function ToolWorkflow({
                     minWidth: '28px',
                     height: '28px',
                     padding: 0,
-                    backgroundColor: state.selectedFortificationPointIndex === idx ? '#ffe08a' : '#23352d',
-                    color: state.selectedFortificationPointIndex === idx ? '#17211c' : '#d5ddd7',
-                    '&:hover': { backgroundColor: '#a87e3e' }
+                    backgroundColor: state.selectedFortificationPointIndex === idx ? "var(--accent)" : "var(--bg-surface-2)",
+                    color: state.selectedFortificationPointIndex === idx ? "var(--text-on-accent)" : "var(--text-main)",
+                    '&:hover': { backgroundColor: "var(--accent)" }
                   }}
                 >
                   {isFortificationTowerPoint(selectedWall, idx) ? `T${idx + 1}` : idx + 1}
@@ -1024,7 +1154,7 @@ export function ToolWorkflow({
                   fullWidth
                   size="small"
                   onChange={(event, role) => {
-                    if (!role) return;
+                    if (!role || selectedPoint.junction_id) return;
                     state.recordSplineUndo('wall', selectedWall);
                     state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? {
                       ...wall,
@@ -1035,31 +1165,78 @@ export function ToolWorkflow({
                     } : wall));
                   }}
                 >
-                  <ToggleButton value="direction" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Direction Point</ToggleButton>
-                  <ToggleButton value="tower" sx={{ color: '#d5ddd7', textTransform: 'none' }}>Tower Point</ToggleButton>
+                  <ToggleButton value="direction" disabled={!!selectedPoint.junction_id} sx={{ color: "var(--text-main)", textTransform: 'none' }}>Direction Point</ToggleButton>
+                  <ToggleButton value="tower" sx={{ color: "var(--text-main)", textTransform: 'none' }}>Tower Point</ToggleButton>
                 </ToggleButtonGroup>
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
                 <ValidatedNumberField
                   label="Coordinate X"
                   size="small"
                   value={Math.round(selectedPoint.x)}
-                  onCommit={value => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
-                    ...w,
-                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, x: value } : pt)
-                  } : w))}
+                  onCommit={value => state.moveWallPoint(selectedWall.id,
+                    state.selectedFortificationPointIndex, { ...selectedPoint, x: value })}
                 />
                 <ValidatedNumberField
                   label="Coordinate Y"
                   size="small"
                   value={Math.round(selectedPoint.y)}
-                  onCommit={value => state.setFortifications(v => v.map(w => w.id === selectedWall.id ? {
-                    ...w,
-                    points: w.points.map((pt, pi) => pi === state.selectedFortificationPointIndex ? { ...pt, y: value } : pt)
-                  } : w))}
+                  onCommit={value => state.moveWallPoint(selectedWall.id,
+                    state.selectedFortificationPointIndex, { ...selectedPoint, y: value })}
                 />
                 </Box>
+                {selectedPoint.junction_id && <Button size="small" variant="outlined"
+                  onClick={state.detachSelectedWallJunction}>Detach junction</Button>}
               </Box>
             )}
+
+            {selectedPoint && (() => {
+              const sharedTower = selectedPoint.junction_id
+                ? (state.wallJunctions || []).find(junction => junction.id === selectedPoint.junction_id) : null;
+              const tower = sharedTower || attachedWallTower(selectedWall, selectedPoint, state.selectedFortificationPointIndex);
+              const patchTower = changes => sharedTower
+                ? state.updateWallJunction(sharedTower.id, changes)
+                : updateTower(changes);
+              const updateTower = changes => state.setFortifications(values => values.map(original => {
+                if (original.id !== selectedWall.id) return original;
+                const wall = normalizeWallTopology(original);
+                const pointId = wall.points[state.selectedFortificationPointIndex].point_id;
+                return {
+                ...wall,
+                towers: tower
+                  ? wall.towers.map(item => item.id === tower.id ? { ...item, ...changes } : item)
+                  : [...(wall.towers || []), { id: `tower-${Date.now()}`, point_id: pointId, shape: 'circular', width_feet: 36, depth_feet: 36, height_feet: selectedWall.height_feet || 35, rotation: 0, material: selectedWall.material || 'stone', ...changes }],
+                points: wall.points.map((point, index) => index === state.selectedFortificationPointIndex
+                  ? { ...point, tower: true }
+                  : point)
+              }; }));
+              return <Box sx={{ borderTop: "1px solid var(--border-main)", pt: 1.25 }}>
+                <Typography variant="caption" sx={{ color: "var(--text-main)", display: 'block', fontWeight: 700, mb: .75 }}>
+                  {sharedTower ? 'SHARED WALL JUNCTION' : 'PROCEDURAL TOWER'}
+                </Typography>
+                {!tower ? <Button size="small" variant="outlined" onClick={() => { state.recordSplineUndo('wall', selectedWall); updateTower({}); }} sx={{ textTransform: 'none', color: "var(--text-main)", borderColor: "var(--border-main)" }}>Add tower at this point</Button> : <>
+                  {sharedTower && <Select size="small" fullWidth value={sharedTower.kind || 'tower'}
+                    onChange={event => patchTower({ kind: event.target.value })}>
+                    <MenuItem value="tower">Tower</MenuItem><MenuItem value="guardhouse">Guardhouse</MenuItem>
+                  </Select>}
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                    <Select size="small" value={tower.shape} onChange={event => patchTower({ shape: event.target.value })} sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}>
+                      {['circular', 'square', 'rectangular', 'triangular', 'polygonal'].map(value => <MenuItem key={value} value={value}>{value.charAt(0).toUpperCase() + value.slice(1)}</MenuItem>)}
+                    </Select>
+                    <ValidatedNumberField label="Height (ft)" size="small" value={tower.height_feet} onCommit={value => patchTower({ height_feet: value })} />
+                    <ValidatedNumberField label="Width (ft)" size="small" value={tower.width_feet} onCommit={value => patchTower({ width_feet: value })} />
+                    <ValidatedNumberField label="Depth (ft)" size="small" value={tower.depth_feet} onCommit={value => patchTower({ depth_feet: value })} />
+                    <ValidatedNumberField label="Rotation (°)" size="small" value={(tower.rotation || 0) * 180 / Math.PI} onCommit={value => patchTower({ rotation: value * Math.PI / 180 })} />
+                  </Box>
+                  {!sharedTower && <Button size="small" color="error" onClick={() => {
+                    state.recordSplineUndo('wall', selectedWall);
+                    state.setFortifications(values => values.map(wall => wall.id === selectedWall.id ? {
+                      ...wall, towers: wall.towers.filter(item => item.id !== tower.id),
+                      points: wall.points.map((point, index) => index === state.selectedFortificationPointIndex ? { ...point, tower: false } : point)
+                    } : wall));
+                  }} sx={{ mt: .5, textTransform: 'none' }}>Remove tower</Button>}
+                </>}
+              </Box>;
+            })()}
 
             {selectedPoint && (
               <Button size="small" variant="outlined" color="error"
@@ -1080,6 +1257,46 @@ export function ToolWorkflow({
             </Button>
           </Box>
         )}
+        <Box className="tool-existing-list" aria-label="Existing walls">
+        <TextField
+          type="search"
+          placeholder="Filter existing walls..."
+          size="small"
+          fullWidth
+          value={wallSearch}
+          onChange={e => setWallSearch(e.target.value)}
+          sx={{ mb: 1.5, input: { color: "var(--text-main)", fontSize: '11px' } }}
+        />
+
+        {/* Existing Spline Items List Group */}
+        <Box className="street-list" sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', mb: selectedWall ? 2 : 0 }}>
+          {filteredWalls.map(r => (
+            <Button
+              key={r.id}
+              fullWidth
+              onClick={() => { state.setSelectedFortificationId(r.id); state.setSelectedFortificationPointIndex(null); state.setSelected(r); }}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                textTransform: 'none',
+                padding: '6px 10px',
+                backgroundColor: r.id === state.selectedFortificationId ? "var(--bg-surface-2)" : "var(--bg-surface)",
+                border: '1px solid',
+                borderColor: r.id === state.selectedFortificationId ? "var(--primary-border)" : "var(--border-main)",
+                borderRadius: '4px',
+                color: "var(--text-main)",
+                textAlign: 'left',
+                '&:hover': { backgroundColor: "var(--bg-surface)" }
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{r.name || 'Unnamed wall'}</Typography>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>{r.points?.length || 0} nodes mapped</Typography>
+            </Button>
+          ))}
+        </Box>
+
+        </Box>
       </aside>
     );
   }
@@ -1114,8 +1331,9 @@ export function ToolWorkflow({
   // 1. Upgraded Unified Drawing Panel Fallback Template
   if (drawing) {
     return (
-      <aside className="editor-menu road-menu">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+      <aside className="editor-menu road-menu region-tools-panel">
+        <Box className="tool-mode-header">
+        <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
           {drawing.title}
         </Typography>
 
@@ -1133,13 +1351,13 @@ export function ToolWorkflow({
           }}
           sx={{
             mb: 2,
-            backgroundColor: '#10231f',
+            backgroundColor: "var(--bg-surface)",
             '& .MuiToggleButton-root': {
-              color: '#94a3b8',
-              borderColor: '#47423a',
+              color: "var(--text-muted)",
+              borderColor: "var(--border-main)",
               textTransform: 'none',
               fontSize: '11px',
-              '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+              '&.Mui-selected': { color: "var(--info)", backgroundColor: "var(--bg-surface)" }
             }
           }}
         >
@@ -1149,10 +1367,11 @@ export function ToolWorkflow({
           {activeTool === 'region' && <ToggleButton value="refine"
             disabled={!state.selectedRegionId || !!state.regions.find(region => region.id === state.selectedRegionId)?.boundary_anchors?.length}>Refine</ToggleButton>}
         </ToggleButtonGroup>
+        </Box>
 
         {activeTool === 'road' && (
           <Box sx={{ mb: 2 }}>
-            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
               <span>Width</span>
               <strong>{roadWidth} ft</strong>
             </Typography>
@@ -1162,37 +1381,55 @@ export function ToolWorkflow({
               step={2}
               value={roadWidth}
               onChange={event => setRoadWidth(Number(event.target.value))}
-              sx={{ color: '#bd9149', py: 0.5 }}
+              sx={{ color: "var(--text-main)", py: 0.5 }}
             />
           </Box>
         )}
 
-        <Box className="spline-draft-actions" sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-          <Button variant="outlined" size="small" disabled={!drawing.draft.length} onClick={() => drawing.setDraft(points => points.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+        {['draw-new', 'trace'].includes(drawing.mode) && <Box className="spline-draft-actions" sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+          <Button variant="outlined" size="small" disabled={!drawing.draft.length} onClick={() => drawing.setDraft(points => points.slice(0, -1))} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
             Undo point
           </Button>
-          <Button variant="contained" size="small" disabled={drawing.draft.length < drawing.minimum} onClick={drawing.finish} sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold' }}>
+          <Button variant="contained" size="small" disabled={drawing.draft.length < drawing.minimum} onClick={drawing.finish} sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", textTransform: 'none', fontWeight: 'bold' }}>
             {activeTool === 'region' ? 'Save Region' : 'Save Wall'}
           </Button>
-        </Box>
-        {['draw-new', 'trace'].includes(drawing.mode) && <Box sx={{ mt: 1, color: '#aabfb2', fontSize: 12 }}>
+        </Box>}
+        {['draw-new', 'trace'].includes(drawing.mode) && <Box sx={{ mt: 1, color: "var(--text-muted)", fontSize: 12 }}>
           {drawing.draft.length} points · {drawing.mode === 'trace' ? 'Click a road or wall, then another near their crossing.' : 'Click the map to add points.'}
           <Button size="small" onClick={() => { drawing.setDraft([]); drawing.setMode('select'); }}>Cancel draft</Button>
         </Box>}
         <p role="status" className="spline-save-status">{saveStatus}</p>
         {activeTool === 'region' && <Box className="region-settings">
-          <Typography variant="subtitle2">Region Settings</Typography>
-          <Box className="region-settings-list">
-            {(state.regions || []).map(region => <button key={region.id} type="button"
-              aria-pressed={region.id === state.selectedRegionId}
-              onClick={() => state.setSelectedRegionId(region.id)}>{region.name || region.id}</button>)}
-          </Box>
-          {(() => {
+          <ToggleButton className="region-snap-toggle" value="snap" selected={Boolean(state.regionSnapEnabled)}
+            onChange={() => state.setRegionSnapEnabled(!state.regionSnapEnabled)}
+            aria-label="Snap to road and wall points">Snap to road and wall points</ToggleButton>
+          <Typography variant="caption">Refine snapping radius: {Math.round(state.roadSnapToleranceFeet)} ft</Typography>
+          {['select', 'refine'].includes(drawing.mode) && <Button size="small" disabled={!canUndoSplineEdit}
+            onClick={undoSplineEdit}>Undo last spline edit</Button>}
+          {['select', 'refine'].includes(drawing.mode) && <Typography variant="subtitle2">Region settings</Typography>}
+          {['select', 'refine'].includes(drawing.mode) && (() => {
             const region = (state.regions || []).find(value => value.id === state.selectedRegionId);
-            if (!region) return <p>Select a region to set future building defaults.</p>;
+            if (!region) return <p>Select a region to set building and road defaults.</p>;
             const defaults = region.construction_defaults || {};
+            const lighting = {
+              ...DEFAULT_STREET_LIGHTING,
+              ...(region.street_lighting || {}),
+              coverage_by_class: {
+                ...DEFAULT_STREET_LIGHTING.coverage_by_class,
+                ...(region.street_lighting?.coverage_by_class || {})
+              }
+            };
+            const patchLighting = changes => state.setRegions(values => values.map(value => value.id === region.id
+              ? { ...value, street_lighting: { ...lighting, ...changes } } : value));
             const patch = changes => state.setRegions(values => values.map(value => value.id === region.id
               ? { ...value, construction_defaults: { ...(value.construction_defaults || {}), ...changes } } : value));
+            const patchRoadMaterial = (roadClass, material) => state.setRegions(values => values.map(value => {
+              if (value.id !== region.id) return value;
+              const next = { ...(value.road_material_defaults || {}) };
+              if (material) next[roadClass] = material;
+              else delete next[roadClass];
+              return { ...value, road_material_defaults: next };
+            }));
             const choices = ['existing', 'stone', 'wood', 'brick', 'plaster'];
             return <>
               {region.boundary_needs_repair && <p role="alert">Boundary link needs repair; the last valid outline is retained.
@@ -1206,7 +1443,21 @@ export function ToolWorkflow({
                   return freeRegion;
                 }));
               }}>Detach boundary links</button>}
-              <Button size="small" disabled={!canUndoSplineEdit} onClick={undoSplineEdit}>Undo boundary edit</Button>
+              {state.selectedRegionPointIndex != null && <Button size="small" variant="outlined"
+                disabled={region.points?.length <= 3 || !!region.boundary_anchors?.length}
+                onClick={() => state.deleteSelectedSplinePoint('region')}>
+                Delete Selected Point
+              </Button>}
+              <Button variant="contained" color="error" size="small" startIcon={<DeleteIcon />}
+                onClick={() => {
+                  if (!window.confirm(`Delete region “${region.name || region.id}”?`)) return;
+                  state.recordSplineUndo('region', region);
+                  state.setRegions(values => values.filter(value => value.id !== region.id));
+                  state.setSelectedRegionId(null);
+                  state.setSelectedRegionPointIndex(null);
+                  state.setSelected(null);
+                  setRegionMode('select');
+                }}>Delete Region</Button>
               <TextField label="Region name" size="small" value={region.name || ''}
                 onChange={event => state.setRegions(values => values.map(value => value.id === region.id
                   ? { ...value, name: event.target.value } : value))} />
@@ -1226,8 +1477,48 @@ export function ToolWorkflow({
                 </select>
               </label>)}
               <p>Defaults guide future fill-in buildings; existing buildings stay as designed.</p>
+              <Typography variant="subtitle2" sx={{ mt: 2 }}>Default road materials</Typography>
+              <p>Used for new roads in this region and when applying class defaults. Manually chosen road materials stay as set.</p>
+              {Object.entries(ROAD_CLASS_DEFAULTS).map(([roadClass, definition]) =>
+                <label key={roadClass} htmlFor={`region-road-material-${roadClass}`}>
+                  {definition.label}
+                  <select id={`region-road-material-${roadClass}`}
+                    value={region.road_material_defaults?.[roadClass] || ''}
+                    onChange={event => patchRoadMaterial(roadClass, event.target.value)}>
+                    <option value="">Class default ({definition.surface})</option>
+                    {ROAD_SURFACE_OPTIONS.map(surface => <option key={surface} value={surface}>
+                      {surface.charAt(0).toUpperCase() + surface.slice(1)}
+                    </option>)}
+                  </select>
+                </label>)}
+              <Typography variant="subtitle2" sx={{ mt: 2 }}>Street Lighting</Typography>
+              <Typography variant="caption">Coverage installs a percentage of possible lamps. Broken lamps remain present but unlit.</Typography>
+              {Object.entries(ROAD_CLASS_DEFAULTS).map(([roadClass, definition]) => <Box key={roadClass} sx={{ mt: 1 }}>
+                <Typography variant="caption" component="label" htmlFor={`lamp-coverage-${roadClass}`}>
+                  {definition.label} coverage · {lighting.coverage_by_class[roadClass]}%
+                </Typography>
+                <Slider min={0} max={100} step={5} value={lighting.coverage_by_class[roadClass]}
+                  slotProps={{ input: { id: `lamp-coverage-${roadClass}`, 'aria-label': `${definition.label} lighting coverage` } }}
+                  onChange={(_, value) => patchLighting({ coverage_by_class: { ...lighting.coverage_by_class, [roadClass]: Number(value) } })} />
+              </Box>)}
+              <Typography variant="caption" component="label" htmlFor="lamp-broken-percent">Broken lamps · {lighting.broken_percent}%</Typography>
+              <Slider min={0} max={100} step={5} value={lighting.broken_percent}
+                slotProps={{ input: { id: 'lamp-broken-percent', 'aria-label': 'Broken lamps percentage' } }}
+                onChange={(_, value) => patchLighting({ broken_percent: Number(value) })} />
+              <ValidatedNumberField label="Base lamp spacing (feet)" size="small" min={40} max={1000}
+                value={lighting.spacing_feet} onCommit={value => patchLighting({ spacing_feet: value })} />
+              <Typography variant="caption" sx={{ display: 'block' }}>Full coverage installs one lamp per {lighting.spacing_feet} feet, alternating road sides. Changes apply after the map saves.</Typography>
             </>;
           })()}
+          <Box className="tool-existing-list">
+            <Typography variant="subtitle2">Existing regions</Typography>
+            <Box className="region-settings-list" aria-label="Existing regions" sx={{ flexDirection: 'column', maxHeight: 220, overflowY: 'auto' }}>
+              {(state.regions || []).map(region => <button key={region.id} type="button"
+                aria-pressed={region.id === state.selectedRegionId}
+                onClick={() => { state.setSelectedRegionId(region.id); state.setSelectedRegionPointIndex(null); }}>
+                {region.name || region.id}</button>)}
+            </Box>
+          </Box>
         </Box>}
       </aside>
     );
@@ -1237,12 +1528,12 @@ export function ToolWorkflow({
   if (activeTool === 'water') {
     return (
       <aside className="editor-menu water-menu">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+        <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
           WATER BODY
         </Typography>
 
         <Box sx={{ mb: 2 }}>
-          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5 }}>
             Type
           </Typography>
           <Select
@@ -1251,10 +1542,10 @@ export function ToolWorkflow({
             value={waterType}
             onChange={event => { setWaterType(event.target.value); setWaterDraft([]); }}
             sx={{
-              backgroundColor: '#23352d',
-              color: '#d5ddd7',
-              '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' },
-              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' }
+              backgroundColor: "var(--bg-surface-2)",
+              color: "var(--text-main)",
+              '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" },
+              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" }
             }}
           >
             <MenuItem value="river">River</MenuItem>
@@ -1264,10 +1555,10 @@ export function ToolWorkflow({
         </Box>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-          <Button variant="outlined" size="small" disabled={!waterDraft.length} onClick={() => setWaterDraft(points => points.slice(0, -1))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+          <Button variant="outlined" size="small" disabled={!waterDraft.length} onClick={() => setWaterDraft(points => points.slice(0, -1))} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
             Undo point
           </Button>
-          <Button variant="contained" size="small" disabled={waterType !== 'ocean' && waterDraft.length < (waterType === 'river' ? 2 : 3)} onClick={finishWater} sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold' }}>
+          <Button variant="contained" size="small" disabled={waterType !== 'ocean' && waterDraft.length < (waterType === 'river' ? 2 : 3)} onClick={finishWater} sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", textTransform: 'none', fontWeight: 'bold' }}>
             Finish water
           </Button>
         </Box>
@@ -1296,7 +1587,7 @@ export function ToolWorkflow({
 
     return (
       <aside className="editor-menu time-of-day-menu">
-        <Typography variant="subtitle2" sx={{ color: '#ecd89f', fontWeight: 800, mb: 1.5, letterSpacing: '.06em' }}>
+        <Typography variant="subtitle2" sx={{ color: "var(--text-main)", fontWeight: 800, mb: 1.5, letterSpacing: '.06em' }}>
           TIME OF DAY TRACKING
         </Typography>
 
@@ -1310,22 +1601,22 @@ export function ToolWorkflow({
             mb: 2,
           }}
         >
-          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-1440)} startIcon={<CalendarTodayIcon sx={{ fontSize: 12 }} />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-1440)} startIcon={<CalendarTodayIcon sx={{ fontSize: 12 }} />} sx={{ backgroundColor: "var(--bg-surface-2)", fontSize: '10px' }}>
             Day
           </Button>
-          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-720)} startIcon={<FastRewindIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-720)} startIcon={<FastRewindIcon />} sx={{ backgroundColor: "var(--bg-surface-2)", fontSize: '10px' }}>
             12h
           </Button>
-          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-60)} startIcon={<NavigateBeforeIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(-60)} startIcon={<NavigateBeforeIcon />} sx={{ backgroundColor: "var(--bg-surface-2)", fontSize: '10px' }}>
             Hour
           </Button>
-          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(60)} endIcon={<NavigateNextIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(60)} endIcon={<NavigateNextIcon />} sx={{ backgroundColor: "var(--bg-surface-2)", fontSize: '10px' }}>
             Hour
           </Button>
-          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(720)} endIcon={<FastForwardIcon />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(720)} endIcon={<FastForwardIcon />} sx={{ backgroundColor: "var(--bg-surface-2)", fontSize: '10px' }}>
             12h
           </Button>
-          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(1440)} endIcon={<CalendarTodayIcon sx={{ fontSize: 12 }} />} sx={{ backgroundColor: '#23352d', fontSize: '10px' }}>
+          <Button variant="contained" fullWidth size="small" onClick={() => handleShift(1440)} endIcon={<CalendarTodayIcon sx={{ fontSize: 12 }} />} sx={{ backgroundColor: "var(--bg-surface-2)", fontSize: '10px' }}>
             Day
           </Button>
         </Box>
@@ -1338,7 +1629,7 @@ export function ToolWorkflow({
             display: 'flex',
             flexDirection: 'column',
             gap: 1.5,
-            borderTop: '1px solid #33443b',
+            borderTop: "1px solid var(--border-main)",
             pt: 1.5
           }}
         >
@@ -1377,10 +1668,10 @@ export function ToolWorkflow({
             variant="contained"
             fullWidth
             sx={{
-              backgroundColor: '#bd9149',
-              color: '#17211c',
+              backgroundColor: "var(--accent)",
+              color: "var(--text-on-accent)",
               fontWeight: 'bold',
-              '&:hover': { backgroundColor: '#d4a75b' }
+              '&:hover': { backgroundColor: "var(--accent)" }
             }}
           >
             Apply Manual Override
@@ -1395,13 +1686,13 @@ export function ToolWorkflow({
 
     return (
       <aside className="editor-menu atmosphere-menu">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 2, letterSpacing: '.13em' }}>
+        <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 2, letterSpacing: '.13em' }}>
           ATMOSPHERE PLUGIN
         </Typography>
 
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Box>
-            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
               <span>Sun Light Glare</span>
               <strong>{atmosphereSettings.sunIntensity.toFixed(1)}x</strong>
             </Typography>
@@ -1411,12 +1702,12 @@ export function ToolWorkflow({
               step={0.1}
               value={atmosphereSettings.sunIntensity}
               onChange={e => setAtmosphereSettings(prev => ({ ...prev, sunIntensity: Number(e.target.value) }))}
-              sx={{ color: '#bd9149' }}
+              sx={{ color: "var(--text-main)" }}
             />
           </Box>
 
           <Box>
-            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
               <span>Moon Base Glow</span>
               <strong>{Math.round(atmosphereSettings.moonIntensity * 100)}%</strong>
             </Typography>
@@ -1426,12 +1717,12 @@ export function ToolWorkflow({
               step={0.05}
               value={atmosphereSettings.moonIntensity}
               onChange={e => setAtmosphereSettings(prev => ({ ...prev, moonIntensity: Number(e.target.value) }))}
-              sx={{ color: '#bd9149' }}
+              sx={{ color: "var(--text-main)" }}
             />
           </Box>
 
           <Box>
-            <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
               <span>Rayleigh Scattering</span>
               <strong>{atmosphereSettings.scatteringScale.toFixed(1)}</strong>
             </Typography>
@@ -1441,15 +1732,33 @@ export function ToolWorkflow({
               step={0.1}
               value={atmosphereSettings.scatteringScale}
               onChange={e => setAtmosphereSettings(prev => ({ ...prev, scatteringScale: Number(e.target.value) }))}
-              sx={{ color: '#bd9149' }}
+              sx={{ color: "var(--text-main)" }}
             />
           </Box>
 
-          <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5 }}>
+          <Box>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
+              <span>Daylight Color</span>
+              <strong>{Math.round((atmosphereSettings.daylightSaturation ?? 1.12) * 100)}%</strong>
+            </Typography>
+            <Slider
+              min={0.8}
+              max={1.4}
+              step={0.01}
+              value={atmosphereSettings.daylightSaturation ?? 1.12}
+              onChange={e => setAtmosphereSettings(prev => ({ ...prev, daylightSaturation: Number(e.target.value) }))}
+              sx={{ color: "var(--text-main)" }}
+            />
+            <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontSize: '10px' }}>
+              Adds color during daylight without tinting moonlit scenes.
+            </Typography>
+          </Box>
+
+          <Box sx={{ borderTop: "1px solid var(--border-main)", pt: 1.5 }}>
             <Typography
               variant="caption"
               sx={{
-                color: '#cbbd9d',
+                color: "var(--text-muted)",
                 display: 'block',
                 mb: 1.5,
                 fontWeight: 700,
@@ -1463,7 +1772,7 @@ export function ToolWorkflow({
               <Typography
                 variant="caption"
                 sx={{
-                  color: '#aab4ad',
+                  color: "var(--text-muted)",
                   display: 'flex',
                   justifyContent: 'space-between'
                 }}
@@ -1493,12 +1802,12 @@ export function ToolWorkflow({
                     )
                   }));
                 }}
-                sx={{ color: '#bd9149' }}
+                sx={{ color: "var(--text-main)" }}
               />
 
               <Typography
                 variant="caption"
-                sx={{ color: '#718079', fontSize: '10px' }}
+                sx={{ color: "var(--text-subtle)", fontSize: '10px' }}
               >
                 Distance from the camera at which atmospheric fading begins.
               </Typography>
@@ -1508,7 +1817,7 @@ export function ToolWorkflow({
               <Typography
                 variant="caption"
                 sx={{
-                  color: '#aab4ad',
+                  color: "var(--text-muted)",
                   display: 'flex',
                   justifyContent: 'space-between'
                 }}
@@ -1530,12 +1839,12 @@ export function ToolWorkflow({
                     fogEndRatio: Number(value)
                   }))
                 }
-                sx={{ color: '#bd9149' }}
+                sx={{ color: "var(--text-main)" }}
               />
 
               <Typography
                 variant="caption"
-                sx={{ color: '#718079', fontSize: '10px' }}
+                sx={{ color: "var(--text-subtle)", fontSize: '10px' }}
               >
                 Distance at which terrain is completely hidden by atmosphere.
               </Typography>
@@ -1553,15 +1862,31 @@ export function ToolWorkflow({
       let fallbackFog = 0.002;
       let fallbackColor = "#a9c9dc";
       let fallbackClouds = 0.0;
+      let visualPreset = {
+        cloudType: 'fair-cumulus', cloudBaseFeet: 4200, cloudTopFeet: 7200,
+        windDirectionDegrees: 245, windSpeedMph: 8, precipitationIntensity: 0
+      };
 
-      if (preset === 'light-drizzle') { fallbackClouds = 0.4; fallbackFog = 0.008; }
-      else if (preset === 'pouring-rain') { fallbackClouds = 0.8; fallbackFog = 0.012; }
-      else if (preset === 'foggy') { fallbackClouds = 0.5; fallbackFog = 0.045; fallbackColor = "#cbd5e1"; }
-      else if (preset === 'snowing') { fallbackClouds = 0.7; fallbackFog = 0.015; fallbackColor = "#e2e8f0"; }
-      else if (preset === 'thunderstorm') { fallbackClouds = 1.0; fallbackFog = 0.025; fallbackColor = "#1e293b"; }
+      if (preset === 'light-drizzle') {
+        fallbackClouds = 0.4; fallbackFog = 0.008;
+        visualPreset = { cloudType: 'stratus', cloudBaseFeet: 1800, cloudTopFeet: 4300, windDirectionDegrees: 235, windSpeedMph: 12, precipitationIntensity: 0.32 };
+      } else if (preset === 'pouring-rain') {
+        fallbackClouds = 0.8; fallbackFog = 0.012;
+        visualPreset = { cloudType: 'nimbostratus', cloudBaseFeet: 1200, cloudTopFeet: 6500, windDirectionDegrees: 225, windSpeedMph: 18, precipitationIntensity: 0.78 };
+      } else if (preset === 'foggy') {
+        fallbackClouds = 0.5; fallbackFog = 0.045; fallbackColor = "#cbd5e1";
+        visualPreset = { cloudType: 'ground-fog', cloudBaseFeet: 0, cloudTopFeet: 220, windDirectionDegrees: 250, windSpeedMph: 3, precipitationIntensity: 0 };
+      } else if (preset === 'snowing') {
+        fallbackClouds = 0.7; fallbackFog = 0.015; fallbackColor = "#e2e8f0";
+        visualPreset = { cloudType: 'nimbostratus', cloudBaseFeet: 1600, cloudTopFeet: 6200, windDirectionDegrees: 220, windSpeedMph: 10, precipitationIntensity: 0.58 };
+      } else if (preset === 'thunderstorm') {
+        fallbackClouds = 1.0; fallbackFog = 0.025; fallbackColor = "#1e293b";
+        visualPreset = { cloudType: 'cumulonimbus', cloudBaseFeet: 1100, cloudTopFeet: 22000, windDirectionDegrees: 210, windSpeedMph: 28, precipitationIntensity: 1 };
+      }
 
       setWeatherSettings(prev => ({
         ...prev,
+        ...visualPreset,
         activeWeather: preset,
         cloudCover: fallbackClouds,
         fogDensity: fallbackFog,
@@ -1571,12 +1896,12 @@ export function ToolWorkflow({
 
     return (
       <aside className="editor-menu weather-menu">
-        <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 2, letterSpacing: '.13em' }}>
+        <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 2, letterSpacing: '.13em' }}>
           WEATHER SYSTEM MATRIX
         </Typography>
 
         <Box>
-          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5 }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5 }}>
             Condition Selection
           </Typography>
           <Select
@@ -1585,37 +1910,37 @@ export function ToolWorkflow({
             value={weatherSettings.activeWeather}
             onChange={handlePresetChange}
             sx={{
-              backgroundColor: '#23352d',
-              color: '#d5ddd7',
-              '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' },
-              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' },
+              backgroundColor: "var(--bg-surface-2)",
+              color: "var(--text-main)",
+              '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" },
+              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" },
               '& .MuiSelect-select': { display: 'flex', alignItems: 'center', gap: '8px' } // Aligns selected value icon + text
             }}
           >
             <MenuItem value="clear" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <WbSunnyIcon fontSize="small" sx={{ color: '#ffca28' }} /> Clear Skies
+              <WbSunnyIcon fontSize="small" sx={{ color: "var(--text-main)" }} /> Clear Skies
             </MenuItem>
             <MenuItem value="light-drizzle" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <GrainIcon fontSize="small" sx={{ color: '#90caf9' }} /> Light Drizzle
+              <GrainIcon fontSize="small" sx={{ color: "var(--info)" }} /> Light Drizzle
             </MenuItem>
             <MenuItem value="pouring-rain" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <WaterDropIcon fontSize="small" sx={{ color: '#42a5f5' }} /> Pouring Rain
+              <WaterDropIcon fontSize="small" sx={{ color: "var(--info)" }} /> Pouring Rain
             </MenuItem>
             <MenuItem value="foggy" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CloudQueueIcon fontSize="small" sx={{ color: '#94a3b8' }} /> Thick Fog
+              <CloudQueueIcon fontSize="small" sx={{ color: "var(--text-muted)" }} /> Thick Fog
             </MenuItem>
             <MenuItem value="snowing" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <AcUnitIcon fontSize="small" sx={{ color: '#e2e8f0' }} /> Snowing
+              <AcUnitIcon fontSize="small" sx={{ color: "var(--text-main)" }} /> Snowing
             </MenuItem>
             <MenuItem value="thunderstorm" sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <ThunderstormIcon fontSize="small" sx={{ color: '#b0bec5' }} /> Thunderstorm
+              <ThunderstormIcon fontSize="small" sx={{ color: "var(--text-muted)" }} /> Thunderstorm
             </MenuItem>
           </Select>
         </Box>
 
 
         <Box>
-          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
             <span>Cloud Density</span>
             <strong>{Math.round((weatherSettings.cloudCover ?? 0) * 100)}%</strong>
           </Typography>
@@ -1625,12 +1950,12 @@ export function ToolWorkflow({
             step={0.05}
             value={weatherSettings.cloudCover ?? 0}
             onChange={e => setWeatherSettings(prev => ({ ...prev, cloudCover: Number(e.target.value) }))}
-            sx={{ color: '#bd9149' }}
+            sx={{ color: "var(--text-main)" }}
           />
         </Box>
 
         <Box>
-          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
             <span>Fog / Haze Strength</span>
             <strong>{Math.round(Math.max(0, Math.min(1, ((weatherSettings.fogDensity ?? 0.01) - 0.001) / 0.059)) * 100)}%</strong>
           </Typography>
@@ -1640,12 +1965,12 @@ export function ToolWorkflow({
             step={0.001}
             value={weatherSettings.fogDensity}
             onChange={e => setWeatherSettings(prev => ({ ...prev, fogDensity: Number(e.target.value) }))}
-            sx={{ color: '#bd9149' }}
+            sx={{ color: "var(--text-main)" }}
           />
         </Box>
 
         <Box>
-          <Typography variant="caption" sx={{ color: '#aab4ad', display: 'flex', justifyContent: 'space-between' }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
             <span>Environment Volume</span>
             <strong>{Math.round((weatherSettings.masterVolume ?? 0.5) * 100)}%</strong>
           </Typography>
@@ -1655,12 +1980,64 @@ export function ToolWorkflow({
             step={0.05}
             value={weatherSettings.masterVolume ?? 0.5}
             onChange={e => setWeatherSettings(prev => ({ ...prev, masterVolume: Number(e.target.value) }))}
-            sx={{ color: '#bd9149' }}
+            sx={{ color: "var(--text-main)" }}
           />
         </Box>
 
+        <details style={{ borderTop: "1px solid var(--border-main)", paddingTop: '10px' }}>
+          <summary style={{ color: "var(--text-muted)", cursor: 'pointer', fontSize: '11px', fontWeight: 700, letterSpacing: '.08em' }}>
+            ADVANCED WEATHER
+          </summary>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mt: 1.5 }}>
+            <Select
+              size="small"
+              value={weatherSettings.cloudType ?? 'fair-cumulus'}
+              onChange={e => setWeatherSettings(prev => ({ ...prev, cloudType: e.target.value }))}
+              sx={{ color: "var(--text-main)", '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" } }}
+            >
+              <MenuItem value="fair-cumulus">Fair cumulus</MenuItem>
+              <MenuItem value="stratus">Stratus</MenuItem>
+              <MenuItem value="nimbostratus">Nimbostratus</MenuItem>
+              <MenuItem value="cumulonimbus">Cumulonimbus</MenuItem>
+              <MenuItem value="ground-fog">Ground fog</MenuItem>
+            </Select>
+
+            <Box>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
+                <span>Cloud Base</span><strong>{Math.round(weatherSettings.cloudBaseFeet ?? 4200).toLocaleString()} ft</strong>
+              </Typography>
+              <Slider min={0} max={12000} step={100} value={weatherSettings.cloudBaseFeet ?? 4200}
+                onChange={e => setWeatherSettings(prev => ({ ...prev, cloudBaseFeet: Number(e.target.value) }))} sx={{ color: "var(--text-main)" }} />
+            </Box>
+
+            <Box>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
+                <span>Cloud Top</span><strong>{Math.round(weatherSettings.cloudTopFeet ?? 7200).toLocaleString()} ft</strong>
+              </Typography>
+              <Slider min={100} max={30000} step={100} value={weatherSettings.cloudTopFeet ?? 7200}
+                onChange={e => setWeatherSettings(prev => ({ ...prev, cloudTopFeet: Number(e.target.value) }))} sx={{ color: "var(--text-main)" }} />
+            </Box>
+
+            <Box>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
+                <span>Precipitation</span><strong>{Math.round((weatherSettings.precipitationIntensity ?? 0) * 100)}%</strong>
+              </Typography>
+              <Slider min={0} max={1} step={0.05} value={weatherSettings.precipitationIntensity ?? 0}
+                onChange={e => setWeatherSettings(prev => ({ ...prev, precipitationIntensity: Number(e.target.value) }))} sx={{ color: "var(--text-main)" }} />
+            </Box>
+
+            <Box>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'flex', justifyContent: 'space-between' }}>
+                <span>Wind</span><strong>{Math.round(weatherSettings.windSpeedMph ?? 8)} mph</strong>
+              </Typography>
+              <Slider min={0} max={60} step={1} value={weatherSettings.windSpeedMph ?? 8}
+                onChange={e => setWeatherSettings(prev => ({ ...prev, windSpeedMph: Number(e.target.value) }))} sx={{ color: "var(--text-main)" }} />
+            </Box>
+          </Box>
+        </details>
+
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5 }}>
-          <Typography variant="caption" sx={{ color: '#aab4ad' }}>
+          <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
             Fog Tint Color
           </Typography>
           <input
@@ -1668,7 +2045,7 @@ export function ToolWorkflow({
             value={weatherSettings.fogColor}
             onChange={e => setWeatherSettings(prev => ({ ...prev, fogColor: e.target.value }))}
             style={{
-              border: '1px solid #53645a',
+              border: "1px solid var(--border-main)",
               borderRadius: '4px',
               background: 'none',
               cursor: 'pointer',
@@ -1719,10 +2096,10 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
         width: '180px',
         // The outer container now owns ALL the chrome (bg, border, shadow),
         // which eliminates the old "panel inside a panel" double-outline look
-        backgroundColor: '#14201cce',
-        border: '1px solid #ffffff2c',
+        backgroundColor: "var(--overlay)",
+        border: "1px solid var(--border-main)",
         borderRadius: '6px',
-        boxShadow: '0 8px 22px #07100bbb',
+        boxShadow: "0 8px 22px var(--border-main)",
         backdropFilter: 'blur(6px)',
         overflow: 'hidden',
       }}
@@ -1746,12 +2123,12 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
           background: 'none',
           border: 'none',
           cursor: 'pointer',
-          color: '#d8c28f',
+          color: "var(--text-main)",
           fontFamily: 'inherit',
-          '&:hover': { backgroundColor: '#ffffff0f' },
+          '&:hover': { backgroundColor: "var(--overlay)" },
         }}
       >
-        <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '10px', letterSpacing: '.13em', color: '#cbbd9d' }}>
+        <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '10px', letterSpacing: '.13em', color: "var(--text-muted)" }}>
           CAMERA NAV
         </Typography>
         {isMinimized
@@ -1768,7 +2145,7 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
             flexDirection: 'column',
             gap: 1.5,
             padding: '10px 12px 12px',
-            borderTop: '1px solid #ffffff1a',
+            borderTop: "1px solid var(--border-main)",
           }}
         >
           {/* Mode Perspective Changers Ribbon */}
@@ -1777,7 +2154,7 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
               <IconButton
                 size="small"
                 onClick={() => handleCommand('topdown')}
-                sx={{ flex: 1, color: '#d8c28f', border: '1px solid #526258', borderRadius: '4px', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+                sx={{ flex: 1, color: "var(--text-main)", border: "1px solid var(--border-main)", borderRadius: '4px', '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
               >
                 <CenterFocusStrongIcon fontSize="small" />
               </IconButton>
@@ -1786,7 +2163,7 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
               <IconButton
                 size="small"
                 onClick={() => handleCommand('firstPerson')}
-                sx={{ flex: 1, color: '#d8c28f', border: '1px solid #526258', borderRadius: '4px', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+                sx={{ flex: 1, color: "var(--text-main)", border: "1px solid var(--border-main)", borderRadius: '4px', '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
               >
                 <VisibilityIcon fontSize="small" />
               </IconButton>
@@ -1795,7 +2172,7 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
               <IconButton
                 size="small"
                 onClick={() => handleCommand('camera')}
-                sx={{ flex: 1, color: '#d8c28f', border: '1px solid #526258', borderRadius: '4px', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+                sx={{ flex: 1, color: "var(--text-main)", border: "1px solid var(--border-main)", borderRadius: '4px', '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
               >
                 <PublicIcon fontSize="small" />
               </IconButton>
@@ -1815,25 +2192,25 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
           >
             <Button
               onMouseDown={() => setVirtualKey('w', true)} onMouseUp={() => setVirtualKey('w', false)} onMouseLeave={() => setVirtualKey('w', false)}
-              sx={{ gridColumn: '2', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              sx={{ gridColumn: '2', width: '100%', height: '100%', minWidth: 0, padding: 0, color: "var(--text-main)", border: "1px solid var(--border-main)", '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
             >
               <ArrowDropUpIcon />
             </Button>
             <Button
               onMouseDown={() => setVirtualKey('a', true)} onMouseUp={() => setVirtualKey('a', false)} onMouseLeave={() => setVirtualKey('a', false)}
-              sx={{ gridRow: '2', gridColumn: '1', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              sx={{ gridRow: '2', gridColumn: '1', width: '100%', height: '100%', minWidth: 0, padding: 0, color: "var(--text-main)", border: "1px solid var(--border-main)", '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
             >
               <ArrowLeftIcon />
             </Button>
             <Button
               onMouseDown={() => setVirtualKey('s', true)} onMouseUp={() => setVirtualKey('s', false)} onMouseLeave={() => setVirtualKey('s', false)}
-              sx={{ gridRow: '3', gridColumn: '2', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              sx={{ gridRow: '3', gridColumn: '2', width: '100%', height: '100%', minWidth: 0, padding: 0, color: "var(--text-main)", border: "1px solid var(--border-main)", '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
             >
               <ArrowDropDownIcon />
             </Button>
             <Button
               onMouseDown={() => setVirtualKey('d', true)} onMouseUp={() => setVirtualKey('d', false)} onMouseLeave={() => setVirtualKey('d', false)}
-              sx={{ gridRow: '2', gridColumn: '3', width: '100%', height: '100%', minWidth: 0, padding: 0, color: '#d8c28f', border: '1px solid #526258', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              sx={{ gridRow: '2', gridColumn: '3', width: '100%', height: '100%', minWidth: 0, padding: 0, color: "var(--text-main)", border: "1px solid var(--border-main)", '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
             >
               <ArrowRightIcon />
             </Button>
@@ -1842,26 +2219,26 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
           {/* Orbit Rotations, Pitch Tilts, and Elevate Utilities Stack */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
-              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('q', true)} onMouseUp={() => setVirtualKey('q', false)} startIcon={<UndoIcon sx={{ scale: '0.8' }} />} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('q', true)} onMouseUp={() => setVirtualKey('q', false)} startIcon={<UndoIcon sx={{ scale: '0.8' }} />} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '10px', padding: '2px' }}>
                 Q
               </Button>
-              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('e', true)} onMouseUp={() => setVirtualKey('e', false)} endIcon={<RedoIcon sx={{ scale: '0.8' }} />} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('e', true)} onMouseUp={() => setVirtualKey('e', false)} endIcon={<RedoIcon sx={{ scale: '0.8' }} />} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '10px', padding: '2px' }}>
                 E
               </Button>
             </Box>
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
-              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('r', true)} onMouseUp={() => setVirtualKey('r', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('r', true)} onMouseUp={() => setVirtualKey('r', false)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '10px', padding: '2px' }}>
                 Tilt Up (R)
               </Button>
-              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('f', true)} onMouseUp={() => setVirtualKey('f', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '10px', padding: '2px' }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('f', true)} onMouseUp={() => setVirtualKey('f', false)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '10px', padding: '2px' }}>
                 Tilt Dn (F)
               </Button>
             </Box>
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
-              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('shift', true)} onMouseUp={() => setVirtualKey('shift', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '9px', padding: '2px' }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('shift', true)} onMouseUp={() => setVirtualKey('shift', false)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '9px', padding: '2px' }}>
                 Raise (Shift)
               </Button>
-              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('lower', true)} onMouseUp={() => setVirtualKey('lower', false)} sx={{ color: '#d8c28f', borderColor: '#526258', textTransform: 'none', fontSize: '9px', padding: '2px' }}>
+              <Button size="small" variant="outlined" onMouseDown={() => setVirtualKey('lower', true)} onMouseUp={() => setVirtualKey('lower', false)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '9px', padding: '2px' }}>
                 Lower (Ctrl)
               </Button>
             </Box>
@@ -1882,15 +2259,21 @@ export default function SettlementMapEditor({
     sunIntensity: 2.2,
     moonIntensity: 0.15,
     scatteringScale: 1.0,
+    daylightSaturation: 1.12,
     fogStartRatio: 0.92,
     fogEndRatio: 1.03,
   },
   setAtmosphereSettings,
-  weatherSettings = { activeWeather: 'clear', fogDensity: 0.01, fogColor: '#a9c9dc' },
+  weatherSettings = { activeWeather: 'clear', cloudCover: 0, fogDensity: 0.01, fogColor: '#a9c9dc' },
   setWeatherSettings,
   assets = [],
   buildings = [],
   setBuildings = () => { },
+  properties = [],
+  propertyDraft = [],
+  editingPropertyBoundaryId = null,
+  onPropertyBoundaryVertexMove = () => { },
+  onPropertyPolygonPoint = () => { },
 
   tileStore,
   onTilesDirtied = () => { },
@@ -1911,6 +2294,12 @@ export default function SettlementMapEditor({
   setHeightMap = () => { },
   blueprintDraft = null,
   setBlueprintDraft = () => { },
+  footprintTool = 'line',
+  footprintPoints = [],
+  setFootprintPoints = () => { },
+  setFootprintError = () => { },
+  blueprintHoverPoint = null,
+  setBlueprintHoverPoint = () => { },
   waterBodies = [],
   setWaterBodies = () => { },
   mapEnvironment = {},
@@ -1942,14 +2331,18 @@ export default function SettlementMapEditor({
   const [terrainMode, setTerrainMode] = useState('raise')
   const [brushRadius, setBrushRadius] = useState(110)
   const [brushStrengths, setBrushStrengths] = useState(DEFAULT_BRUSH_STRENGTHS);
+  const [targetElevation, setTargetElevation] = useState(100);
+  const [pickTerrainElevation, setPickTerrainElevation] = useState(false);
+  const [slopeDraft, setSlopeDraft] = useState(null);
   const [showHeightmapImport, setShowHeightmapImport] = useState(false);
   const [heightmapPlacement, setHeightmapPlacement] = useState(null);
 
   const [roadMode, setRoadMode] = useState('select')
   const [roadDraft, setRoadDraft] = useState([])
+  const [roadName, setRoadName] = useState('');
   const [roadWidth, setRoadWidth] = useState(ROAD_CLASS_DEFAULTS.street.width);
   const [roadClass, setRoadClass] = useState('street');
-  const [roadSurface, setRoadSurface] = useState(ROAD_CLASS_DEFAULTS.street.surface);
+  const [roadSurface, setRoadSurface] = useState('regional-default');
   const [roadSnapEnabled, setRoadSnapEnabled] = useState(true);
   const [splineHoverPoint, setSplineHoverPoint] = useState(null);
 
@@ -1957,19 +2350,25 @@ export default function SettlementMapEditor({
   const [wallDraft, setWallDraft] = useState([]);
   const [wallWidth, setWallWidth] = useState(36);
   const [wallPointRole, setWallPointRole] = useState('direction');
+  const [wallSnapEnabled, setWallSnapEnabled] = useState(true);
 
   const [regionMode, setRegionMode] = useState('select')
+  const [regionSnapEnabled, setRegionSnapEnabled] = useState(true);
   const [regionDraft, setRegionDraft] = useState([]);
   const [waterType, setWaterType] = useState('river')
   const [waterDraft, setWaterDraft] = useState([]);
 
   const [selectedRoadId, setSelectedRoadId] = useState(null);
   const [selectedRoadPointIndex, setSelectedRoadPointIndex] = useState(null); // 👈 ADD THIS
+  const [selectedRoadPointIndexes, setSelectedRoadPointIndexes] = useState([]);
+  const [selectedRoadSegmentIndexes, setSelectedRoadSegmentIndexes] = useState([]);
 
   const [selectedFortificationId, setSelectedFortificationId] = useState(null);
   const [selectedFortificationPointIndex, setSelectedFortificationPointIndex] = useState(null); // 👈 ADD THIS
+  const [selectedFortificationSegmentIndex, setSelectedFortificationSegmentIndex] = useState(null);
 
   const [selectedRegionId, setSelectedRegionId] = useState(null);
+  const [selectedRegionPointIndex, setSelectedRegionPointIndex] = useState(null);
 
   const [splineContextMenu, setSplineContextMenu] = useState(null);
   const splineHistoryRef = useRef([]);
@@ -1977,10 +2376,13 @@ export default function SettlementMapEditor({
 
   const recordSplineUndo = useCallback((kind, item) => {
     if (!item?.id) return;
-    splineHistoryRef.current.push({ kind, id: item.id, before: JSON.parse(JSON.stringify(item)) });
+    splineHistoryRef.current.push(kind === 'wall'
+      ? { kind: 'wall-environment', id: item.id, before: JSON.parse(JSON.stringify({
+        fortifications: mapEnvironment.fortifications || [], wall_junctions: mapEnvironment.wall_junctions || [] })) }
+      : { kind, id: item.id, before: JSON.parse(JSON.stringify(item)) });
     if (splineHistoryRef.current.length > 60) splineHistoryRef.current.shift();
     setSplineHistoryVersion(value => value + 1);
-  }, []);
+  }, [mapEnvironment.fortifications, mapEnvironment.wall_junctions]);
 
   const undoSplineEdit = useCallback(() => {
     const entry = splineHistoryRef.current.pop();
@@ -1989,16 +2391,19 @@ export default function SettlementMapEditor({
       setRoads(values => values.map(road => road.id === entry.id ? entry.before : road));
       setSelectedRoadId(entry.id);
       setSelectedRoadPointIndex(null);
+      setSelectedRoadPointIndexes([]);
       setSelected(entry.before);
-    } else if (entry.kind === 'wall') {
-      setFortifications(values => values.map(wall => wall.id === entry.id ? entry.before : wall));
+    } else if (entry.kind === 'wall-environment') {
+      setMapEnvironment(current => ({ ...current, ...entry.before }));
       setSelectedFortificationId(entry.id);
       setSelectedFortificationPointIndex(null);
-      setSelected(entry.before);
+      setSelected(entry.before.fortifications.find(wall => wall.id === entry.id) || null);
     } else if (entry.kind === 'region') {
-      setMapEnvironment(value => ({ ...value, regions: (value.regions || []).map(region =>
-        region.id === entry.id ? entry.before : region) }));
+      setMapEnvironment(value => ({ ...value, regions: (value.regions || []).some(region => region.id === entry.id)
+        ? (value.regions || []).map(region => region.id === entry.id ? entry.before : region)
+        : [...(value.regions || []), entry.before] }));
       setSelectedRegionId(entry.id);
+      setSelectedRegionPointIndex(null);
     }
     setSplineHistoryVersion(value => value + 1);
   }, [setRoads, setFortifications, setSelected, setMapEnvironment]);
@@ -2100,8 +2505,29 @@ export default function SettlementMapEditor({
 
   const brushMeshRef = useRef(null);
 
-  const regions = useMemo(() => mapEnvironment.regions || [], [mapEnvironment.regions]);
+  const setRegions = useCallback(updater => setMapEnvironment(value => ({ ...value,
+    regions: typeof updater === 'function' ? updater(value.regions || []) : updater })), [setMapEnvironment]);
+  const regions = useMemo(() => (mapEnvironment.regions || []).filter(Boolean), [mapEnvironment.regions]);
   const fortifications = useMemo(() => mapEnvironment.fortifications || [], [mapEnvironment.fortifications]);
+  const wallJunctions = useMemo(() => mapEnvironment.wall_junctions || [], [mapEnvironment.wall_junctions]);
+  const moveWallPoint = (wallId, index, point) => setMapEnvironment(current =>
+    moveWallJunction(current, wallId, index, point));
+  const commitWallPointSnap = (wallId, index) => {
+    if (!wallSnapEnabled) return;
+    setMapEnvironment(current => {
+      const point = current.fortifications?.find(wall => wall.id === wallId)?.points?.[index];
+      if (!point) return current;
+      const target = findWallSnapTarget(point, current.fortifications, wallId, roadSnapToleranceFeet);
+      return target ? joinWallPoints(current, wallId, index, target.wall.id, target.index) : current;
+    });
+  };
+  const detachSelectedWallJunction = () => {
+    if (selectedFortificationPointIndex == null) return;
+    const wall = fortifications.find(value => value.id === selectedFortificationId);
+    if (!wall?.points?.[selectedFortificationPointIndex]?.junction_id) return;
+    recordSplineUndo('wall', wall);
+    setMapEnvironment(current => detachWallJunction(current, wall.id, selectedFortificationPointIndex));
+  };
 
   useEffect(() => {
     if (!regions.some(region => region.boundary_anchors?.length)) return;
@@ -2122,16 +2548,28 @@ export default function SettlementMapEditor({
       recordSplineUndo('road', road);
       setRoads(values => values.map(value => value.id === road.id ? updated : value));
       setSelectedRoadPointIndex(null);
+      setSelectedRoadPointIndexes([]);
     } else if (kind === 'wall') {
       const wall = fortifications.find(value => value.id === selectedFortificationId);
       if (!wall || selectedFortificationPointIndex == null) return;
-      const updated = deleteSplineControlPoint(wall, selectedFortificationPointIndex);
+      const updated = deleteSplineControlPoint(materializeFortificationTowerRoles(wall), selectedFortificationPointIndex);
       if (updated === wall) return;
       recordSplineUndo('wall', wall);
       setFortifications(values => values.map(value => value.id === wall.id ? updated : value));
       setSelectedFortificationPointIndex(null);
+    } else if (kind === 'region') {
+      const region = regions.find(value => value.id === selectedRegionId);
+      if (!region || selectedRegionPointIndex == null || region.boundary_anchors?.length) return;
+      const updated = deleteSplineControlPoint(region, selectedRegionPointIndex,
+        { protectEndpoints: false, minimumPoints: 3 });
+      if (updated === region) return;
+      recordSplineUndo('region', region);
+      setRegions(values => values.map(value => value.id === region.id ? updated : value));
+      setSelectedRegionPointIndex(null);
     }
-  }, [roads, selectedRoadId, selectedRoadPointIndex, fortifications, selectedFortificationId, selectedFortificationPointIndex, recordSplineUndo, setRoads, setFortifications]);
+  }, [roads, selectedRoadId, selectedRoadPointIndex, fortifications, selectedFortificationId,
+    selectedFortificationPointIndex, regions, selectedRegionId, selectedRegionPointIndex,
+    recordSplineUndo, setRoads, setFortifications, setRegions]);
 
   const applySplineContextAction = useCallback((action) => {
     const menu = splineContextMenu;
@@ -2156,6 +2594,7 @@ export default function SettlementMapEditor({
           setRoads(values => values.map(value => value.id === road.id ? updated : value));
           setSelectedRoadId(road.id);
           setSelectedRoadPointIndex(index);
+          setSelectedRoadPointIndexes(index == null ? [] : [index]);
         }
       } else if (menu.kind === 'wall') {
         const wall = fortifications.find(value => value.id === menu.id);
@@ -2168,10 +2607,27 @@ export default function SettlementMapEditor({
             const selectedPoint = wall.points[menu.index];
             insertionPoint = { x: (selectedPoint.x + neighbor.x) / 2, y: (selectedPoint.y + neighbor.y) / 2 };
           }
-          const result = insertOpenSplineControlPoint(wall, insertionPoint, { tower: false });
+          const result = insertOpenSplineControlPoint(materializeFortificationTowerRoles(wall), insertionPoint, { tower: false });
           setFortifications(values => values.map(value => value.id === wall.id ? result.item : value));
           setSelectedFortificationId(wall.id);
           setSelectedFortificationPointIndex(result.index);
+        }
+      } else if (menu.kind === 'region') {
+        const region = regions.find(value => value.id === menu.id);
+        if (region && !region.boundary_anchors?.length) {
+          let insertionPoint = menu.point;
+          if (Number.isInteger(menu.index) && region.points.length > 1) {
+            const selectedPoint = region.points[menu.index];
+            const neighbor = region.points[(menu.index + 1) % region.points.length];
+            insertionPoint = { x: (selectedPoint.x + neighbor.x) / 2, y: (selectedPoint.y + neighbor.y) / 2 };
+          }
+          const result = insertClosedSplineControlPoint(region, insertionPoint);
+          if (result.index != null) {
+            recordSplineUndo('region', region);
+            setRegions(values => values.map(value => value.id === region.id ? result.item : value));
+            setSelectedRegionId(region.id);
+            setSelectedRegionPointIndex(result.index);
+          }
         }
       }
     } else if (action === 'delete' && Number.isInteger(menu.index)) {
@@ -2183,22 +2639,35 @@ export default function SettlementMapEditor({
             recordSplineUndo('road', road);
             setRoads(values => values.map(value => value.id === road.id ? updated : value));
             setSelectedRoadPointIndex(null);
+            setSelectedRoadPointIndexes([]);
           }
         }
       } else if (menu.kind === 'wall') {
         const wall = fortifications.find(value => value.id === menu.id);
         if (wall) {
-          const updated = deleteSplineControlPoint(wall, menu.index);
+          const updated = deleteSplineControlPoint(materializeFortificationTowerRoles(wall), menu.index);
           if (updated !== wall) {
             recordSplineUndo('wall', wall);
             setFortifications(values => values.map(value => value.id === wall.id ? updated : value));
             setSelectedFortificationPointIndex(null);
           }
         }
+      } else if (menu.kind === 'region') {
+        const region = regions.find(value => value.id === menu.id);
+        if (region && !region.boundary_anchors?.length) {
+          const updated = deleteSplineControlPoint(region, menu.index,
+            { protectEndpoints: false, minimumPoints: 3 });
+          if (updated !== region) {
+            recordSplineUndo('region', region);
+            setRegions(values => values.map(value => value.id === region.id ? updated : value));
+            setSelectedRegionPointIndex(null);
+          }
+        }
       }
     }
     setSplineContextMenu(null);
-  }, [splineContextMenu, roads, fortifications, recordSplineUndo, setRoads, setFortifications]);
+  }, [splineContextMenu, roads, fortifications, regions, recordSplineUndo,
+    setRoads, setFortifications, setRegions]);
 
 
   const terrainMaterial = useMemo(() => ({
@@ -2244,7 +2713,9 @@ export default function SettlementMapEditor({
       ...stroke,
       mode: terrainMode,
       delta: terrainMode === 'raise' ? brushStrength : terrainMode === 'lower' ? -brushStrength : 0,
-      amount: terrainMode === 'flatten' || terrainMode === 'smooth' ? brushStrength / 100 : undefined
+      amount: terrainMode === 'flatten' || terrainMode === 'smooth' ? brushStrength / 100 : undefined,
+      ...(terrainMode === 'set-elevation' ? { target_elevation_feet: targetElevation } : {}),
+      ...(terrainMode === 'smooth' ? { smoothing_version: 2 } : {})
     };
 
     gestureStrokesRef.current.push(next);
@@ -2279,8 +2750,8 @@ export default function SettlementMapEditor({
     const beforeTiles = [];
     const seen = new Set();
     strokes.forEach(stroke => {
-      const r = Number(stroke.radius) || 100;
-      const t0 = tileIndexAt(stroke.x - r, stroke.y - r), t1 = tileIndexAt(stroke.x + r, stroke.y + r);
+      const bounds = terrainStrokeBounds(stroke);
+      const t0 = tileIndexAt(bounds.minX, bounds.minY), t1 = tileIndexAt(bounds.maxX, bounds.maxY);
       for (let tz = t0.tz; tz <= t1.tz; tz++) for (let tx = t0.tx; tx <= t1.tx; tx++) {
         const key = tileKey(tx, tz);
         if (seen.has(key)) continue;
@@ -2363,6 +2834,41 @@ export default function SettlementMapEditor({
     : (x, y) => terrainHeightAt(strokes, x, y, heightMap),
     [tileStore, strokes, heightmapPlacement, heightMap]);
 
+  const sampleCommittedHeight = (x, y) => createWorldSampler(tileStore, () => [], () => heightmapPlacement,
+    { materializeMissing: false })(x, y);
+  const onPickTerrainElevation = point => {
+    setTargetElevation(Math.round(sampleCommittedHeight(point.x, point.y)));
+    setPickTerrainElevation(false);
+  };
+  const onSlopePoint = point => {
+    const elevation = Math.round(sampleCommittedHeight(point.x, point.y));
+    setSlopeDraft(current => !current?.start || current.end
+      ? { start: { x: point.x, y: point.y }, start_elevation_feet: elevation }
+      : { ...current, end: { x: point.x, y: point.y }, end_elevation_feet: elevation });
+  };
+  const slopeStroke = slopeDraft?.start && slopeDraft?.end ? {
+    id: `slope-preview`, mode: 'slope',
+    x: slopeDraft.start.x, y: slopeDraft.start.y,
+    end_x: slopeDraft.end.x, end_y: slopeDraft.end.y,
+    start_elevation_feet: slopeDraft.start_elevation_feet,
+    end_elevation_feet: slopeDraft.end_elevation_feet,
+    radius: brushRadius
+  } : null;
+  useEffect(() => {
+    if (terrainMode === 'slope') setStrokes(slopeStroke ? [slopeStroke] : []);
+    else if (slopeDraft) {
+      setSlopeDraft(null);
+      setStrokes([]);
+    }
+  }, [terrainMode, slopeDraft, brushRadius]); // slope preview is transient; committed heights live in tiles
+  const applySlope = () => {
+    if (!slopeStroke || Math.hypot(slopeStroke.end_x - slopeStroke.x, slopeStroke.end_y - slopeStroke.y) < 1) return;
+    onSculptStart();
+    onSculptStroke({ ...slopeStroke, id: `slope-${Date.now()}` });
+    onSculptEnd();
+    setSlopeDraft(null);
+  };
+
   // ********************************************************* //
   // Hook listeners to intercept virtual panels actions safely //
   // ********************************************************* //
@@ -2392,7 +2898,7 @@ export default function SettlementMapEditor({
     const handleCommandUpdate = (e) => {
       // If the command is a structural perspective shift away from 'firstPerson',
       // make sure we notify the parent tree immediately
-      setLocalViewCommand({ mode: e.detail.mode, nonce: Date.now() });
+      setLocalViewCommand({ ...e.detail, nonce: Date.now() });
     };
 
     window.addEventListener('settlement-virtual-key-update', handleKeyUpdate);
@@ -2424,17 +2930,27 @@ export default function SettlementMapEditor({
     };
   }, [activeTool]);
 
-  const setRegions = updater => setMapEnvironment(value => ({ ...value, regions: typeof updater === 'function' ? updater(value.regions || []) : updater }));
   const activeViewCommand = localViewCommand || viewCommand, firstPerson = activeViewCommand?.mode === 'firstPerson', brushStrength = brushStrengths[terrainMode];
 
   const finishRoad = () => {
     if (roadDraft.length < 2) return;
     const id = `road-${Date.now()}`;
-    setRoads(values => [...values, { id, name: `New road ${values.length + 1}`, road_class: roadClass, surface_type: roadSurface, width_feet: roadWidth, opacity: .78, visible: true, points: roadDraft }]);
+    const classSurface = ROAD_CLASS_DEFAULTS[roadClass]?.surface || ROAD_CLASS_DEFAULTS.street.surface;
+    const segments = roadDraft.slice(1).map((_, index) => ({ width_feet: roadWidth,
+      surface_type: roadSurface === 'regional-default'
+        ? regionalRoadSurfaceForSegment(roadDraft, index, roadClass, regions, classSurface)
+        : roadSurface }));
+    setRoads(values => [...values, { id, name: roadName.trim() || `New road ${values.length + 1}`,
+      road_class: roadClass, surface_type: roadSurface === 'regional-default' ? classSurface : roadSurface,
+      width_feet: roadWidth, segments, opacity: .78, visible: true, points: roadDraft }]);
     setSelectedRoadId(id);
+    setSelectedRoadPointIndex(null);
+    setSelectedRoadPointIndexes([]);
+    setSelectedRoadSegmentIndexes([]);
     setRoadDraft([]);
+    setRoadName('');
     setSplineHoverPoint(null);
-    setRoadMode('select');
+    setRoadMode('refine');
   };
 
   const finishWall = () => {
@@ -2443,7 +2959,13 @@ export default function SettlementMapEditor({
       ...point,
       tower: index === 0 || index === wallDraft.length - 1 ? true : point.tower === true
     }));
-    setFortifications(values => [...values, { id: `wall-${Date.now()}`, name: `New wall ${values.length + 1}`, wall_type: 'city_wall', width_feet: wallWidth, height_feet: 35, visible: true, points }]);
+    setMapEnvironment(current => {
+      const wall = { id: `wall-${Date.now()}`,
+        name: `New wall ${(current.fortifications || []).length + 1}`, wall_type: 'city_wall',
+        width_feet: wallWidth, height_feet: 35, visible: true, points };
+      return wallSnapEnabled ? appendWallAndJoin(current, wall)
+        : { ...current, fortifications: [...(current.fortifications || []), wall] };
+    });
     setWallDraft([]);
     setWallMode('select');
   };
@@ -2480,8 +3002,10 @@ export default function SettlementMapEditor({
   useEffect(() => {
     if (!['build', 'inspect', 'player'].includes(activeTool)) setSelected?.(null);
     setSelectedRoadId(null);
+    setSelectedRoadPointIndexes([]);
     setSelectedFortificationId(null);
     setSelectedRegionId(null);
+    setSelectedRegionPointIndex(null);
     setSplineContextMenu(null);
   }, [activeTool, setSelected]);
 
@@ -2501,6 +3025,7 @@ export default function SettlementMapEditor({
   const state = {
     activeTool,
     time: simulation?.time || viewCommand?.time || { hour: 12, minute: 0 },
+    celestial: simulation?.celestial || { moons: [] },
 
     terrainMaterial,
     atmosphereSettings,
@@ -2511,9 +3036,17 @@ export default function SettlementMapEditor({
 
     assets,
     buildings,
+    properties,
+    propertyDraft,
+    editingPropertyBoundaryId,
+    onPropertyBoundaryVertexMove,
+    onPropertyPolygonPoint,
     setBuildings,
     blueprintDraft,
     setBlueprintDraft,
+    blueprintHoverPoint,
+    footprintTool, footprintPoints, setFootprintPoints, setFootprintError,
+    setBlueprintHoverPoint,
 
     selected,
     setSelected,
@@ -2533,7 +3066,12 @@ export default function SettlementMapEditor({
     regions,
     setRegions,
     fortifications,
+    wallJunctions,
     setFortifications,
+    moveWallPoint,
+    commitWallPointSnap,
+    detachSelectedWallJunction,
+    updateWallJunction: (id, changes) => setMapEnvironment(current => updateWallJunction(current, id, changes)),
     roadMode,
     roadSnapEnabled,
     roadSnapToleranceFeet,
@@ -2544,16 +3082,28 @@ export default function SettlementMapEditor({
     setSelectedRoadId,
     selectedRoadPointIndex,
     setSelectedRoadPointIndex,
+    selectedRoadPointIndexes,
+    setSelectedRoadPointIndexes,
+    selectedRoadSegmentIndexes,
+    setSelectedRoadSegmentIndexes,
 
     fortificationMode: wallMode,
+    wallSnapEnabled,
+    setWallSnapEnabled,
     selectedFortificationId,
     setSelectedFortificationId,
     selectedFortificationPointIndex,
     setSelectedFortificationPointIndex,
+    selectedFortificationSegmentIndex,
+    setSelectedFortificationSegmentIndex,
 
     regionMode,
     selectedRegionId,
+    selectedRegionPointIndex,
+    regionSnapEnabled,
+    setRegionSnapEnabled,
     setSelectedRegionId,
+    setSelectedRegionPointIndex,
     selectedAssetKey: assetKey,
     buildMode,
     roadWidth,
@@ -2580,6 +3130,9 @@ export default function SettlementMapEditor({
 
     // Terrain editing related props
     terrainMode,
+    pickTerrainElevation,
+    onPickTerrainElevation,
+    onSlopePoint,
     brushRadius,
     brushMeshRef,
     onBrushRadiusChange: setBrushRadius,
@@ -2612,8 +3165,10 @@ export default function SettlementMapEditor({
 
   const meshState = useMemo(() => ({
     buildings: state.buildings,
+    properties: state.properties,
     roads: state.roads,
     fortifications: state.fortifications,
+    wallJunctions: state.wallJunctions,
     regions: state.regions,
     waterBodies: state.waterBodies,
     referenceLayers: state.referenceLayers,
@@ -2622,7 +3177,7 @@ export default function SettlementMapEditor({
     pointsOfInterest: state.pointsOfInterest,
     animateWater: state.animateWater,
   }), [
-    state.buildings, state.roads, state.fortifications, state.regions,
+    state.buildings, state.properties, state.roads, state.fortifications, state.wallJunctions, state.regions,
     state.waterBodies, state.referenceLayers,
     state.terrainMaterial, state.assets, state.pointsOfInterest, state.animateWater
   ]);
@@ -2662,10 +3217,10 @@ export default function SettlementMapEditor({
             zIndex: 1500,
             minWidth: 170,
             p: 0.5,
-            backgroundColor: '#14201cf2',
-            border: '1px solid #53645a',
+            backgroundColor: "var(--bg-surface)",
+            border: "1px solid var(--border-main)",
             borderRadius: '5px',
-            boxShadow: '0 8px 24px #0009'
+            boxShadow: "0 8px 24px var(--border-main)"
           }}
         >
           <Button
@@ -2674,7 +3229,7 @@ export default function SettlementMapEditor({
             onClick={() => applySplineContextAction('add')}
             sx={{
               justifyContent: 'flex-start',
-              color: '#d5ddd7',
+              color: "var(--text-main)",
               textTransform: 'none'
             }}
           >
@@ -2689,9 +3244,10 @@ export default function SettlementMapEditor({
               size="small"
               color="error"
               disabled={
-                splineContextMenu.index === 0
-                || splineContextMenu.index === splineContextMenu.pointCount - 1
-                || splineContextMenu.pointCount <= 2
+                (splineContextMenu.kind !== 'region' &&
+                  (splineContextMenu.index === 0 ||
+                    splineContextMenu.index === splineContextMenu.pointCount - 1))
+                || splineContextMenu.pointCount <= (splineContextMenu.kind === 'region' ? 3 : 2)
               }
               onClick={() => applySplineContextAction('delete')}
               sx={{
@@ -2709,7 +3265,7 @@ export default function SettlementMapEditor({
             onClick={() => setSplineContextMenu(null)}
             sx={{
               justifyContent: 'flex-start',
-              color: '#94a3b8',
+              color: "var(--text-muted)",
               textTransform: 'none'
             }}
           >
@@ -2738,6 +3294,13 @@ export default function SettlementMapEditor({
         brushRadius={brushRadius}
         setBrushRadius={setBrushRadius} // Passes down your top-level hook setter directly
         brushStrength={brushStrength}
+        targetElevation={targetElevation}
+        setTargetElevation={setTargetElevation}
+        pickTerrainElevation={pickTerrainElevation}
+        setPickTerrainElevation={setPickTerrainElevation}
+        slopeDraft={slopeDraft}
+        setSlopeDraft={setSlopeDraft}
+        applySlope={applySlope}
 
         // Maps value updates straight into your nested strengths array object slot cleanly
         setBrushStrength={value =>
@@ -2772,6 +3335,8 @@ export default function SettlementMapEditor({
         roadDraft={roadDraft}
         setRoadDraft={setRoadDraft}
         finishRoad={finishRoad}
+        roadName={roadName}
+        setRoadName={setRoadName}
         roadWidth={roadWidth}
         setRoadWidth={setRoadWidth}
         roadClass={roadClass}
@@ -2823,10 +3388,10 @@ export default function SettlementMapEditor({
             zIndex: 5,
             minWidth: 220,
             padding: '8px 10px',
-            background: '#0d1410e6',
-            border: '1px solid #ffffff2c',
+            background: "var(--bg-app)",
+            border: "1px solid var(--border-main)",
             borderRadius: '6px',
-            color: '#cbbd9d',
+            color: "var(--text-muted)",
             fontFamily: 'monospace',
             fontSize: '11px',
             lineHeight: 1.6,

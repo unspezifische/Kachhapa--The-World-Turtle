@@ -2,9 +2,13 @@
 
 
 def calculate_lamplighter_state(route, lamps, minute_of_day):
-    lamps = sorted(lamps, key=lambda lamp: lamp.route_order)
+    all_lamps = sorted(lamps, key=lambda lamp: lamp.route_order)
+    lamps = [lamp for lamp in all_lamps if not getattr(lamp, 'broken', False)]
     if not lamps:
-        return {'phase': 'off_duty', 'position': None, 'lamps': []}
+        return {'phase': 'off_duty', 'position': None, 'next_lamp_id': None, 'lamps': [
+            dict(id=lamp.id, name=lamp.name, x=lamp.x, y=lamp.y, elevation=lamp.elevation,
+                 route_order=lamp.route_order, lit=False, broken=True, fuel_remaining=lamp.fuel_remaining)
+            for lamp in all_lamps]}
 
     interval = max(1, route.minutes_per_stop)
     route_duration = len(lamps) * interval
@@ -13,16 +17,19 @@ def calculate_lamplighter_state(route, lamps, minute_of_day):
     progress = None
     lit_ids = set()
 
-    if route.evening_start_minute <= minute_of_day < route.evening_start_minute + route_duration:
+    evening_elapsed = (minute_of_day - route.evening_start_minute) % 1440
+    morning_elapsed = (minute_of_day - route.morning_start_minute) % 1440
+    night_duration = (route.morning_start_minute - route.evening_start_minute) % 1440
+    if evening_elapsed < night_duration and evening_elapsed < route_duration:
         phase = 'lighting'
-        progress = (minute_of_day - route.evening_start_minute) / interval
+        progress = evening_elapsed / interval
         lit_ids = {lamp.id for lamp in lamps[:int(progress) + 1]}
-    elif minute_of_day >= route.evening_start_minute + route_duration or minute_of_day < route.morning_start_minute:
+    elif evening_elapsed < night_duration:
         lit_ids = {lamp.id for lamp in lamps}
-    elif route.morning_start_minute <= minute_of_day < route.morning_start_minute + route_duration:
+    elif morning_elapsed < route_duration:
         phase = 'extinguishing'
         route_lamps = list(reversed(lamps))
-        progress = (minute_of_day - route.morning_start_minute) / interval
+        progress = morning_elapsed / interval
         extinguished = {lamp.id for lamp in route_lamps[:int(progress) + 1]}
         lit_ids = {lamp.id for lamp in lamps if lamp.id not in extinguished}
 
@@ -53,6 +60,7 @@ def calculate_lamplighter_state(route, lamps, minute_of_day):
             'elevation': lamp.elevation,
             'route_order': lamp.route_order,
             'lit': lamp.id in lit_ids,
+            'broken': getattr(lamp, 'broken', False),
             'fuel_remaining': lamp.fuel_remaining,
-        } for lamp in lamps],
+        } for lamp in all_lamps],
     }

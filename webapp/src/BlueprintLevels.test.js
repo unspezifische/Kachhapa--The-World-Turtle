@@ -22,6 +22,21 @@ test('level construction controls change floors and apply a material to every ex
   expect(current.levels[0].outline.every(wall => wall.material === 'wood')).toBe(true);
 });
 
+test('opening the editor automatically identifies enclosed rooms', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({ id: 'rooms', name: 'Rooms', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{ id: 'ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 0, y: 10 }] }] });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+  render(<Harness />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  expect(current.levels[0].rooms).toHaveLength(1);
+  expect(current.levels[0].rooms[0]).toMatchObject({ boundary_source: 'auto', boundary_locked: false });
+});
+
 test('levels, image upload and alignment changes are attached to the chosen floor', async () => {
   let current;
   const upload = jest.fn().mockResolvedValue({ image_url: '/test-plan.png', width_feet: 40, height_feet: 30, x: 0, y: 0, rotation: 0, opacity: 0.6 });
@@ -59,6 +74,16 @@ test('the floor-plan action follows the Levels heading before level settings', (
   const elements = Array.from(container.querySelector('.blueprint-levels').children);
   expect(elements.slice(0, 3).map(element => element.tagName)).toEqual(['H3', 'BUTTON', 'LABEL']);
   expect(elements[1]).toHaveTextContent('Edit floor plan & walls');
+});
+
+test('new building draft exposes Arc and Circle footprint tools before saving', () => {
+  const building = { id: 'draft', coordinate_space: 'local', x: 0, y: 0, levels: [{ id: 'ground', corners: [{ x: 0, y: 0 }] }] };
+  render(<BlueprintLevels drafting building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
+  expect(screen.queryByLabelText('Active level')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Draw Footprint — Arc / Circle Tools' }));
+  expect(screen.getByLabelText('Structure tool')).toHaveValue('footprint');
+  expect(screen.getByRole('option', { name: 'Circle' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Arc', exact: true })).toBeEnabled();
 });
 
 test('image placement drawer starts closed and opens for Align with grouped size fields', () => {
@@ -145,12 +170,47 @@ test('active tool settings stay next to the drawing tools and Done editing is pr
   };
   render(<BlueprintLevels building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
   fireEvent.click(screen.getByText('Edit floor plan & walls'));
-  fireEvent.click(screen.getByRole('button', { name: 'fireplace' }));
+  fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'fireplace' } });
   const settings = screen.getByLabelText('fireplace tool settings');
   expect(settings).toContainElement(screen.getByLabelText('New chimney width (ft)'));
   expect(document.querySelector('.blueprint-workspace-main')).toContainElement(settings);
   expect(screen.getByRole('button', { name: 'Done editing' })).toHaveClass('blueprint-done-action');
   expect(screen.getByText('Changes save as you work')).toBeInTheDocument();
+});
+
+test('menu bar groups opening tools and keeps an in-settings type selector', () => {
+  const building = {
+    id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [{ id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }] }],
+  };
+  render(<BlueprintLevels building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  const openings = screen.getByRole('button', { name: 'Openings' });
+  fireEvent.click(openings);
+  expect(openings).toHaveAttribute('aria-expanded', 'true');
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Window' }));
+  expect(screen.getByLabelText('Opening type')).toHaveValue('window');
+  fireEvent.change(screen.getByLabelText('Opening type'), { target: { value: 'door' } });
+  expect(screen.getByLabelText('Opening type')).toHaveValue('door');
+});
+
+test('landing controls expose one linked slider per flight', () => {
+  const building = {
+    id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [{ id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }] }],
+  };
+  render(<BlueprintLevels building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  fireEvent.change(screen.getByLabelText('Vertical tool'), { target: { value: 'stairs' } });
+  fireEvent.change(screen.getByLabelText('Stair shape'), { target: { value: 'landing' } });
+  fireEvent.change(screen.getByLabelText('Landing count'), { target: { value: '2' } });
+  expect(screen.getAllByLabelText(/Flight \d share/)).toHaveLength(3);
+  fireEvent.change(screen.getByLabelText('Flight 3 share'), { target: { value: '51' } });
+  expect(screen.getByLabelText('Flight 1 share')).toHaveValue('24.5');
+  expect(screen.getByLabelText('Flight 2 share')).toHaveValue('24.5');
+  expect(screen.getByLabelText('Flight 3 share')).toHaveValue('51');
 });
 
 test('Arc and Circle tools create curved wall and footprint geometry', () => {
@@ -203,14 +263,14 @@ test('Arc and Circle tools create curved wall and footprint geometry', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'select' }));
     fireEvent.click(canvas, { clientX: 20, clientY: 0 });
-    fireEvent.click(screen.getByRole('button', { name: 'footprint' }));
+    fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'footprint' } });
     fireEvent.click(screen.getByRole('button', { name: 'Curve' }));
     fireEvent.click(canvas, { clientX: 20, clientY: 0 });
     fireEvent.click(canvas, { clientX: 20, clientY: -5 });
     expect(current.levels[0].outline[0].type).toBe('arc');
     expect(current.levels[0].outline[0].through).toEqual({ x: 20, y: 5 });
 
-    fireEvent.click(screen.getByRole('button', { name: 'footprint' }));
+    fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'footprint' } });
     fireEvent.click(canvas, { clientX: 0, clientY: 0 });
     fireEvent.click(screen.getByRole('button', { name: 'Arc' }));
     expect(screen.getByRole('status', { name: 'Arc point 2 of 3' })).toBeInTheDocument();
@@ -242,7 +302,7 @@ test('Arc and Circle tools create curved wall and footprint geometry', () => {
     )).toBe(false);
     expect(new Set(current.levels[0].outline.map(wall => wall.id)).size).toBe(current.levels[0].outline.length);
 
-    fireEvent.click(screen.getByRole('button', { name: 'circle' }));
+    fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'circle' } });
     fireEvent.click(canvas, { clientX: 20, clientY: -15 });
     fireEvent.click(canvas, { clientX: 25, clientY: -15 });
     expect(current.levels[0].outline).toHaveLength(4);
@@ -344,6 +404,7 @@ test('custom roofs can be traced and stored independently from levels', () => {
   try {
     render(<Harness />);
     fireEvent.click(screen.getByRole('button', { name: 'Draw custom polygon' }));
+    fireEvent.change(screen.getByLabelText('Roof style'), { target: { value: 'shed' } });
     const canvas = screen.getByLabelText('Floor plan tracing canvas');
     fireEvent.click(canvas, { clientX: 2, clientY: -2 });
     fireEvent.click(canvas, { clientX: 20, clientY: -2 });
@@ -352,12 +413,83 @@ test('custom roofs can be traced and stored independently from levels', () => {
 
     expect(current.roofs).toHaveLength(1);
     expect(current.roofs[0]).toMatchObject({
-      type: 'custom',
+      type: 'shed',
       support_level_id: 'ground',
       visibility_level_id: 'ground',
       footprint: expect.any(Array),
     });
     expect(current.levels[0].roofs).toBeUndefined();
+  } finally {
+    if (originalCreateSvgPoint) SVGElement.prototype.createSVGPoint = originalCreateSvgPoint;
+    else delete SVGElement.prototype.createSVGPoint;
+    if (originalGetScreenCtm) SVGElement.prototype.getScreenCTM = originalGetScreenCtm;
+    else delete SVGElement.prototype.getScreenCTM;
+  }
+});
+
+test('the Roof tool finishes a styled polygon without a roof template', () => {
+  const originalCreateSvgPoint = SVGElement.prototype.createSVGPoint;
+  const originalGetScreenCtm = SVGElement.prototype.getScreenCTM;
+  SVGElement.prototype.createSVGPoint = function () {
+    return { x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } };
+  };
+  SVGElement.prototype.getScreenCTM = () => ({ inverse: () => ({}) });
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({ id: 'b', name: 'Manor', coordinate_space: 'local',
+      levels: [{ id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }] }] });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+  try {
+    render(<Harness />);
+    fireEvent.click(screen.getByText('Edit floor plan & walls'));
+    fireEvent.click(screen.getByRole('button', { name: 'Roof' }));
+    fireEvent.change(screen.getByLabelText('Roof style'), { target: { value: 'shed' } });
+    fireEvent.change(screen.getByLabelText('Pitch (°)'), { target: { value: '20' } });
+    const canvas = screen.getByLabelText('Floor plan tracing canvas');
+    fireEvent.click(canvas, { clientX: 0, clientY: 0 });
+    fireEvent.click(canvas, { clientX: 10, clientY: 0 });
+    fireEvent.click(canvas, { clientX: 10, clientY: -10 });
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Roof Polygon' }));
+    expect(current.roofs[0]).toMatchObject({ type: 'shed', pitch: 20 });
+    expect(current.roofs[0].footprint.map(point => [point.x, Math.abs(point.y)]))
+      .toEqual([[0, 0], [10, 0], [10, 10]]);
+  } finally {
+    if (originalCreateSvgPoint) SVGElement.prototype.createSVGPoint = originalCreateSvgPoint;
+    else delete SVGElement.prototype.createSVGPoint;
+    if (originalGetScreenCtm) SVGElement.prototype.getScreenCTM = originalGetScreenCtm;
+    else delete SVGElement.prototype.getScreenCTM;
+  }
+});
+
+test('two grid points calibrate the floor reference image around the first point', () => {
+  const originalCreateSvgPoint = SVGElement.prototype.createSVGPoint;
+  const originalGetScreenCtm = SVGElement.prototype.getScreenCTM;
+  SVGElement.prototype.createSVGPoint = function () {
+    return { x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } };
+  };
+  SVGElement.prototype.getScreenCTM = () => ({ inverse: () => ({}) });
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({ id: 'b', name: 'Manor', coordinate_space: 'local',
+      levels: [{ id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }],
+        floor_map: { image_url: '/map.png', width_feet: 40, height_feet: 30, x: 20, y: 15 } }] });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+  try {
+    render(<Harness />);
+    fireEvent.click(screen.getByText('Edit floor plan & walls'));
+    expect(screen.getByLabelText('Selected element settings')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick two grid points' }));
+    const canvas = screen.getByLabelText('Floor plan tracing canvas');
+    fireEvent.click(canvas, { clientX: 0, clientY: 0 });
+    fireEvent.click(canvas, { clientX: 10, clientY: 0 });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply image calibration' }));
+    expect(current.levels[0].floor_map).toMatchObject({ width_feet: 20, height_feet: 15, x: 10, y: 7.5 });
   } finally {
     if (originalCreateSvgPoint) SVGElement.prototype.createSVGPoint = originalCreateSvgPoint;
     else delete SVGElement.prototype.createSVGPoint;
@@ -564,7 +696,7 @@ test('selected blueprint elements can be dragged, undone, and deleted', () => {
     expect(current.levels[0].hatches[0]).toMatchObject({ x: 15, y: 15 });
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
     expect(current.levels[0].hatches).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'hatch' }));
+    fireEvent.change(screen.getByLabelText('Vertical tool'), { target: { value: 'hatch' } });
     fireEvent.click(canvas, { clientX: 25, clientY: -10 });
     expect(current.levels[0].hatches).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
@@ -622,7 +754,7 @@ test('new stairs save their total rise and exterior finish', () => {
     fireEvent.change(screen.getByLabelText('Foundation height (ft)'), { target: { value: '3' } });
     expect(current.foundation_height_feet).toBe(3);
     fireEvent.click(screen.getByText('Edit floor plan & walls'));
-    fireEvent.click(screen.getByRole('button', { name: 'stairs' }));
+    fireEvent.change(screen.getByLabelText('Vertical tool'), { target: { value: 'stairs' } });
     fireEvent.change(screen.getByLabelText('Stair finish'), { target: { value: 'wooden-exterior' } });
     expect(screen.getByLabelText('Total elevation change (ft)').value).toBe('3');
     const canvas = screen.getByLabelText('Floor plan tracing canvas');
@@ -633,6 +765,9 @@ test('new stairs save their total rise and exterior finish', () => {
     fireEvent.change(screen.getByLabelText('Total elevation change (ft)'), { target: { value: '4' } });
     fireEvent.change(screen.getByLabelText('Stair finish'), { target: { value: 'stone-exterior' } });
     expect(current.levels[0].stairs[0]).toMatchObject({ total_rise_feet: 4, material: 'stone-exterior' });
+    fireEvent.click(screen.getByRole('button', { name: 'select' }));
+    fireEvent.click(canvas, { clientX: 5, clientY: -5 });
+    expect(screen.getByRole('button', { name: 'Rotate stairs' })).toBeInTheDocument();
   } finally {
     if (originalCreateSvgPoint) SVGElement.prototype.createSVGPoint = originalCreateSvgPoint;
     else delete SVGElement.prototype.createSVGPoint;

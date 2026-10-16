@@ -144,8 +144,8 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
     width: isOpen ? DRAWER_WIDTH : COLLAPSED_WIDTH,
     overflowX: 'hidden',
     backgroundColor: 'var(--menu-bg)',
-    color: 'rgba(255,255,255,0.94)',
-    borderRight: '1px solid rgba(255,255,255,0.08)',
+    color: 'var(--text-on-menu)',
+    borderRight: '1px solid var(--menu-border)',
     transition: 'width 0.2s ease',
     boxSizing: 'border-box',
   };
@@ -168,7 +168,7 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
     width: 40,
     mr: isOpen ? 1.5 : 'auto',
     justifyContent: 'center',
-    color: 'rgba(255,255,255,0.9)',
+    color: 'var(--text-on-menu)',
     '& svg': {
       fontSize: '1.8rem',
     },
@@ -193,13 +193,13 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
             alignItems: 'center',
             justifyContent: isOpen ? 'space-between' : 'center',
             px: isOpen ? 1 : 0,
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
+            borderBottom: '1px solid var(--menu-border)',
           }}
         >
           <IconButton
             onClick={toggleOpen}
             sx={{
-              color: 'rgba(255,255,255,0.9)',
+              color: 'var(--text-on-menu)',
             }}
           >
             {isOpen ? <CloseIcon /> : <MenuIcon />}

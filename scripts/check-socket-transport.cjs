@@ -1,59 +1,70 @@
 #!/usr/bin/env node
-// Exercise the same polling -> WebSocket path as the browser, without a user token.
-const { io } = require('../webapp/node_modules/socket.io-client');
+// Exercise the browser's Engine.IO transport path without an application login.
+const { Socket } = require('../webapp/node_modules/engine.io-client');
 
-const [origin, hostHeader] = process.argv.slice(2);
+const [origin, hostHeader, socketPath='/socket.io/'] = process.argv.slice(2);
 if (!origin || !/^https?:\/\//.test(origin)) {
-  console.error('Usage: node scripts/check-socket-transport.cjs ORIGIN [HOST_HEADER]');
+  console.error('Usage: node scripts/check-socket-transport.cjs ORIGIN [HOST_HEADER] [SOCKET_PATH]');
   process.exit(2);
 }
 
+// Host header overrides can be dropped by a WebSocket client. Resolve the named
+// origin to the requested address instead, so polling and upgrade share a host.
+const address=new URL(origin), virtual=new URL(origin);
+if(hostHeader)virtual.hostname=hostHeader;
+const agent=hostHeader?new (require(address.protocol==='https:'?'https':'http').Agent)({lookup:(_hostname,options,callback)=>require('dns').lookup(address.hostname,options,callback)}):undefined;
+
 function probe(index) {
   return new Promise((resolve, reject) => {
-    const socket = io(origin, {
-      path: '/socket.io/',
+    const socket = new Socket(virtual.toString(), {
+      path: socketPath,
       transports: ['polling', 'websocket'],
-      query: { token: 'socket-transport-probe' },
-      extraHeaders: hostHeader ? { Host: hostHeader } : {},
-      reconnection: false,
-      timeout: 10000,
-      forceNew: true,
+      agent,
     });
-    let connected = false;
+    let opened = false;
     let settled = false;
-    let sawPolling = socket.io.engine?.transport?.name === 'polling';
+    let sawPolling = socket.transport?.name === 'polling';
+    let sessionId;
     const timer = setTimeout(() => finish(new Error('timed out before WebSocket upgrade')), 12000);
 
     function finish(error) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      socket.disconnect();
+      socket.close();
       if (error) reject(new Error(`connection ${index}: ${error.message}`));
       else resolve();
     }
 
-    socket.io.on('open', () => {
-      sawPolling ||= socket.io.engine?.transport?.name === 'polling';
+    socket.on('open', () => {
+      opened = true;
+      sessionId = socket.id;
+      sawPolling ||= socket.transport?.name === 'polling';
     });
-    socket.on('connect', () => {
-      connected = true;
-      sawPolling ||= socket.io.engine?.transport?.name === 'polling';
-      if (socket.io.engine?.transport?.name === 'websocket' && sawPolling) finish();
-      socket.io.engine?.on('upgrade', (transport) => {
-        if (transport.name === 'websocket' && sawPolling) finish();
-      });
+    socket.on('upgrade', (transport) => {
+      if (!sessionId || socket.id !== sessionId || !sawPolling) {
+        finish(new Error('upgrade did not preserve a polling session'));
+      } else if (transport.name === 'websocket') {
+        finish();
+      }
     });
-    socket.on('connect_error', (error) => finish(new Error(`connect error: ${error.message}`)));
-    socket.on('disconnect', (reason) => {
-      if (connected && !settled) finish(new Error(`disconnected before upgrade: ${reason}`));
+    socket.on('error', (error) => finish(new Error(`transport error: ${error.message}`)));
+    socket.on('close', (reason) => {
+      if (opened && !settled) finish(new Error(`closed before upgrade: ${reason}`));
     });
   });
 }
 
-Promise.all(Array.from({ length: 8 }, (_, index) => probe(index + 1)))
-  .then(() => console.log(`Socket.IO polling and WebSocket upgrade passed: ${origin}${hostHeader ? ` (Host: ${hostHeader})` : ''}`))
-  .catch((error) => {
-    console.error(`Socket.IO transport probe failed: ${error.message}`);
-    process.exitCode = 1;
+Promise.allSettled(Array.from({ length: 8 }, (_, index) => probe(index + 1)))
+  .then((results) => {
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure) {
+      console.error(`Socket.IO transport probe failed: ${failure.reason.message}`);
+      process.exitCode = 1;
+    } else {
+      console.log(`Socket.IO polling and WebSocket upgrade passed: ${origin}${socketPath}${hostHeader ? ` (Host: ${hostHeader})` : ''}`);
+    }
+    agent?.destroy();
+    // A failed upgrade can leave an Engine.IO HTTP request open after close().
+    setTimeout(() => process.exit(process.exitCode || 0), 100);
   });

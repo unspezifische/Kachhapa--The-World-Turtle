@@ -1,4 +1,6 @@
 import polygonClipping from 'polygon-clipping';
+import { closestPointOnSegment2d } from './geometry2d';
+import { structureWorldElevation } from './settlementProperties';
 
 let blueprintSequence = 0;
 
@@ -41,7 +43,7 @@ export function foundationPerimeter(building, groundLevel, centerGround, sampleG
   if (!groundLevel) return [];
   const rotation = Number(building.rotation) || 0;
   const cosine = Math.cos(rotation), sine = Math.sin(rotation);
-  const rootHeight = centerGround + (Number(building.elevation) || 0);
+  const rootHeight = structureWorldElevation(building, centerGround);
   const top = (Number(groundLevel.elevation_feet) || 0) + (Number(building.foundation_height_feet) || 0);
   const points = exteriorFootprint(groundLevel);
   const unique = points.length > 1 && pointDistance(points[0], points[points.length - 1]) < 0.001
@@ -719,6 +721,57 @@ export function exposedRoofFootprints(lowerLevel, upperLevel) {
     });
 }
 
+export function automaticRoofFootprints(building) {
+  const levels = (building.levels || [])
+    .filter(level => level.elevation_feet >= 0 && openCorners(level).length >= 3)
+    .sort((a, b) => a.elevation_feet - b.elevation_feet);
+  const roofs = building.roofs || [];
+  const center = ring => ({
+    x: ring.reduce((total, point) => total + point.x, 0) / ring.length,
+    y: ring.reduce((total, point) => total + point.y, 0) / ring.length,
+  });
+
+  return levels.flatMap((level, levelIndex) => {
+    const upper = levels[levelIndex + 1];
+    const areas = upper
+      ? exposedRoofFootprints(level, upper)
+      : [{ footprint: openCorners(level), holes: [] }];
+    const upperCenter = upper ? center(openCorners(upper)) : null;
+
+    return areas.filter(area => area.footprint.length >= 3).flatMap((area, areaIndex) => {
+      const areaCenter = center(area.footprint);
+      if (roofs.some(roof => roof.support_level_id === level.id &&
+        pointInPolygon(areaCenter, roof.footprint || []))) return [];
+      const points = area.footprint;
+      const bounds = points.reduce((value, point) => ({
+        minX: Math.min(value.minX, point.x), maxX: Math.max(value.maxX, point.x),
+        minY: Math.min(value.minY, point.y), maxY: Math.max(value.maxY, point.y),
+      }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+      const skyHoles = (level.floor_voids || [])
+        .filter(item => item.kind === 'open_to_sky' && item.points?.length >= 3 && pointInPolygon(item.points[0], area.footprint))
+        .map(item => item.points);
+      return [{
+        id: `automatic-${level.id}-${areaIndex}`,
+        name: `${level.name} ${upper ? 'lean-to' : 'main'} roof`,
+        type: upper ? 'shed' : 'gable',
+        support_level_id: level.id,
+        visibility_level_id: upper?.id || level.id,
+        footprint: points,
+        holes: [...area.holes, ...skyHoles],
+        pitch: upper ? 18 : 30,
+        ridge_direction: bounds.maxX - bounds.minX >= bounds.maxY - bounds.minY ? 0 : 90,
+        slope_direction: upperCenter
+          ? Math.atan2(upperCenter.y - areaCenter.y, upperCenter.x - areaCenter.x) * 180 / Math.PI
+          : 90,
+        overhang: 1,
+        thickness: 0.5,
+        elevation_offset: 0,
+        material: 'shingles',
+      }];
+    });
+  });
+}
+
 export function normalizeRoof(roof, building, levels = building.levels || []) {
   const support = levels.find(
     level => level.id === roof.support_level_id
@@ -733,6 +786,14 @@ export function normalizeRoof(roof, building, levels = building.levels || []) {
     .map(point => shiftPoint(point, building))
     .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
   const pitch = Number(roof.pitch);
+  const normalizedFootprint = normalizeRing(roof.footprint || roof.points);
+  const authoredHoles = (roof.holes || []).map(normalizeRing);
+  const skyHoles = (support?.floor_voids || [])
+    .filter(item => item.kind === 'open_to_sky' && item.points?.length >= 3)
+    .map(item => item.points)
+    .filter(ring => pointInPolygon(ring[0], normalizedFootprint) &&
+      !authoredHoles.some(existing => existing.length === ring.length &&
+        existing.every((point, index) => Math.hypot(point.x - ring[index].x, point.y - ring[index].y) < 0.001)));
 
   return {
     ...roof,
@@ -740,8 +801,8 @@ export function normalizeRoof(roof, building, levels = building.levels || []) {
     type: BLUEPRINT_ROOF_TYPES.includes(roof.type) ? roof.type : 'gable',
     support_level_id: support?.id || '',
     visibility_level_id: visibility?.id || support?.id || '',
-    footprint: normalizeRing(roof.footprint || roof.points),
-    holes: (roof.holes || []).map(normalizeRing),
+    footprint: normalizedFootprint,
+    holes: [...authoredHoles, ...skyHoles],
     pitch: Math.max(0, Math.min(80, Number.isFinite(pitch) ? pitch : 30)),
     overhang: Math.max(0, Number(roof.overhang) || 0),
     thickness: Math.max(0.1, Number(roof.thickness) || 0.5),
@@ -756,6 +817,53 @@ export function normalizeRoof(roof, building, levels = building.levels || []) {
       elevation: Number(vertex.elevation) || 0,
     })),
     custom_faces: (roof.custom_faces || []).map(face => [...face]),
+  };
+}
+
+export function addSkyCourtyard(building, fromElevation, polygon, id = blueprintId()) {
+  const points = polygon.map(point => ({ x: point.x, y: point.y }));
+  return {
+    ...building,
+    levels: (building.levels || []).map(level => Number(level.elevation_feet) < Number(fromElevation) ? level : {
+      ...level,
+      floor_voids: [...(level.floor_voids || []), { id, kind: 'open_to_sky', points: points.map(point => ({ ...point })) }],
+      walls: [...(level.walls || []), ...points.map((start, index) => ({
+        id: `${level.id}-${id}-wall-${index}`, type: 'line',
+        start: { ...start }, end: { ...points[(index + 1) % points.length] },
+        thickness: level.exterior_wall_thickness || 2,
+        wall_role: 'exterior_courtyard',
+      }))],
+    }),
+  };
+}
+
+export function moveSkyCourtyardVertex(building, id, index, point) {
+  const source = (building.levels || []).flatMap(level => level.floor_voids || []).find(voidItem => voidItem.id === id);
+  if (!source) return building;
+  const points = source.points.map((existing, pointIndex) => pointIndex === index ? { ...point } : { ...existing });
+  return {
+    ...building,
+    levels: building.levels.map(level => ({
+      ...level,
+      floor_voids: (level.floor_voids || []).map(item => item.id === id ? { ...item, points: points.map(vertex => ({ ...vertex })) } : item),
+      walls: (level.walls || []).map(wall => {
+        const prefix = `${level.id}-${id}-wall-`;
+        if (!wall.id?.startsWith(prefix)) return wall;
+        const wallIndex = Number(wall.id.slice(prefix.length));
+        return { ...wall, start: { ...points[wallIndex] }, end: { ...points[(wallIndex + 1) % points.length] } };
+      }),
+    })),
+  };
+}
+
+export function removeSkyCourtyard(building, id) {
+  return {
+    ...building,
+    levels: (building.levels || []).map(level => ({
+      ...level,
+      floor_voids: (level.floor_voids || []).filter(item => item.id !== id),
+      walls: (level.walls || []).filter(wall => !wall.id?.startsWith(`${level.id}-${id}-wall-`)),
+    })),
   };
 }
 
@@ -783,6 +891,90 @@ export function isRoofVisible(building, roof) {
 /* Stairs                                                                      */
 /* -------------------------------------------------------------------------- */
 
+const FLIGHT_SHARE_UNITS = 1000;
+
+export function normalizeFlightShares(shares, flightCount) {
+  const count = Math.max(1, Math.round(Number(flightCount) || 1));
+  const values = Array.isArray(shares) && shares.length === count
+    ? shares.map(value => Math.max(0, Number(value) || 0))
+    : [];
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const units = total > 0
+    ? values.map(value => Math.round(value / total * FLIGHT_SHARE_UNITS))
+    : Array.from({ length: count }, () => Math.floor(FLIGHT_SHARE_UNITS / count));
+
+  let difference = FLIGHT_SHARE_UNITS - units.reduce((sum, value) => sum + value, 0);
+  for (let index = 0; difference !== 0; index = (index + 1) % count) {
+    if (difference > 0) {
+      units[index] += 1;
+      difference -= 1;
+    } else if (units[index] > 0) {
+      units[index] -= 1;
+      difference += 1;
+    }
+  }
+
+  return units.map(value => value / 10);
+}
+
+export function redistributeFlightShares(shares, selectedIndex, nextValue) {
+  const normalized = normalizeFlightShares(shares, shares?.length || 1);
+  const index = Math.max(0, Math.min(normalized.length - 1, Number(selectedIndex) || 0));
+  const units = normalized.map(value => Math.round(value * 10));
+  const target = Math.max(0, Math.min(FLIGHT_SHARE_UNITS, Math.round((Number(nextValue) || 0) * 10)));
+  let remaining = target - units[index];
+  units[index] = target;
+
+  if (remaining > 0) {
+    while (remaining > 0) {
+      const eligible = units.map((value, candidate) => ({ value, candidate }))
+        .filter(item => item.candidate !== index && item.value > 0);
+      if (!eligible.length) break;
+      const share = Math.max(1, Math.floor(remaining / eligible.length));
+      for (const item of eligible) {
+        if (remaining <= 0) break;
+        const amount = Math.min(item.value, share, remaining);
+        units[item.candidate] -= amount;
+        remaining -= amount;
+      }
+    }
+  } else if (remaining < 0) {
+    let available = -remaining;
+    const others = units.map((_, candidate) => candidate).filter(candidate => candidate !== index);
+    for (let cursor = 0; available > 0 && others.length; cursor = (cursor + 1) % others.length) {
+      units[others[cursor]] += 1;
+      available -= 1;
+    }
+  }
+
+  return normalizeFlightShares(units.map(value => value / 10), units.length);
+}
+
+export function resizeFlightShares(shares, nextFlightCount, selectedIndex = null) {
+  const target = Math.max(1, Math.round(Number(nextFlightCount) || 1));
+  let values = normalizeFlightShares(shares, shares?.length || 1);
+
+  while (values.length < target) {
+    const splitIndex = Number.isInteger(selectedIndex) && selectedIndex >= 0 && selectedIndex < values.length
+      ? selectedIndex
+      : values.reduce((best, value, index) => value > values[best] ? index : best, 0);
+    const first = Math.round(values[splitIndex] * 5) / 10;
+    const second = Math.round((values[splitIndex] - first) * 10) / 10;
+    values.splice(splitIndex, 1, first, second);
+  }
+
+  while (values.length > target) {
+    const removeIndex = Number.isInteger(selectedIndex) && selectedIndex > 0 && selectedIndex < values.length
+      ? selectedIndex
+      : values.length - 1;
+    const mergeInto = removeIndex > 0 ? removeIndex - 1 : 1;
+    values[mergeInto] += values[removeIndex];
+    values.splice(removeIndex, 1);
+  }
+
+  return normalizeFlightShares(values, target);
+}
+
 export function normalizeStair(
   stair,
   floorHeight = 10,
@@ -799,6 +991,15 @@ export function normalizeStair(
       .includes(stair.material)
       ? stair.material
       : 'interior';
+
+  const landingCount = Math.max(
+    1,
+    Math.round(
+      Number(
+        stair.landing_count
+      ) || 1
+    )
+  );
 
   return {
     ...stair,
@@ -846,13 +1047,12 @@ export function normalizeStair(
       ),
 
     landing_count:
-      Math.max(
-        1,
-        Math.round(
-          Number(
-            stair.landing_count
-          ) || 1
-        )
+      landingCount,
+
+    flight_shares:
+      normalizeFlightShares(
+        stair.flight_shares,
+        landingCount + 1
       ),
 
     landing_depth:
@@ -1079,14 +1279,10 @@ export function stairGeometry(
 
     const flightCount =
       landingCount + 1;
-
-    const flightRun =
-      stair.length /
-      flightCount;
-
-    const risePerFlight =
-      totalRise /
-      flightCount;
+    const flightShares = normalizeFlightShares(
+      stair.flight_shares,
+      flightCount
+    );
 
     const turn =
       stair.turn_degrees *
@@ -1112,6 +1308,9 @@ export function stairGeometry(
       flight < flightCount;
       flight++
     ) {
+      const share = flightShares[flight] / 100;
+      const flightRun = stair.length * share;
+      const risePerFlight = totalRise * share;
       const next = {
         x:
           current.x +
@@ -2996,6 +3195,7 @@ export function normalizeBlueprint(building) {
         ...rawLevel,
 
         exterior_material: constructionFinish(rawLevel.exterior_material, WALL_FINISHES),
+        interior_material: constructionFinish(rawLevel.interior_material, WALL_FINISHES),
         floor_material: constructionFinish(rawLevel.floor_material, FLOOR_FINISHES),
 
         id:
@@ -3047,6 +3247,18 @@ export function normalizeBlueprint(building) {
 
         floor_voids:
           floorVoids,
+
+        rooms: Array.isArray(rawLevel.rooms) ? rawLevel.rooms.map(room =>
+          room && typeof room === 'object'
+            ? {
+              ...room,
+              floor_material: room.floor_material
+                ? constructionFinish(room.floor_material, FLOOR_FINISHES)
+                : null,
+              boundary_locked: room.boundary_locked === true,
+            }
+            : room
+        ) : [],
 
         platforms,
 
@@ -3207,6 +3419,7 @@ export function addBuildingLevel(
       source.exterior_wall_thickness,
 
     exterior_material: source.exterior_material,
+    interior_material: source.interior_material,
     floor_material: elevation < 0 ? 'packed-earth' : source.floor_material,
 
     interior_wall_thickness:
@@ -3342,78 +3555,12 @@ function closestPointOnSegment(
   start,
   end
 ) {
-  const dx =
-    end.x - start.x;
-
-  const dy =
-    end.y - start.y;
-
-  const lengthSquared =
-    dx * dx +
-    dy * dy;
-
-  if (
-    lengthSquared <
-    0.000001
-  ) {
-    return {
-      point:
-        { ...start },
-
-      t:
-        0,
-
-      error:
-        pointDistance(
-          point,
-          start
-        ),
-    };
-  }
-
-  const t =
-    Math.max(
-      0,
-      Math.min(
-        1,
-
-        (
-          (
-            point.x -
-            start.x
-          ) *
-          dx +
-          (
-            point.y -
-            start.y
-          ) *
-          dy
-        ) /
-        lengthSquared
-      )
-    );
-
-  const closest = {
-    x:
-      start.x +
-      dx * t,
-
-    y:
-      start.y +
-      dy * t,
-  };
+  const result = closestPointOnSegment2d(point, start, end);
 
   return {
-    point:
-      closest,
-
-    t,
-
-    error:
-      pointDistance(
-        point,
-        closest
-      ),
+    point: result.point,
+    t: result.t,
+    error: result.distance,
   };
 }
 

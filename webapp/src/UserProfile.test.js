@@ -10,7 +10,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   URL.createObjectURL = jest.fn(() => 'blob:preview');
   URL.revokeObjectURL = jest.fn();
-  axios.get.mockResolvedValue({ data: { username: 'tester', real_name: 'Taylor', bio: 'I enjoy mysteries.', has_profile_photo: false } });
+  axios.get.mockImplementation(url=>Promise.resolve({data:url==='/api/appearance'?require('../../Flask/theme_presets.json'):{ username: 'tester', real_name: 'Taylor', bio: 'I enjoy mysteries.', has_profile_photo: false }}));
 });
 
 function renderProfile() { render(<MemoryRouter><UserProfile headers={{ Authorization: 'Bearer token' }} /></MemoryRouter>); }

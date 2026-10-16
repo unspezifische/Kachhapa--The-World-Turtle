@@ -6,6 +6,7 @@ import {
 } from '@babylonjs/core';
 
 import earcut from 'earcut';
+import { closestPointOnSegment2d } from './geometry2d';
 
 import {
   FEET_PER_SCENE_UNIT as SCALE,
@@ -75,14 +76,7 @@ function offsetRing(ring, amount, isHole = false) {
 }
 
 function distanceToSegment(point, start, end) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const lengthSquared = dx * dx + dy * dy || 1;
-  const t = Math.max(0, Math.min(1, (
-    (point.x - start.x) * dx + (point.y - start.y) * dy
-  ) / lengthSquared));
-
-  return Math.hypot(point.x - start.x - dx * t, point.y - start.y - dy * t);
+  return closestPointOnSegment2d(point, start, end).distance;
 }
 
 function buildCustomVertices(roof, baseElevation) {
@@ -285,6 +279,35 @@ export function createBlueprintRoofMesh(scene, roof, baseElevation, buildingId) 
           positions[topEnd * 3 + 2]
         );
         indices.push(topStart, bottomStart, topEnd, topEnd, bottomStart, bottomEnd);
+      }
+    });
+
+    // Close the space between supporting walls and the sloping roof. Sample
+    // each footprint edge so gable ends and curved profiles do not leave
+    // triangular openings above the exterior walls.
+    sourceRings.forEach(ring => {
+      for (let edge = 0; edge < ring.length; edge++) {
+        const start = ring[edge];
+        const end = ring[(edge + 1) % ring.length];
+        const segments = Math.max(1, Math.ceil(Math.hypot(end.x - start.x, end.y - start.y) / 2));
+        for (let segment = 0; segment < segments; segment++) {
+          const first = segment / segments;
+          const second = (segment + 1) / segments;
+          const a = { x: start.x + (end.x - start.x) * first,
+            y: start.y + (end.y - start.y) * first };
+          const b = { x: start.x + (end.x - start.x) * second,
+            y: start.y + (end.y - start.y) * second };
+          const topA = Math.max(baseElevation, baseHeight(a) - roof.thickness);
+          const topB = Math.max(baseElevation, baseHeight(b) - roof.thickness);
+          if (topA <= baseElevation && topB <= baseElevation) continue;
+          const offset = positions.length / 3;
+          positions.push(a.x / SCALE, baseElevation / SCALE, a.y / SCALE,
+            b.x / SCALE, baseElevation / SCALE, b.y / SCALE,
+            a.x / SCALE, topA / SCALE, a.y / SCALE,
+            b.x / SCALE, topB / SCALE, b.y / SCALE);
+          indices.push(offset, offset + 1, offset + 2,
+            offset + 1, offset + 3, offset + 2);
+        }
       }
     });
   }

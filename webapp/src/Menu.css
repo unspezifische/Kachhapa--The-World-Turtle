@@ -1,5 +1,5 @@
 /* Menu.css */
 
-.menu-shell {
+:where(html[data-kachhapa-ui="core"]) .menu-shell {
   height: 100%;
 }

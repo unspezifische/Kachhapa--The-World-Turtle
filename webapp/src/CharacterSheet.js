@@ -2222,7 +2222,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   return (
     <>
-      <div style={{ height: '100vh', overflow: 'auto' }}>
+      <div className="character-sheet-page" style={{ height: '100vh', overflow: 'auto' }}>
         <ResponsiveGridLayout
           className="layout"
           cols={{ lg: 8, md: 8, sm: 6, xs: 4, xxs: 2 }}
@@ -2692,7 +2692,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
                         if (insufficient.length > 0 && totalWealth >= totalSpend) {
                           return (
-                            <div style={{ marginTop: 8, marginBottom: 8, color: '#555' }}>
+                            <div style={{ marginTop: 8, marginBottom: 8, color: 'var(--text-muted)' }}>
                               Auto-making change from larger denominations for: {insufficient.join(', ')}
                             </div>
                           );

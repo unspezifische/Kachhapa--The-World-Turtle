@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import axios from 'axios';
 import MockAdapter from 'axios-mock-adapter';
@@ -7,6 +7,7 @@ import DMTools from './DMTools'; // Adjust the import path as necessary
 
 // Create a mock adapter for axios
 const mock = new MockAdapter(axios);
+jest.mock('./DMSoundPlayer', () => ({ DMSoundPlayerWorkspace: () => <div>Music workspace</div> }));
 
 describe('DMTools Component', () => {
   const headers = { Authorization: 'Bearer token' };
@@ -29,6 +30,42 @@ describe('DMTools Component', () => {
     expect(screen.queryByText('Roll / Randomize')).not.toBeInTheDocument();
   });
 
+  test('opens Session Management directly without a redundant Home page', () => {
+    render(<BrowserRouter><DMTools headers={headers} /></BrowserRouter>);
+
+    expect(screen.queryByRole('button', { name: 'Home', exact: true })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Session Management' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Session Management', exact: true })).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('explains rail tools on hover and focus without starting combat', async () => {
+    const socket = { on: jest.fn(), off: jest.fn(), emit: jest.fn() };
+    render(<BrowserRouter><DMTools headers={headers} socket={socket} /></BrowserRouter>);
+    const combat = screen.getByRole('button', { name: 'Enter Combat', exact: true });
+
+    fireEvent.mouseOver(combat);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Prompt players to roll initiative and begin turn tracking.');
+    expect(socket.emit).not.toHaveBeenCalledWith('Roll for initiative!');
+    fireEvent.mouseLeave(combat);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+    act(() => combat.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Prompt players to roll initiative and begin turn tracking.');
+    expect(socket.emit).not.toHaveBeenCalledWith('Roll for initiative!');
+
+    fireEvent.click(combat);
+    expect(socket.emit).not.toHaveBeenCalledWith('Roll for initiative!');
+  });
+
+  test('consumes an explicit music request so later visits keep Session Management as default', async () => {
+    const handled=jest.fn();
+    const view=render(<BrowserRouter><DMTools headers={headers} soundPlayerOpenRequest={1} onSoundWorkspaceRequestHandled={handled} /></BrowserRouter>);
+    await screen.findByText('Music workspace');
+    expect(handled).toHaveBeenCalledWith(0);
+    view.unmount();
+    render(<BrowserRouter><DMTools headers={headers} soundPlayerOpenRequest={0} /></BrowserRouter>);
+    expect(screen.getByRole('heading',{name:'Session Management'})).toBeInTheDocument();
+  });
+
   test('NPC and loot workspaces show one create button each', async () => {
     mock.onGet('/api/npcs').reply(200, []);
     mock.onGet('/api/lootboxes').reply(200, { lootBoxes: [] });
@@ -41,6 +78,7 @@ describe('DMTools Component', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'NPC Library' }));
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Create NPC' })).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Create NPC' }).closest('.dmtools-workspace-body')).not.toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Loot Boxes' }));
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Create Loot Box' })).toHaveLength(1));
@@ -84,6 +122,8 @@ describe('DMTools Component', () => {
       </BrowserRouter>
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Loot Boxes', exact: true }));
+
     // Wait for the loot boxes to be fetched and displayed
     await waitFor(() => {
       expect(screen.getByText('Loot Box 1')).toBeInTheDocument();
@@ -106,6 +146,8 @@ describe('DMTools Component', () => {
         <DMTools headers={headers} />
       </BrowserRouter>
     );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Loot Boxes', exact: true }));
 
     // Open the create loot box modal
     fireEvent.click(screen.getAllByText('Create Loot Box')[0]);
@@ -149,6 +191,8 @@ describe('DMTools Component', () => {
         <DMTools headers={headers} />
       </BrowserRouter>
     );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Loot Boxes', exact: true }));
 
     // Wait for the loot boxes to be fetched and displayed
     await waitFor(() => {
@@ -197,6 +241,8 @@ describe('DMTools Component', () => {
         <DMTools headers={headers} />
       </BrowserRouter>
     );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Loot Boxes', exact: true }));
 
     // Wait for the loot boxes to be fetched and displayed
     await waitFor(() => {

@@ -3,11 +3,36 @@ import { guessReferencePlacement, prepareReferencePreview, referenceForSave } fr
 import ValidatedNumberInput from './ValidatedNumberInput';
 import './ReferencePlacementPanel.css';
 
+function RotationDial({ value, onChange }) {
+  const dialRef = useRef(null);
+  const rotation = ((Number(value) || 0) % 360 + 360) % 360;
+  const updateFromPointer = event => {
+    const rect = dialRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const degrees = Math.atan2(event.clientY - rect.top - rect.height / 2, event.clientX - rect.left - rect.width / 2) * 180 / Math.PI + 90;
+    onChange(((degrees % 360) + 360) % 360);
+  };
+  return <label className="reference-rotation-control">Rotation
+    <button ref={dialRef} type="button" className="reference-rotation-dial" role="slider" aria-label="Rotation (°)"
+      aria-valuemin="0" aria-valuemax="359" aria-valuenow={Math.round(rotation)} aria-valuetext={`${Math.round(rotation)} degrees`}
+      onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); updateFromPointer(event); }}
+      onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) updateFromPointer(event); }}
+      onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp', 'Home'].includes(event.key)) return;
+        event.preventDefault();
+        if (event.key === 'Home') onChange(0);
+        else onChange((rotation + (['ArrowRight', 'ArrowUp'].includes(event.key) ? 1 : -1) * (event.shiftKey ? 15 : 1) + 360) % 360);
+      }}>
+      <span className="reference-rotation-hand" style={{ transform: `rotate(${rotation}deg)` }} />
+      <strong>{Math.round(rotation)}°</strong>
+    </button>
+  </label>;
+}
+
 export default function ReferencePlacementPanel({ layers, selectedId, select, draft, setDraft, cameraRef, apply, remove, fit, calibration, onFinishEdit = () => {} }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const fileRef = useRef(null), urlRef = useRef(null), mounted = useRef(true), pickerRef = useRef(null);
   const selected = layers.find(l => l.id === selectedId) || layers[0];
-  const selectedOpacity = Number.isFinite(Number(selected?.opacity)) ? Number(selected.opacity) : 0.7;
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false; if (urlRef.current) URL.revokeObjectURL(urlRef.current); setDraft(null);
   }; }, [setDraft]);
@@ -62,7 +87,8 @@ export default function ReferencePlacementPanel({ layers, selectedId, select, dr
       <p className="reference-hint">{draft.pixel_width} × {draft.pixel_height} px · Initial feet dimensions are an estimate, not a measured scale.</p>
       <label className="reference-check"><input type="checkbox" checked={draft.project_to_terrain !== false} onChange={e => patch({ project_to_terrain: e.target.checked })} /> Project onto sculpted terrain</label>
       <label className="reference-check"><input type="checkbox" checked={draft._lockAspect} onChange={e => patch({ _lockAspect: e.target.checked })} /> Lock proportions</label>
-      <div className="reference-number-grid">{number('Width (ft)', 'width_feet', 1)}{number('Height (ft)', 'height_feet', 1)}{number('Center X (ft)', 'origin_x')}{number('Center Y (ft)', 'origin_y')}{number('Rotation (°)', 'rotation_degrees')}</div>
+      <div className="reference-number-grid">{number('Width (ft)', 'width_feet', 1)}{number('Height (ft)', 'height_feet', 1)}{number('Center X (ft)', 'origin_x')}{number('Center Y (ft)', 'origin_y')}</div>
+      <RotationDial value={draft.rotation_degrees} onChange={rotation_degrees => patch({ rotation_degrees })} />
       {calibration}
       <label>Opacity · {Math.round(draft.opacity * 100)}%<input type="range" min="0" max="1" step="0.01" value={draft.opacity} onChange={e => patch({ opacity: Number(e.target.value) })} /></label>
       <div className="reference-actions"><button onClick={() => patch(guessReferencePlacement(draft.width_feet, draft.height_feet, cameraRef.current))}>Fit at camera</button><button onClick={() => fit(draft)}>View image</button></div>
@@ -73,8 +99,9 @@ export default function ReferencePlacementPanel({ layers, selectedId, select, dr
       <div className="reference-layer-list">{layers.map(layer => <button key={layer.id} aria-pressed={selected?.id === layer.id} onClick={() => select(layer.id)}>{layer.name}<small>{Math.round(layer.width_feet)} × {Math.round(layer.height_feet)} ft</small></button>)}</div>
       {selected && <><div className="reference-actions"><button className="reference-primary" disabled={busy} onClick={() => { fileRef.current = null; setDraft({ opacity: .7, ...selected, visible: true, _placing: true, _lockAspect: true }); }}>Edit placement</button><button onClick={() => fit(selected)}>View image</button></div>
         <label className="reference-check"><input type="checkbox" checked={selected.visible !== false} onChange={e => apply({ ...selected, visible: e.target.checked })} /> Visible</label>
-        <label>Opacity · {Math.round(selectedOpacity * 100)}%<input type="range" min="0" max="1" step="0.01" value={selectedOpacity} onChange={e => apply({ ...selected, opacity: Number(e.target.value) })} /></label>
-        {calibration}
+        <label className="reference-list-opacity">Opacity · {Math.round((selected.opacity ?? 0.7) * 100)}%
+          <input type="range" min="0" max="1" step="0.01" value={selected.opacity ?? 0.7} onChange={e => apply({ ...selected, opacity: Number(e.target.value) })} />
+        </label>
         <button className="reference-remove" onClick={() => { if (window.confirm(`Remove “${selected.name}” from this map?`)) remove(selected.id); }}>Remove image</button>
       </>}
     </>}

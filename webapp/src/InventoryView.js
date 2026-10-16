@@ -15,7 +15,6 @@ import SortIcon from '@mui/icons-material/Sort';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 
-import 'bootstrap/dist/css/bootstrap.min.css';
 import './InventoryView.css';
 
 const currencyValues = {

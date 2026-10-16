@@ -1,6 +1,8 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { settlementLamps } from './settlementStreetLighting';
 import { FALLBACK_ASSET_CATALOG, FEET_PER_SCENE_UNIT } from './settlementEditor';
+import SettlementMoonPhase from './SettlementMoonPhase';
 import { createTileStore, hydrateTiles, setStoreDefaults, TILE_FEET, tileKey } from './settlementTiles';
 import './SettlementPlayerView.css';
 
@@ -142,7 +144,6 @@ export default function SettlementPlayerView({ headers, socket }) {
     };
   }, [socket, campaignId, settlementId]);
 
-  const route = simulation.routes?.[0];
   const hour = simulation.time?.hour ?? 12;
   const minute = simulation.time?.minute ?? 0;
 
@@ -167,7 +168,10 @@ export default function SettlementPlayerView({ headers, socket }) {
         waterBodies={map.water_bodies || []}
         setWaterBodies={ignoreEdit}
         mapEnvironment={map.environment || {}}
-        lamps={route?.lamps || []}
+        lamps={settlementLamps(simulation, settlementId)}
+        simulation={simulation}
+        atmosphereSettings={map.environment?.atmosphere}
+        weatherSettings={map.environment?.weather}
         partyPosition={partyPosition}
         destination={null}
         onWaypoint={ignoreEdit}
@@ -179,7 +183,7 @@ export default function SettlementPlayerView({ headers, socket }) {
       /></Suspense>
       <div className="settlement-player-status" aria-live="polite">
         <strong>{settlementName}</strong>
-        <span>{status || `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} · Day ${simulation.time?.day ?? '—'}`}</span>
+        <span>{status || `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} · ${simulation.time?.month_name || 'Day'} ${simulation.time?.day ?? '—'}`}<SettlementMoonPhase celestial={simulation.celestial} /></span>
       </div>
       {selectedBuilding&&<aside className="settlement-player-building"><button type="button" onClick={()=>setSelectedBuilding(null)} aria-label="Close">×</button><strong>{selectedBuilding.name}</strong><span>{selectedBuilding.business_type||selectedBuilding.building_type||'Building'}</span>{selectedBuilding.description&&<p>{selectedBuilding.description}</p>}<small>{selectedBuilding.owner_name?`Owner: ${selectedBuilding.owner_name}`:'Owner unknown'} · {(selectedBuilding.rooms||[]).length} rooms</small></aside>}
     </div>

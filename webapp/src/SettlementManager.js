@@ -1,5 +1,8 @@
+import RestActivityPanel from './RestActivityPanel';
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
+import { settlementLamps } from './settlementStreetLighting';
+import SettlementMoonPhase from './SettlementMoonPhase';
 
 import {
   AppBar,
@@ -72,6 +75,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 
 import AtlasViewport from './AtlasViewport';
 import BlueprintLevels from './BlueprintLevels';
+import PropertyEstateList from './PropertyEstateList';
 import { resizeBlueprintFootprint } from './buildingBlueprint';
 import ReferencePlacementPanel from './ReferencePlacementPanel';
 import ValidatedNumberInput, { ValidatedNumberField } from './ValidatedNumberInput';
@@ -88,6 +92,7 @@ import {
   hydrateTiles,
   setStoreDefaults,
   bakeStrokesIntoTiles,
+  serializeTerrainTile,
   TILE_FEET,
   tileKey,
 } from './settlementTiles';
@@ -97,6 +102,9 @@ import {
   settlementSearchLocations
 } from './settlementSearch';
 import { buildingViewLegend } from './settlementInspection';
+import { cleanWallJunctions, reconcileWallJunctions } from './wallJunctions';
+import { addStructureToProperty, createProperty, deletePropertyKeepingBuildings, normalizePropertyCatalog, removeStructureFromProperties } from './settlementProperties';
+import { createBoundary, createOutdoorArea, OUTDOOR_AREA_TYPES, validateBoundaryOpening } from './propertyGeometry';
 
 import './SettlementManager.css';
 import './SettlementToolPanels.css';
@@ -151,9 +159,26 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [running, setRunning] = useState(false)
   const [speed, setSpeed] = useState(1);
   const requestedTool = new URLSearchParams(window.location.search).get('tool');
+  const requestedSettlementId = Number(new URLSearchParams(window.location.search).get('settlement_id')) || null;
   const [assetKey, setAssetKey] = useState(null);
   const [buildings, setBuildings] = useState([])
-  const [buildMode, setBuildMode] = useState('place-asset'); // 'place-asset' | 'draw-blueprint'
+  const [properties, setProperties] = useState([]);
+  const [selectedPropertyId, setSelectedPropertyId] = useState(null);
+  const [newStructurePropertyId, setNewStructurePropertyId] = useState(null);
+  const [propertyDraft, setPropertyDraft] = useState([]);
+  const [editingPropertyBoundaryId, setEditingPropertyBoundaryId] = useState(null);
+  const [outdoorTypeDraft, setOutdoorTypeDraft] = useState('yard');
+  const [selectedBoundarySegment, setSelectedBoundarySegment] = useState(0);
+  const [propertyEditError, setPropertyEditError] = useState('');
+  const [manageCatalog, setManageCatalog] = useState('buildings');
+  const buildToolsRef = useRef(null);
+  const effectiveProperties = useMemo(() => normalizePropertyCatalog(buildings, properties), [buildings, properties]);
+  const [buildMode, setBuildMode] = useState('select-placed'); // Manage existing buildings by default.
+  useEffect(() => {
+    if (['draw-blueprint', 'draw-property-boundary', 'edit-property-boundary', 'draw-outdoor-area'].includes(buildMode) && buildToolsRef.current) {
+      buildToolsRef.current.scrollTop = 0;
+    }
+  }, [buildMode]);
 
   const [selected, setSelected] = useState(null)
   const [inspectSelection, setInspectSelection] = useState(null);
@@ -172,8 +197,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     regions: []
   }), [assets, setAssets] = useState(FALLBACK_ASSET_CATALOG);
   const [blueprintDraft, setBlueprintDraft] = useState(null);
+  const [blueprintHoverPoint, setBlueprintHoverPoint] = useState(null);
+  const [footprintTool, setFootprintTool] = useState('line');
+  const [footprintPoints, setFootprintPoints] = useState([]);
+  const [footprintError, setFootprintError] = useState('');
+  useEffect(() => { setFootprintPoints([]); setFootprintError(''); }, [buildMode, footprintTool, newStructurePropertyId]);
 
-  const setFortifications = useCallback(updater => setMapEnvironment(environment => ({ ...environment, fortifications: typeof updater === 'function' ? updater(environment.fortifications || []) : updater })), []);
+  const setFortifications = useCallback(updater => setMapEnvironment(environment => cleanWallJunctions({ ...environment,
+    fortifications: typeof updater === 'function' ? updater(environment.fortifications || []) : updater })), []);
   const [referenceLayers, setReferenceLayers] = useState([])
   const [selectedReferenceId, setSelectedReferenceId] = useState(null);
   const [referenceDraft, setReferenceDraft] = useState(null);
@@ -183,7 +214,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     : referenceLayers, [referenceLayers, referenceDraft]);
   const [calibrationPoints, setCalibrationPoints] = useState([])
   const [referenceCalibrationMode, setReferenceCalibrationMode] = useState(false);
-  const [knownDistance, setKnownDistance] = useState(471)
+  const [knownDistance, setKnownDistance] = useState(5)
   const [fitRequest, setFitRequest] = useState(0);
   const [designLoaded, setDesignLoaded] = useState(false)
   const [mapLoading, setMapLoading] = useState(false)
@@ -231,13 +262,21 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [atmosphereSettings, setAtmosphereSettings] = useState({
     sunIntensity: 2.2,
     moonIntensity: 0.15,
-    scatteringScale: 1.0
+    scatteringScale: 1.0,
+    daylightSaturation: 1.12
   });
 
   const [weatherSettings, setWeatherSettings] = useState({
     activeWeather: 'clear',
+    cloudCover: 0,
     fogDensity: 0.01,
-    fogColor: '#a9c9dc'
+    fogColor: '#a9c9dc',
+    cloudType: 'fair-cumulus',
+    cloudBaseFeet: 4200,
+    cloudTopFeet: 7200,
+    windDirectionDegrees: 245,
+    windSpeedMph: 8,
+    precipitationIntensity: 0
   });
 
   const [simulation, setSimulation] = useState({ time: { day: 1, hour: 12, minute: 0 }, routes: [] });
@@ -306,22 +345,6 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const MAX_TILES_PER_CHUNK = 60;      // server caps reference_layers at 100
   const estimateTileBytes = tile => ((tile?.values?.length || 0) * 12) + 256;
 
-  const serializeTileForSave = tile => ({
-    layer_type: 'heightmap_tile',
-    tile_x: tile.tile_x,
-    tile_z: tile.tile_z,
-    grid_width: tile.grid_width,
-    grid_height: tile.grid_height,
-    width_feet: tile.width_feet,
-    height_feet: tile.height_feet,
-    origin_x: tile.origin_x,
-    origin_y: tile.origin_y,
-    min_elevation_feet: tile.min_elevation_feet,
-    max_elevation_feet: tile.max_elevation_feet,
-    generated: !!tile.generated,
-    values: Array.from(tile.values, value => Math.round(value * 100) / 100),
-  });
-
   // Sends the biggest batch of dirty tiles that fits one payload. Returns the
   // number of tiles committed so callers can drain the rest.
   const flushChunkNow = useCallback(async () => {
@@ -349,7 +372,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
         // omitting roads/buildings/etc. here cannot wipe them.
         reference_layers: [
           ...visibleLayersOnly(referenceLayersRef.current),
-          ...chunkKeys.map(key => serializeTileForSave(tileStoreRef.current.get(key))),
+          ...chunkKeys.map(key => serializeTerrainTile(tileStoreRef.current.get(key))),
         ],
       }, { headers });
       chunkKeys.forEach(key => dirtyKeys.delete(key)); // committed
@@ -423,14 +446,18 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     setTileStoreVersion(v => v + 1);
 
     setBuildings(map.buildings || []);
+    setProperties(normalizePropertyCatalog(map.buildings || [], map.properties || []));
+    setSelectedPropertyId(null);
+    setNewStructurePropertyId(null);
+    setPropertyDraft([]);
     setInspectSelection(null);
     setRoads(map.roads || []);
     setWaterBodies(map.water_bodies || []);
-    setMapEnvironment(map.environment || {
+    setMapEnvironment(reconcileWallJunctions(map.environment || {
       sea_level_feet: 0,
       terrain_material: { snow_line_feet: 900, snow_blend_feet: 500, cliff_normal_threshold: .86 },
       regions: []
-    });
+    }));
 
     // MIGRATION LOGIC & FLOAT32ARRAY PARSING
     if (map.terrain_strokes && map.terrain_strokes.length > 0 && !mapHeightMap) {
@@ -457,14 +484,26 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     if (visualLayers.length) setFitRequest(value => value + 1);
 
     setAssets(map.asset_catalog?.length ? map.asset_catalog : FALLBACK_ASSET_CATALOG);
-    setSelected(map.buildings?.[0] || null);
+    setSelected(null);
     setActiveSettlementId(map.settlement_id);
     setSettlementName(map.name || 'New Settlement');
 
     setDesignLoaded(true);
     setSaveStatus('Saved');
-    setAtmosphereSettings(map.environment?.atmosphere || { sunIntensity: 2.2, moonIntensity: 0.15, scatteringScale: 1.0 });
-    setWeatherSettings(map.environment?.weather || { activeWeather: 'clear', fogDensity: 0.01, fogColor: '#a9c9dc' });
+    setAtmosphereSettings({
+      sunIntensity: 2.2,
+      moonIntensity: 0.15,
+      scatteringScale: 1.0,
+      daylightSaturation: 1.12,
+      ...(map.environment?.atmosphere || {})
+    });
+    setWeatherSettings({
+      activeWeather: 'clear',
+      cloudCover: 0,
+      fogDensity: 0.01,
+      fogColor: '#a9c9dc',
+      ...(map.environment?.weather || {})
+    });
   }, []);
 
 
@@ -511,6 +550,12 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
       setMapLoading(false);
     }
   }, [campaignId, applyMap, atlas.locations, fetchSettlementMap]);
+
+  useEffect(() => {
+    if (!requestedSettlementId || Number(activeSettlementId) === requestedSettlementId) return;
+    if (!atlas.locations.some(location => location.id === requestedSettlementId)) return;
+    openSettlement(requestedSettlementId);
+  }, [activeSettlementId, atlas.locations, openSettlement, requestedSettlementId]);
 
   const handleSceneReady = useCallback(() => {
     const completedMs = Math.max(0, performance.now() - mapLoadStartedAtRef.current);
@@ -716,7 +761,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
 
   const route = simulation.routes?.[0];
-  const lamps = route?.lamps || [];
+  const lamps = useMemo(() => settlementLamps(simulation, activeSettlementId), [simulation, activeSettlementId]);
 
   const calculateTravel = async (nextDestination = destination) => {
     if (!campaignId || !nextDestination) return;
@@ -833,15 +878,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   }, [playerFollow, scheduleTerrainTileFetch, sendPlayerCommand]);
 
   const applyReferenceCalibration = () => {
-    if (calibrationPoints.length !== 2 || knownDistance <= 0) return;
-    if (referenceDraft) {
-      setReferenceDraft(layer => calibrateReferenceLayer(layer, calibrationPoints[0], calibrationPoints[1], knownDistance));
-    } else if (selectedReference) {
-      updateReference(selectedReference.id, layer => calibrateReferenceLayer(layer, calibrationPoints[0], calibrationPoints[1], knownDistance));
-    } else return;
+    if (!referenceDraft || calibrationPoints.length !== 2 || knownDistance <= 0) return;
+    setReferenceDraft(layer => calibrateReferenceLayer(layer, calibrationPoints[0], calibrationPoints[1], knownDistance));
     setCalibrationPoints([]);
     setReferenceCalibrationMode(false);
-    setFitRequest(value => value + 1);
   };
 
   const applyReferencePlacement = async (placement, file) => {
@@ -962,6 +1002,79 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const tenday = selectedHistory.slice(-10).reduce((totals, row) => ({ revenue: totals.revenue + row.revenue_cp, profit: totals.profit + row.profit_cp }), { revenue: 0, profit: 0 });
 
   const selectedBuilding = buildings.find(building => String(building.id) === String(selected?.id)) || null;
+  const selectedProperty = effectiveProperties.find(property => property.id === selectedPropertyId)
+    || effectiveProperties.find(property => (property.structure_ids || []).some(id => String(id) === String(selectedBuilding?.id)))
+    || null;
+  const updateSelectedProperty = updater => {
+    if (!selectedProperty) return;
+    setProperties(values => normalizePropertyCatalog(buildings, values).map(property =>
+      property.id === selectedProperty.id ? updater(property) : property));
+  };
+  const focusPropertyBoundary = (property = selectedProperty) => {
+    const boundary = property?.boundary?.vertices || [];
+    const areas = (property?.outdoor_areas || []).flatMap(area => area.polygon || []);
+    const structures = buildings.filter(building => (property?.structure_ids || []).some(id => String(id) === String(building.id))).map(building => ({ x: Number(building.x) || 0, y: Number(building.y) || 0 }));
+    const vertices = boundary.length ? boundary : areas.length ? areas : structures;
+    if (!vertices.length) return;
+    const xs = vertices.map(point => point.x), ys = vertices.map(point => point.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    window.dispatchEvent(new CustomEvent('settlement-camera-command-trigger', { detail: {
+      mode: 'point', point: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }, radiusFeet: Math.max(100, Math.max(maxX - minX, maxY - minY) * 2.5), topdown: true,
+    } }));
+  };
+  const startPropertyBoundaryEdit = () => {
+    if (!selectedProperty?.boundary) return;
+    setPropertyDraft(selectedProperty.boundary.vertices.map(point => ({ ...point })));
+    setEditingPropertyBoundaryId(selectedProperty.id);
+    focusPropertyBoundary();
+    setBuildMode('edit-property-boundary');
+    setPropertyEditError('');
+  };
+  const updateBoundarySegment = updater => updateSelectedProperty(property => ({
+    ...property,
+    boundary: { ...property.boundary, segments: property.boundary.segments.map((segment, index) =>
+      index === selectedBoundarySegment ? updater(segment) : segment) },
+  }));
+  const updateBoundaryOpening = (opening, changes) => {
+    const next = { ...opening, ...changes };
+    const error = validateBoundaryOpening(selectedProperty.boundary, selectedBoundarySegment, next, opening.id);
+    if (error) { setPropertyEditError(error); return; }
+    setPropertyEditError('');
+    updateBoundarySegment(segment => ({ ...segment, openings: (segment.openings || []).map(item =>
+      item.id === opening.id ? next : item) }));
+  };
+  const finishPropertyPolygon = () => {
+    if (!selectedProperty || propertyDraft.length < 3) return;
+    if (buildMode === 'edit-property-boundary') {
+      const boundary = { ...selectedProperty.boundary, vertices: propertyDraft };
+      for (let index = 0; index < boundary.segments.length; index += 1) {
+        for (const opening of boundary.segments[index].openings || []) {
+          const error = validateBoundaryOpening(boundary, index, opening, opening.id);
+          if (error) { setPropertyEditError(error); return; }
+        }
+      }
+      updateSelectedProperty(property => ({ ...property, boundary: { ...property.boundary, vertices: propertyDraft } }));
+    } else if (buildMode === 'draw-property-boundary') {
+      updateSelectedProperty(property => ({ ...property, boundary: createBoundary(propertyDraft, property.id) }));
+    } else if (buildMode === 'draw-outdoor-area') {
+      updateSelectedProperty(property => ({ ...property, outdoor_areas: [
+        ...(property.outdoor_areas || []), createOutdoorArea(property.id, propertyDraft, outdoorTypeDraft),
+      ] }));
+    }
+    setPropertyDraft([]);
+    setEditingPropertyBoundaryId(null);
+    setBuildMode('select-placed');
+  };
+  const selectedBuildingId = selectedBuilding?.id;
+  const selectedIsBlueprint = selectedBuilding?.is_blueprint;
+
+  useEffect(() => {
+    if (!selectedIsBlueprint) return;
+    setBuildings(values => values.map(building => building.id === selectedBuildingId &&
+      (building.level_view !== 'all' || building.show_roofs !== false)
+      ? { ...building, level_view: 'all', show_roofs: false }
+      : building));
+  }, [selectedBuildingId, selectedIsBlueprint]);
   const selectedAsset = assets.find(asset => asset.key === selectedBuilding?.asset_key);
   const selectedRoad = roads.find(road => road.id === selectedBuilding?.front_road_id);
   const mapViewLegend = useMemo(
@@ -987,6 +1100,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const deleteBuildingById = useCallback((buildingId) => {
     if (buildingId == null) return;
     setBuildings(values => values.filter(building => building.id !== buildingId));
+    setProperties(values => removeStructureFromProperties(values, buildingId));
     setSelected(current => current?.id === buildingId ? null : current);
     setInspectSelection(current => String(current?.id) === String(buildingId) ? null : current);
   }, []);
@@ -1096,7 +1210,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
   const activeMapKey = atlas.locations.find(location => location.id === activeSettlementId)?.map_key || null;
 
-  const searchableLocations = useMemo(() => settlementSearchLocations({ buildings, points: travelContext.points_of_interest, businesses: economy.businesses, assets, mapKey: activeMapKey }), [buildings, travelContext.points_of_interest, economy.businesses, assets, activeMapKey]);
+  const searchableLocations = useMemo(() => settlementSearchLocations({ buildings, properties: effectiveProperties, points: travelContext.points_of_interest, businesses: economy.businesses, assets, mapKey: activeMapKey }), [buildings, effectiveProperties, travelContext.points_of_interest, economy.businesses, assets, activeMapKey]);
 
   const locationResults = useMemo(() => searchSettlementLocations(searchableLocations, locationSearch), [searchableLocations, locationSearch]);
 
@@ -1104,9 +1218,28 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
   const selectLocation = location => {
     setSelectedLocationId(location.id);
+    if (location.kind === 'property') {
+      setSelected(null);
+      setSelectedPropertyId(location.source.id);
+      setManageCatalog('properties');
+      setBuildMode('select-placed');
+      setActiveTool('build');
+      if (location.point) focusPropertyBoundary(location.source);
+    }
     if (location.kind === 'building') {
+      if (location.sourceProperty) setSelectedPropertyId(location.sourceProperty.id);
       setSelected(location.source);
       setInspectSelection({ entityKind: 'building', id: location.source.id, item: location.source, kind: 'Building', name: location.title });
+    }
+    if (location.kind === 'room') {
+      setSelected(location.sourceBuilding);
+      setBuildMode('select-placed');
+      setActiveTool('build');
+    }
+    if (location.kind === 'outdoor_area') {
+      setSelectedPropertyId(location.sourceProperty.id);
+      setBuildMode('select-placed');
+      setActiveTool('build');
     }
   };
 
@@ -1144,6 +1277,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
         terrain_strokes: [], // Clear legacy strokes to prevent DB bloat
         roads,
         buildings,
+        properties: effectiveProperties,
         water_bodies: waterBodies,
         environment: { ...mapEnvironment, atmosphere: atmosphereSettings, weather: weatherSettings },
         weather: weatherSettings,
@@ -1162,7 +1296,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
           if (!tile) { dirtyKeys.delete(key); continue; }
           const size = estimateTileBytes(tile);
           if (tileLayers.length > 0 && (size > budget || tileLayers.length >= MAX_TILES_PER_CHUNK)) break;
-          tileLayers.push(serializeTileForSave(tile));
+          tileLayers.push(serializeTerrainTile(tile));
           committedChunkKeys.push(key);
           budget -= size;
         }
@@ -1185,17 +1319,17 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
           }
         } catch (error) {
           console.error('Unable to save settlement map:', error);
-          setSaveStatus('Save failed');
+          setSaveStatus(error.response?.data?.message || 'Save failed');
         }
       });
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [designLoaded, referenceLayers, campaignId, activeSettlementId, headers, heightMap, roads, buildings, waterBodies, mapEnvironment, atmosphereSettings, weatherSettings, runSerializedSave, flushChunkNow, tileStoreVersion]);
+  }, [designLoaded, referenceLayers, campaignId, activeSettlementId, headers, heightMap, roads, buildings, effectiveProperties, waterBodies, mapEnvironment, atmosphereSettings, weatherSettings, runSerializedSave, flushChunkNow, tileStoreVersion]);
 
   return (
     <Box className="settlement-sim" sx={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
       {/* Clean, Fixed Material UI Global Administration Header */}
-      <AppBar position="static" sx={{ backgroundColor: '#14201c', borderBottom: '1px solid #ffffff2c', boxShadow: 'none' }}>
+      <AppBar position="static" sx={{ backgroundColor: "var(--bg-surface)", borderBottom: "1px solid var(--border-main)", boxShadow: 'none' }}>
         <Toolbar sx={{ justifyContent: 'space-between', minHeight: '64px', px: 2, gap: 2 }}>
 
           {/* Settlement Branding & Interactive Text Mutation Form */}
@@ -1204,13 +1338,13 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               onClick={() => window.location.assign(mainEnvironmentUrl)}
               title="Return to Kachhapa"
               aria-label="Return to Kachhapa"
-              sx={{ color: '#d8c28f', border: '1px solid #526258', borderRadius: '6px', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              sx={{ color: "var(--text-main)", border: "1px solid var(--border-main)", borderRadius: '6px', '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
             >
               <ExitToAppIcon />
             </IconButton>
 
             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-              <Typography variant="caption" sx={{ color: '#8f9d95', fontSize: '9px', fontWeight: 700, letterSpacing: '0.04em' }}>
+              <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontSize: '9px', fontWeight: 700, letterSpacing: '0.04em' }}>
                 SETTLEMENT SIMULATION
               </Typography>
               <TextField
@@ -1222,13 +1356,13 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
                 sx={{
                   width: '240px',
-                  '& .MuiInputBase-input': { color: '#fff', fontWeight: 'bold', fontSize: '16px', py: 0.2 },
+                  '& .MuiInputBase-input': { color: "var(--text-main)", fontWeight: 'bold', fontSize: '16px', py: 0.2 },
                   '& .MuiInput-underline:before': { borderBottom: 'none' },
-                  '& .MuiInput-underline:hover:not(.Mui-disabled):before': { borderBottom: '1px solid #bd9149' },
-                  '& .MuiInput-underline:after': { borderBottomColor: '#bd9149' }
+                  '& .MuiInput-underline:hover:not(.Mui-disabled):before': { borderBottom: "1px solid var(--border-main)" },
+                  '& .MuiInput-underline:after': { borderBottomColor: "var(--border-main)" }
                 }}
               />
-              <Typography variant="caption" sx={{ color: saveStatus === 'Save failed' ? '#f44336' : '#ffe08a', fontSize: '10px' }}>
+              <Typography variant="caption" sx={{ color: saveStatus === 'Save failed' ? "var(--danger)" : "var(--text-main)", fontSize: '10px' }}>
                 {saveStatus}
               </Typography>
             </Box>
@@ -1236,14 +1370,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
           {/* Dynamic Simulation Clock Matrix */}
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '100px' }}>
-            <Typography variant="body2" sx={{ color: '#d5ddd7', fontWeight: 'bold', letterSpacing: '0.05em' }}>
+            <Typography variant="body2" sx={{ color: "var(--text-main)", fontWeight: 'bold', letterSpacing: '0.05em' }}>
               {String(simulation.time?.hour ?? 12).padStart(2, '0')}:{String(simulation.time?.minute ?? 0).padStart(2, '0')}
             </Typography>
-            <Typography variant="caption" sx={{ color: '#8f9d95', textTransform: 'lowercase', mt: -0.2, fontSize: '10px' }}>
-              {route?.phase?.replace('_', ' ') || 'off duty'}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#ecd89f', fontWeight: 800, mt: 0.2 }}>
-              Day {day}
+            <Typography variant="body2" sx={{ color: "var(--text-main)", fontWeight: 800, mt: 0.2 }}>
+              {simulation.time?.month_name && simulation.time?.day != null
+                ? `${simulation.time.month_name} ${simulation.time.day}`
+                : '—'}
+              <SettlementMoonPhase celestial={simulation.celestial} />
             </Typography>
           </Box>
 
@@ -1254,28 +1388,28 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               size="small"
               startIcon={<OpenInNewIcon />}
               onClick={openPlayerView}
-              sx={{ backgroundColor: '#23352d', color: '#d5ddd7', textTransform: 'none', border: '1px solid #53645a', '&:hover': { backgroundColor: '#ba8c42', color: '#18221e' } }}
+              sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)", textTransform: 'none', border: "1px solid var(--border-main)", '&:hover': { backgroundColor: "var(--accent)", color: "var(--text-on-accent)" } }}
             >
               Player View
             </Button>
 
             <Box sx={{ display: 'flex', gap: 1.5 }}>
               <FormControlLabel
-                control={<Checkbox size="small" checked={playerFollow} onChange={event => setPlayerFollow(event.target.checked)} sx={{ color: '#bd9149', '&.Mui-checked': { color: '#bd9149' } }} />}
-                label={<Typography variant="caption" sx={{ color: '#d5ddd7', userSelect: 'none' }}>Follow DM</Typography>}
+                control={<Checkbox size="small" checked={playerFollow} onChange={event => setPlayerFollow(event.target.checked)} sx={{ color: "var(--text-main)", '&.Mui-checked': { color: "var(--text-main)" } }} />}
+                label={<Typography variant="caption" sx={{ color: "var(--text-main)", userSelect: 'none' }}>Follow DM</Typography>}
                 title="Continuously mirror this camera in Player View"
               />
               <FormControlLabel
-                control={<Checkbox size="small" checked={showAllPlayerLabels} onChange={event => { const visible = event.target.checked; setShowAllPlayerLabels(visible); sendPlayerCommand('labels_all', { visible }); }} sx={{ color: '#bd9149', '&.Mui-checked': { color: '#bd9149' } }} />}
-                label={<Typography variant="caption" sx={{ color: '#d5ddd7', userSelect: 'none' }}>All Labels</Typography>}
+                control={<Checkbox size="small" checked={showAllPlayerLabels} onChange={event => { const visible = event.target.checked; setShowAllPlayerLabels(visible); sendPlayerCommand('labels_all', { visible }); }} sx={{ color: "var(--text-main)", '&.Mui-checked': { color: "var(--text-main)" } }} />}
+                label={<Typography variant="caption" sx={{ color: "var(--text-main)", userSelect: 'none' }}>All Labels</Typography>}
                 title="Identify every building in Player View"
               />
             </Box>
 
             {/* Time Advancement Button Controls Groups */}
-            <ButtonGroup size="small" variant="contained" sx={{ backgroundColor: '#23352d', border: '1px solid #53645a' }}>
-              <Button onClick={() => advanceTime(-60)} sx={{ color: '#d5ddd7', backgroundColor: '#23352d', minWidth: '40px' }}>-1h</Button>
-              <Button onClick={() => setRunning(v => !v)} sx={{ color: '#ffe08a', backgroundColor: '#1e3a34', fontWeight: 'bold', minWidth: '40px' }}>
+            <ButtonGroup size="small" variant="contained" sx={{ backgroundColor: "var(--bg-surface-2)", border: "1px solid var(--border-main)" }}>
+              <Button onClick={() => advanceTime(-60)} sx={{ color: "var(--text-main)", backgroundColor: "var(--bg-surface-2)", minWidth: '40px' }}>-1h</Button>
+              <Button onClick={() => setRunning(v => !v)} sx={{ color: "var(--text-main)", backgroundColor: "var(--bg-surface-2)", fontWeight: 'bold', minWidth: '40px' }}>
                 {running ? 'Ⅱ' : '▶'}
               </Button>
               {[1, 2, 4].map(v => (
@@ -1283,15 +1417,15 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   key={v}
                   onClick={() => setSpeed(v)}
                   sx={{
-                    color: speed === v ? '#7ce6ff' : '#d5ddd7',
-                    backgroundColor: speed === v ? '#16322c' : '#23352d',
+                    color: speed === v ? "var(--danger)" : "var(--text-main)",
+                    backgroundColor: speed === v ? "var(--bg-surface)" : "var(--bg-surface-2)",
                     fontWeight: speed === v ? 'bold' : 'normal'
                   }}
                 >
                   {v}×
                 </Button>
               ))}
-              <Button onClick={() => advanceTime(60)} sx={{ color: '#d5ddd7', backgroundColor: '#23352d', minWidth: '40px' }}>+1h</Button>
+              <Button onClick={() => advanceTime(60)} sx={{ color: "var(--text-main)", backgroundColor: "var(--bg-surface-2)", minWidth: '40px' }}>+1h</Button>
             </ButtonGroup>
           </Box>
 
@@ -1342,15 +1476,15 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                     disabled={item.checkLoaded && !designLoaded}
                     onClick={() => setActiveTool(item.tool)}
                     sx={{
-                      color: activeTool === item.tool ? '#7ce6ff' : '#d5ddd7',
-                      backgroundColor: activeTool === item.tool ? '#16322c' : '#23352d',
+                      color: activeTool === item.tool ? "var(--danger)" : "var(--text-main)",
+                      backgroundColor: activeTool === item.tool ? "var(--bg-surface)" : "var(--bg-surface-2)",
                       border: '1px solid',
-                      borderColor: activeTool === item.tool ? '#ffe08a' : '#53645a',
+                      borderColor: activeTool === item.tool ? "var(--primary-border)" : "var(--border-main)",
                       borderRadius: '6px',
                       width: '36px',
                       height: '36px',
-                      '&.Mui-disabled': { opacity: 0.3, color: '#d5ddd7' },
-                      '&:hover': { backgroundColor: '#16322c', borderColor: '#7ce6ff' }
+                      '&.Mui-disabled': { opacity: 0.3, color: "var(--text-main)" },
+                      '&:hover': { backgroundColor: "var(--bg-surface)", borderColor: "var(--primary-border)" }
                     }}
                   >
                     {item.icon}
@@ -1372,6 +1506,17 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               setBuildMode={setBuildMode}
               blueprintDraft={blueprintDraft}
               setBlueprintDraft={setBlueprintDraft}
+              properties={effectiveProperties}
+              propertyDraft={propertyDraft}
+              editingPropertyBoundaryId={editingPropertyBoundaryId}
+              onPropertyBoundaryVertexMove={(index, point) => setPropertyDraft(values => values.map((vertex, vertexIndex) => vertexIndex === index ? { x: point.x, y: point.y } : vertex))}
+              onPropertyPolygonPoint={point => setPropertyDraft(values => [...values, { x: point.x, y: point.y }])}
+              blueprintHoverPoint={blueprintHoverPoint}
+              footprintTool={footprintTool}
+              footprintPoints={footprintPoints}
+              setFootprintPoints={setFootprintPoints}
+              setFootprintError={setFootprintError}
+              setBlueprintHoverPoint={setBlueprintHoverPoint}
               atmosphereSettings={atmosphereSettings}
               setAtmosphereSettings={setAtmosphereSettings}
               weatherSettings={weatherSettings}
@@ -1436,12 +1581,12 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                backgroundColor: '#1c1212ce',
-                border: '1px solid #f44336',
+                backgroundColor: "var(--overlay)",
+                border: "1px solid var(--primary-border)",
                 borderRadius: '8px',
                 padding: '24px',
                 textAlign: 'center',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+                boxShadow: "0 8px 32px var(--border-main)",
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -1450,10 +1595,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 zIndex: 1000
               }}
             >
-              <Typography variant="h6" sx={{ color: '#ff8a80', fontWeight: 'bold' }}>
+              <Typography variant="h6" sx={{ color: "var(--danger)", fontWeight: 'bold' }}>
                 {saveStatus}
               </Typography>
-              <Typography variant="body2" sx={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: 1.4 }}>
+              <Typography variant="body2" sx={{ color: "var(--text-main)", fontSize: '0.9rem', lineHeight: 1.4 }}>
                 Return to the Atlas and choose a settlement to try again.
               </Typography>
               <Button
@@ -1477,15 +1622,15 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 bottom: '16px',
                 left: '50%',
                 transform: 'translateX(-50%)',
-                backgroundColor: '#14201cdd',
-                border: '1px solid #526258',
+                backgroundColor: "var(--bg-surface)",
+                border: "1px solid var(--border-main)",
                 borderRadius: '20px',
                 padding: '6px 16px',
-                color: '#cbd5e1',
+                color: "var(--text-main)",
                 fontSize: '0.8rem',
                 fontWeight: 500,
                 letterSpacing: '0.02em',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                boxShadow: "0 4px 12px var(--border-main)",
                 pointerEvents: 'none',
                 zIndex: 40,
                 textAlign: 'center',
@@ -1512,18 +1657,18 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 position: 'absolute',
                 top: '18px',
                 right: '320px',
-                backgroundColor: '#14201cce',
-                border: '1px solid #ffffff2c',
+                backgroundColor: "var(--overlay)",
+                border: "1px solid var(--border-main)",
                 borderRadius: '6px',
                 padding: '8px 12px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 1.5,
                 zIndex: 45,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.4)'
+                boxShadow: "0 4px 12px var(--border-main)"
               }}
             >
-              <Typography variant="caption" sx={{ color: '#aab4ad', fontWeight: 'bold', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.5px' }}>
+              <Typography variant="caption" sx={{ color: "var(--text-muted)", fontWeight: 'bold', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.5px' }}>
                 Map View:
               </Typography>
               <FormControl size="small">
@@ -1533,12 +1678,12 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   sx={{
                     height: '28px',
                     fontSize: '12px',
-                    backgroundColor: '#23352d',
-                    color: '#d5ddd7',
+                    backgroundColor: "var(--bg-surface-2)",
+                    color: "var(--text-main)",
                     minWidth: '130px',
-                    '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' },
-                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' },
-                    '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' }
+                    '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" },
+                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" },
+                    '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" }
                   }}
                 >
                   <MenuItem value="satellite" sx={{ fontSize: '12px' }}>Satellite</MenuItem>
@@ -1580,21 +1725,21 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
           }
 
           {activeTool === 'atlas' && (
-            <Box className="world-atlas" sx={{ display: 'flex', width: '100%', height: 'calc(100vh - 64px)', background: '#0e1814' }}>
+            <Box className="world-atlas" sx={{ display: 'flex', width: '100%', height: 'calc(100vh - 64px)', background: "var(--bg-app)" }}>
 
               {/* LEFT SIDE: OVERWORLD VIEWPORT STAGE */}
               <Box className="atlas-stage" sx={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 2, position: 'relative' }}>
                 <Box className="atlas-heading" sx={{ mb: 2 }}>
-                  <Typography variant="caption" sx={{ color: '#8f9d95', fontWeight: 800, letterSpacing: '.13em' }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontWeight: 800, letterSpacing: '.13em' }}>
                     WORLD ATLAS
                   </Typography>
-                  <Typography variant="h5" sx={{ color: '#ecd89f', fontWeight: 700, mt: -0.5 }}>
+                  <Typography variant="h5" sx={{ color: "var(--text-main)", fontWeight: 700, mt: -0.5 }}>
                     {atlas.atlas?.name || 'Campaign World'}
                   </Typography>
                 </Box>
 
                 {/* Interactive Overworld Canvas Render Host */}
-                <Box sx={{ flex: 1, borderRadius: '8px', border: '1px solid #526258', background: '#07100b' }}>
+                <Box sx={{ flex: 1, borderRadius: '8px', border: "1px solid var(--border-main)", background: "var(--bg-app)" }}>
                   <AtlasViewport
                     atlas={atlas.atlas}
                     locations={atlas.locations.map(location => pendingAtlasMove?.id === location.id
@@ -1612,7 +1757,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   />
                 </Box>
 
-                <Typography variant="caption" className="atlas-help" sx={{ mt: 1, color: '#8f9d95', fontStyle: 'italic' }}>
+                <Typography variant="caption" className="atlas-help" sx={{ mt: 1, color: "var(--text-subtle)", fontStyle: 'italic' }}>
                   {movingAtlasId
                     ? `${atlas.locations.find(l => l.id === movingAtlasId)?.atlas_x == null ? 'Click the atlas' : 'Drag the pin tip'} to preview ${atlas.locations.find(l => l.id === movingAtlasId)?.name || 'the settlement'}'s new coordinates, then choose Apply.`
                     : 'Wheel to zoom and drag to pan. Zoom through 1000% over a settlement pin to enter its terrain.'}
@@ -1625,8 +1770,8 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 component="aside"
                 sx={{
                   width: '320px',
-                  borderLeft: '1px solid #ffffff2c',
-                  background: '#14201cce',
+                  borderLeft: "1px solid var(--border-main)",
+                  background: "var(--overlay)",
                   padding: 2,
                   display: 'flex',
                   flexDirection: 'column',
@@ -1635,10 +1780,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 }}
               >
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, letterSpacing: '.06em' }}>
+                  <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, letterSpacing: '.06em' }}>
                     SETTLEMENTS DIRECTORY
                   </Typography>
-                  <Typography variant="h6" sx={{ color: '#7ce6ff', fontWeight: 'bold', fontSize: '1.1rem' }}>
+                  <Typography variant="h6" sx={{ color: "var(--danger)", fontWeight: 'bold', fontSize: '1.1rem' }}>
                     {atlas.locations.length}
                   </Typography>
                 </Box>
@@ -1648,10 +1793,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   <Box
                     component="form"
                     onSubmit={async event => { await uploadAtlasImage(event); setShowAtlasUpload(false); }}
-                    sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, background: '#101815', p: 1.5, borderRadius: '4px', border: '1px solid #3d4d43' }}
+                    sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, background: "var(--bg-app)", p: 1.5, borderRadius: '4px', border: "1px solid var(--border-main)" }}
                   >
-                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#fff' }}>Overworld Atlas Canvas Map</Typography>
-                    <Button variant="contained" component="label" size="small" fullWidth sx={{ backgroundColor: '#23352d' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: "var(--text-main)" }}>Overworld Atlas Canvas Map</Typography>
+                    <Button variant="contained" component="label" size="small" fullWidth sx={{ backgroundColor: "var(--bg-surface-2)" }}>
                       Choose File Asset
                       <input type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={event => setAtlasUpload(value => ({ ...value, file: event.target.files?.[0] || null }))} />
                     </Button>
@@ -1661,14 +1806,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       fullWidth
                       value={atlasUpload.attribution}
                       onChange={event => setAtlasUpload(value => ({ ...value, attribution: event.target.value }))}
-                      sx={{ input: { fontSize: '11px', color: '#fff' } }}
+                      sx={{ input: { fontSize: '11px', color: "var(--text-main)" } }}
                     />
-                    <Button type="submit" variant="contained" size="small" disabled={!atlasUpload.file} sx={{ backgroundColor: '#bd9149', color: '#17211c', fontWeight: 'bold' }}>
+                    <Button type="submit" variant="contained" size="small" disabled={!atlasUpload.file} sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", fontWeight: 'bold' }}>
                       Store Overworld Atlas
                     </Button>
                   </Box>
                 ) : (
-                  <Button variant="outlined" size="small" onClick={() => setShowAtlasUpload(true)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+                  <Button variant="outlined" size="small" onClick={() => setShowAtlasUpload(true)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
                     Replace World Atlas Background Image
                   </Button>
                 )}
@@ -1681,9 +1826,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                     fullWidth
                     value={newSettlementName}
                     onChange={event => setNewSettlementName(event.target.value)}
-                    sx={{ input: { fontSize: '12px', color: '#fff' } }}
+                    sx={{ input: { fontSize: '12px', color: "var(--text-main)" } }}
                   />
-                  <Button type="submit" variant="contained" size="small" sx={{ backgroundColor: '#1e3a34', color: '#fff', minWidth: '40px', padding: 0 }}>
+                  <Button type="submit" variant="contained" size="small" sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)", minWidth: '40px', padding: 0 }}>
                     <AddIcon />
                   </Button>
                 </Box>
@@ -1698,9 +1843,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       <Card
                         key={location.id}
                         sx={{
-                          backgroundColor: isActive ? '#1e3a34' : '#10231f',
+                          backgroundColor: isActive ? "var(--bg-surface-2)" : "var(--bg-surface)",
                           border: '1px solid',
-                          borderColor: isActive ? '#ffe08a' : isDestroyed ? '#5f2120' : '#47423a',
+                          borderColor: isActive ? "var(--primary-border)" : isDestroyed ? "var(--border-main)" : "var(--border-main)",
                           opacity: isDestroyed ? 0.65 : 1
                         }}
                       >
@@ -1712,18 +1857,18 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                             onClick={() => openSettlement(location.id)}
                             sx={{
                               background: 'none', border: 'none', padding: 0, width: '100%', textAlign: 'left', cursor: 'pointer',
-                              '&:hover h6': { color: '#7ce6ff' }
+                              '&:hover h6': { color: "var(--danger)" }
                             }}
                           >
-                            <Typography variant="subtitle2" sx={{ color: isDestroyed ? '#f44336' : '#fff', fontWeight: 600, fontSize: '13px' }}>
+                            <Typography variant="subtitle2" sx={{ color: isDestroyed ? "var(--danger)" : "var(--text-main)", fontWeight: 600, fontSize: '13px' }}>
                               {location.name}{isDestroyed ? ' (Ruined & Destroyed)' : ''}
                             </Typography>
-                            <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mt: 0.2 }}>
+                            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mt: 0.2 }}>
                               {location.atlas_x == null ? 'Not placed on Overworld' : `${Math.round(location.atlas_x * 100)}%, ${Math.round(location.atlas_y * 100)}%`} · {location.settlement_type || 'settlement'}
                             </Typography>
                           </Box>
 
-                          <Divider sx={{ borderColor: '#33443b' }} />
+                          <Divider sx={{ borderColor: "var(--border-main)" }} />
 
                           {/* Micro Action Button Ribbon */}
                           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 0.5 }}>
@@ -1732,13 +1877,13 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                               variant={movingAtlasId === location.id ? 'contained' : 'outlined'}
                               onClick={() => movingAtlasId === location.id ? applyAtlasMove(location) : beginAtlasMove(location)}
                               disabled={movingAtlasId === location.id && (pendingAtlasMove?.atlas_x == null || pendingAtlasMove?.atlas_y == null)}
-                              sx={{ textTransform: 'none', fontSize: '10px', height: '22px', color: '#fff', borderColor: '#53645a', backgroundColor: movingAtlasId === location.id ? '#16322c' : 'transparent' }}
+                              sx={{ textTransform: 'none', fontSize: '10px', height: '22px', color: "var(--text-main)", borderColor: "var(--border-main)", backgroundColor: movingAtlasId === location.id ? "var(--bg-surface)" : 'transparent' }}
                             >
                               {movingAtlasId === location.id ? 'Apply' : 'Move'}
                             </Button>
 
                             {location.atlas_x != null && (
-                              <Button size="small" variant="outlined" onClick={() => removeSettlementMarker(location)} sx={{ textTransform: 'none', fontSize: '10px', height: '22px', color: '#94a3b8', borderColor: '#53645a' }}>
+                              <Button size="small" variant="outlined" onClick={() => removeSettlementMarker(location)} sx={{ textTransform: 'none', fontSize: '10px', height: '22px', color: "var(--text-muted)", borderColor: "var(--border-main)" }}>
                                 Unplace
                               </Button>
                             )}
@@ -1747,12 +1892,12 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                               size="small"
                               variant="outlined"
                               onClick={() => setSettlementStatus(location, isDestroyed ? 'active' : 'destroyed')}
-                              sx={{ textTransform: 'none', fontSize: '10px', height: '22px', color: isDestroyed ? '#4caf50' : '#f44336', borderColor: '#53645a' }}
+                              sx={{ textTransform: 'none', fontSize: '10px', height: '22px', color: isDestroyed ? "var(--success)" : "var(--danger)", borderColor: "var(--border-main)" }}
                             >
                               {isDestroyed ? 'Restore' : 'Destroy'}
                             </Button>
 
-                            <IconButton size="small" onClick={() => deleteSettlement(location)} title={`Permanently delete ${location.name}`} sx={{ color: '#ef5350', ml: 'auto', padding: '2px' }}>
+                            <IconButton size="small" onClick={() => deleteSettlement(location)} title={`Permanently delete ${location.name}`} sx={{ color: "var(--danger)", ml: 'auto', padding: '2px' }}>
                               <DeleteOutlineIcon fontSize="small" />
                             </IconButton>
                           </Box>
@@ -1764,7 +1909,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 </Box>
 
                 {/* Real-time Status Text Ribbon Footer */}
-                <Typography variant="caption" className="atlas-status" sx={{ mt: 'auto', display: 'block', color: '#8f9d95', borderTop: '1px solid #33443b', pt: 1, fontStyle: 'italic', fontSize: '10px' }}>
+                <Typography variant="caption" className="atlas-status" sx={{ mt: 'auto', display: 'block', color: "var(--text-subtle)", borderTop: "1px solid var(--border-main)", pt: 1, fontStyle: 'italic', fontSize: '10px' }}>
                   {atlasStatus}
                 </Typography>
               </Box>
@@ -1781,19 +1926,28 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               apply={applyReferencePlacement}
               remove={id => { setReferenceLayers(values => values.filter(l => l.id !== id)); setSelectedReferenceId(null); }}
               fit={reference => setLocalViewCommand({ mode: 'reference', reference, nonce: Date.now() })}
-              calibration={<details><summary>Distance calibration</summary>
-                <p>Pick two points on the image whose distance you know, then enter that distance.</p>
-                <button type="button" onClick={() => { setCalibrationPoints([]); setReferenceCalibrationMode(true); }}>Pick two points</button>
-                <p>{calibrationPoints.length}/2 points selected</p>
-                <ValidatedNumberInput aria-label="Known distance in feet" min={1} value={knownDistance} onCommit={setKnownDistance} />
-                <button type="button" disabled={calibrationPoints.length !== 2 || knownDistance <= 0} onClick={applyReferenceCalibration}>Apply calibration</button>
-              </details>}
+              calibration={<section className="reference-image-calibration" aria-label="Image scale calibration">
+                <strong>Scale from image</strong>
+                <p>Pick two points on the image with a known distance between them. For adjacent grid intersections, use the grid spacing, usually 5 ft.</p>
+                <label>Known distance (ft)
+                  <ValidatedNumberInput aria-label="Known distance (ft)" min={0.1} step="any" value={knownDistance} onCommit={setKnownDistance} />
+                </label>
+                <button type="button" aria-pressed={referenceCalibrationMode} onClick={() => {
+                  setCalibrationPoints([]); setReferenceCalibrationMode(value => !value);
+                }}>{referenceCalibrationMode ? 'Stop picking points' : 'Pick two image points'}</button>
+                {referenceCalibrationMode && <>
+                  <p role="status">{calibrationPoints.length} of 2 image points selected</p>
+                  <button type="button" disabled={calibrationPoints.length !== 2 || knownDistance <= 0}
+                    onClick={applyReferenceCalibration}>Apply image calibration</button>
+                </>}
+              </section>}
             />
           )}
 
           {activeTool === 'build' && designLoaded && (
-            <aside className="editor-menu build-tools-panel">
-              <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+            <aside ref={buildToolsRef} className="editor-menu build-tools-panel">
+              <Box className="tool-mode-header">
+              <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
                 BUILDINGS &amp; STRUCTURES
               </Typography>
 
@@ -1806,19 +1960,20 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 onChange={(e, nextMode) => {
                   if (nextMode !== null) {
                     setBuildMode(nextMode);
-                    if (nextMode !== 'draw-blueprint') setBlueprintDraft(null);
+                    if (nextMode !== 'draw-blueprint') { setBlueprintDraft(null); setBlueprintHoverPoint(null); setFootprintPoints([]); setFootprintError(''); setNewStructurePropertyId(null); }
+                    if (!['draw-property-boundary', 'draw-outdoor-area'].includes(nextMode)) setPropertyDraft([]);
                   }
                 }}
                 sx={{
                   mb: 2,
-                  backgroundColor: '#10231f',
+                  backgroundColor: "var(--bg-surface)",
                   '& .MuiToggleButton-root': {
-                    color: '#94a3b8',
-                    borderColor: '#47423a',
+                    color: "var(--text-muted)",
+                    borderColor: "var(--border-main)",
                     textTransform: 'none',
                     fontSize: '11px',
                     gap: '4px',
-                    '&.Mui-selected': { color: '#7ce6ff', backgroundColor: '#16322c' }
+                    '&.Mui-selected': { color: "var(--danger)", backgroundColor: "var(--bg-surface)" }
                   }
                 }}
               >
@@ -1832,10 +1987,182 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   <VisibilityIcon fontSize="small" /> Manage
                 </ToggleButton>
               </ToggleButtonGroup>
+              </Box>
+
+              {/* MODE B: POLYGON BLUEPRINT DRAFTING */}
+              {buildMode === 'draw-blueprint' && (
+                <Box className="structure-drawing-steps" sx={{ display: 'flex', flexDirection: 'column', gap: 1, border: "1px solid var(--primary-border)", p: 1, mb: 1 }}>
+                  <Typography variant="subtitle2" sx={{ color: "var(--text-main)" }}>Add Building{newStructurePropertyId ? ` to ${effectiveProperties.find(property => property.id === newStructurePropertyId)?.name || 'Property'}` : ''}</Typography>
+                  <ToggleButtonGroup size="small" exclusive value={footprintTool} onChange={(_, value) => { if (value) setFootprintTool(value); }} aria-label="Footprint drawing tool" sx={{ '& .MuiToggleButton-root': { color: "var(--text-main)", borderColor: "var(--border-main)", '&.Mui-selected': { color: "var(--text-main)", backgroundColor: "var(--bg-surface-2)" } } }}>
+                    <ToggleButton value="line">Line</ToggleButton><ToggleButton value="arc">Arc</ToggleButton><ToggleButton value="circle">Circle</ToggleButton>
+                  </ToggleButtonGroup>
+                  <Typography role="status" variant="caption">{blueprintDraft?.levels?.[0]?.closed ? 'Footprint closed. Save Building, or choose Edit footprint points to continue drawing.' : footprintTool === 'circle' ? (footprintPoints.length ? 'Click a point on the circumference (at least 1 ft radius).' : 'Click the circle center on the map. Circle replaces the current draft footprint.') : footprintTool === 'arc' ? (footprintPoints.length === 2 ? 'Click a point on the curve to set its bend.' : 'Click the arc endpoint; the last corner is its start. For a new footprint, click its start first.') : 'Click successive footprint corners on the map.'}</Typography>
+                  {footprintError && <Typography role="alert" color="error">{footprintError}</Typography>}
+                  {!!footprintPoints.length && <Button size="small" onClick={() => { setFootprintPoints([]); setFootprintError(''); }}>Cancel Current Curve</Button>}
+                  {!blueprintDraft ? (
+                    <>
+                      <Typography variant="caption">1. Click the map where this building starts. Choose Line, Arc or Circle below, then draw directly on the map.</Typography>
+                      <Button size="small" onClick={() => { setNewStructurePropertyId(null); setBuildMode('select-placed'); }}>Cancel Adding Building</Button>
+                    </>
+                  ) : (
+                    <>
+                      <TextField label="New building name" size="small" value={blueprintDraft.name || ''} onChange={event => setBlueprintDraft(value => ({ ...value, name: event.target.value }))} />
+                      <Typography variant="caption">2. Draw lines or curves on the map. Switch tools to combine straight and curved edges.</Typography>
+                      <Typography variant="caption" sx={{ color: "var(--text-main)", display: 'block', mb: 1 }}>
+                        Active Corners Placed: {blueprintDraft.levels?.[blueprintDraft.levels.length - 1]?.corners?.length || 0}
+                      </Typography>
+
+                      <Button variant="outlined" size="small" fullWidth
+                        disabled={!blueprintDraft.levels?.[0]?.closed && (blueprintDraft.levels?.[0]?.corners.length || 0) < 3}
+                        onClick={() => {
+                          const closed = blueprintDraft.levels?.[0]?.closed;
+                          setFootprintPoints([]);
+                          const updated = closed
+                            ? { ...blueprintDraft, levels: blueprintDraft.levels.map(level => ({ ...level, closed: false, outline: level.outline?.length && Math.hypot(level.outline[level.outline.length - 1].end.x - level.outline[0].start.x, level.outline[level.outline.length - 1].end.y - level.outline[0].start.y) < 0.001 ? level.outline.slice(0, -1) : level.outline })) }
+                            : closeBlueprintFootprint(blueprintDraft);
+                          setBlueprintDraft(updated);
+                          setSelected(updated);
+                          setBlueprintHoverPoint(null);
+                        }} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
+                        {blueprintDraft.levels?.[0]?.closed ? 'Edit footprint points' : 'Close Footprint Polygon Loop'}
+                      </Button>
+
+                      <Typography variant="caption">3. Close the footprint to preview the walls, then Save Building. Its floor plan will be kept when you add more levels.</Typography>
+
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mt: 0.5 }}>
+                        <Button disabled={(blueprintDraft.levels?.[0]?.corners.length || 0) < 3} variant="contained" color="success" size="small" onClick={() => { const finished = closeBlueprintFootprint(blueprintDraft); setBuildings(prev => [...prev.filter(b => b.id !== finished.id), finished]); if (newStructurePropertyId) setProperties(values => addStructureToProperty(normalizePropertyCatalog(buildings, values), newStructurePropertyId, finished.id)); setSelected(finished); setBlueprintDraft(null); setBlueprintHoverPoint(null); setFootprintPoints([]); setFootprintError(''); setNewStructurePropertyId(null); setBuildMode('select-placed'); }}>
+                          Save Building
+                        </Button>
+                        <Button variant="contained" color="error" size="small" onClick={() => { setBlueprintDraft(null); setBlueprintHoverPoint(null); setFootprintPoints([]); setFootprintError(''); setBuildMode('select-placed'); }}>
+                          Cancel
+                        </Button>
+                      </Box>
+                    </>
+                  )}
+                </Box>
+              )}
+
+                  {['draw-property-boundary', 'edit-property-boundary', 'draw-outdoor-area'].includes(buildMode) && <Box className="property-drawing-steps" sx={{ display: 'grid', gap: 1, border: "1px solid var(--primary-border)", p: 1, mb: 1 }}>
+                    <Typography variant="subtitle2">{buildMode === 'draw-outdoor-area' ? 'Outdoor Area' : 'Property Boundary'} · {selectedProperty?.name}</Typography>
+                    <Typography variant="caption">{buildMode === 'edit-property-boundary' ? 'Drag the red corner handles on the map. Choose Save Boundary when finished.' : `Click the map to place corners (${propertyDraft.length} placed), then choose Finish Boundary or Finish Area.`}</Typography>
+                    <Button size="small" disabled={propertyDraft.length < 3} onClick={finishPropertyPolygon}>{buildMode === 'edit-property-boundary' ? 'Save Boundary' : buildMode === 'draw-outdoor-area' ? 'Finish Area' : 'Finish Boundary'}</Button>
+                    <Button size="small" onClick={() => { setPropertyDraft([]); setEditingPropertyBoundaryId(null); setBuildMode('select-placed'); }}>Cancel Drawing</Button>
+                    {propertyEditError && <Typography variant="caption" color="error" role="alert">{propertyEditError}</Typography>}
+                  </Box>}
+              {buildMode === 'select-placed' && <RestActivityPanel campaignId={campaignId} settlementId={activeSettlementId} headers={headers} onFocus={point => window.dispatchEvent(new CustomEvent('settlement-camera-command-trigger', { detail: { mode: 'point', point, radiusFeet: 200, topdown: true } }))} />}
+              {['select-placed', 'move-selected'].includes(buildMode) && <ToggleButtonGroup
+                value={manageCatalog}
+                exclusive
+                fullWidth
+                size="small"
+                aria-label="Manage catalog"
+                onChange={(_, value) => { if (value) setManageCatalog(value); }}
+                sx={{ mb: 1, '& .MuiToggleButton-root': { color: "var(--text-muted)", borderColor: "var(--border-main)", textTransform: 'none', fontWeight: 700, '&.Mui-selected': { color: "var(--text-main)", backgroundColor: "var(--bg-surface-2)", borderColor: "var(--primary-border)" } } }}
+              >
+                <ToggleButton value="buildings">Buildings</ToggleButton>
+                <ToggleButton value="properties">Properties</ToggleButton>
+              </ToggleButtonGroup>}
+              {['select-placed', 'move-selected'].includes(buildMode) && manageCatalog === 'properties' && <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }} aria-label="Properties and structures">
+                <Typography variant="subtitle2">Properties</Typography>
+                <PropertyEstateList properties={effectiveProperties} buildings={buildings} selectedId={selectedProperty?.id}
+                  onSelect={id => { setSelected(null); setSelectedPropertyId(id); setSelectedBoundarySegment(0); setPropertyDraft([]); setEditingPropertyBoundaryId(null); setBuildMode('select-placed'); }}
+                  onSelectBuilding={building => { setSelected(building); setBuildMode('select-placed'); }}
+                  onCreate={name => { const property = createProperty(name); setProperties(values => [...normalizePropertyCatalog(buildings, values), property]); setSelectedPropertyId(property.id); setSelected(null); }}
+                  onRename={(id, name) => setProperties(values => normalizePropertyCatalog(buildings, values).map(property => property.id === id ? { ...property, name } : property))}
+                  onDelete={id => { setProperties(values => deletePropertyKeepingBuildings(normalizePropertyCatalog(buildings, values), id, buildings)); setSelectedPropertyId(null); setPropertyDraft([]); setEditingPropertyBoundaryId(null); setBuildMode('select-placed'); }}
+                  onAddStructure={id => { focusPropertyBoundary(effectiveProperties.find(property => property.id === id)); setNewStructurePropertyId(id); setBuildMode('draw-blueprint'); setBlueprintDraft(null); setBlueprintHoverPoint(null); setFootprintPoints([]); setFootprintError(''); }}
+                  onMoveBuilding={(propertyId, buildingId) => { if (buildingId != null) setProperties(values => addStructureToProperty(normalizePropertyCatalog(buildings, values), propertyId, buildingId)); }} />
+                {selectedProperty && <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, borderTop: "1px solid var(--border-main)", pt: 1 }}>
+                  {selectedProperty.boundary && <Button size="small" onClick={() => focusPropertyBoundary()}>Focus Property Boundary</Button>}
+                  <Button size="small" variant={buildMode === 'draw-property-boundary' ? 'contained' : 'outlined'} onClick={() => { setBuildMode('draw-property-boundary'); setEditingPropertyBoundaryId(null); setPropertyDraft([]); }}>Draw New Boundary</Button>
+                  <Button size="small" variant={buildMode === 'draw-outdoor-area' ? 'contained' : 'outlined'} onClick={() => { setBuildMode('draw-outdoor-area'); setEditingPropertyBoundaryId(null); setPropertyDraft([]); }}>Add Outdoor Area</Button>
+                  {buildMode === 'draw-outdoor-area' && <Select size="small" aria-label="Outdoor area type" value={outdoorTypeDraft} onChange={event => setOutdoorTypeDraft(event.target.value)}>{OUTDOOR_AREA_TYPES.map(type => <MenuItem key={type} value={type}>{type}</MenuItem>)}</Select>}
+                  {selectedProperty.boundary && <>
+                    <Button size="small" onClick={startPropertyBoundaryEdit} disabled={buildMode === 'edit-property-boundary'}>Edit Existing Boundary on Map</Button>
+                    <Typography variant="caption">The property boundary is independent of the buildings. Draw New Boundary replaces it; Edit keeps its segment treatments and openings.</Typography>
+                    {buildMode === 'edit-property-boundary' && <details className="property-coordinate-details"><summary>Exact corner coordinates</summary>
+                      {propertyDraft.map((point, index) => <Box key={`vertex-${index}`} sx={{ display: 'flex', gap: 1 }}>
+                        <ValidatedNumberField size="small" label={`Corner ${index + 1} X (ft)`} value={Number(point.x)} min={-10000000} max={10000000} onCommit={value => setPropertyDraft(values => values.map((vertex, vertexIndex) => vertexIndex === index ? { ...vertex, x: value } : vertex))} />
+                        <ValidatedNumberField size="small" label={`Corner ${index + 1} Y (ft)`} value={Number(point.y)} min={-10000000} max={10000000} onCommit={value => setPropertyDraft(values => values.map((vertex, vertexIndex) => vertexIndex === index ? { ...vertex, y: value } : vertex))} />
+                      </Box>)}
+                    </details>}
+                    <details className="property-coordinate-details"><summary>Boundary walls, gates &amp; segment details</summary>
+                    <Select size="small" value={Math.min(selectedBoundarySegment, selectedProperty.boundary.segments.length - 1)} onChange={event => setSelectedBoundarySegment(Number(event.target.value))} aria-label="Boundary segment">
+                      {selectedProperty.boundary.segments.map((segment, index) => <MenuItem key={segment.id} value={index}>Segment {index + 1}</MenuItem>)}
+                    </Select>
+                    {selectedProperty.boundary.segments[selectedBoundarySegment] && <>
+                      <Select size="small" aria-label="Boundary treatment" value={selectedProperty.boundary.segments[selectedBoundarySegment].treatment || 'none'} onChange={event => updateBoundarySegment(segment => ({ ...segment, treatment: event.target.value }))}>
+                        {['none', 'wall', 'fence', 'hedge', 'linked_structure_wall'].map(type => <MenuItem key={type} value={type}>{type.replaceAll('_', ' ')}</MenuItem>)}
+                      </Select>
+                      <TextField size="small" label="Material / color" value={selectedProperty.boundary.segments[selectedBoundarySegment].material || ''} onChange={event => updateBoundarySegment(segment => ({ ...segment, material: event.target.value }))} />
+                      <ValidatedNumberField size="small" label="Height (ft)" value={Number(selectedProperty.boundary.segments[selectedBoundarySegment].height) || 8} min={1} max={100} onCommit={value => updateBoundarySegment(segment => ({ ...segment, height: value }))} />
+                      <ValidatedNumberField size="small" label="Thickness (ft)" value={Number(selectedProperty.boundary.segments[selectedBoundarySegment].thickness) || 1} min={0.1} max={20} onCommit={value => updateBoundarySegment(segment => ({ ...segment, thickness: value }))} />
+                      {selectedProperty.boundary.segments[selectedBoundarySegment].treatment === 'linked_structure_wall' && <TextField size="small" label="Linked wall ID" value={selectedProperty.boundary.segments[selectedBoundarySegment].linked_wall_id || ''} onChange={event => updateBoundarySegment(segment => ({ ...segment, linked_wall_id: event.target.value }))} />}
+                      {selectedProperty.boundary.segments[selectedBoundarySegment].treatment === 'linked_structure_wall' &&
+                        !buildings.some(building => (selectedProperty.structure_ids || []).some(id => String(id) === String(building.id)) &&
+                          (building.levels || []).some(level => [...(level.outline || []), ...(level.walls || [])].some(wall => wall.id === selectedProperty.boundary.segments[selectedBoundarySegment].linked_wall_id))) &&
+                        <Typography variant="caption" color="error">Linked building wall is missing. Choose an existing wall ID to restore this boundary treatment.</Typography>}
+                      {selectedProperty.boundary.segments[selectedBoundarySegment].treatment !== 'none' && selectedProperty.boundary.segments[selectedBoundarySegment].treatment !== 'linked_structure_wall' && <Button size="small" onClick={() => {
+                        const boundary = selectedProperty.boundary;
+                        const opening = { id: `opening-${Date.now()}`, offsetAlongSegment: 2, width: 6, height: 8, opening_kind: 'gate', panel_style: 'wrought_iron', leaf_configuration: 'double', state: 'closed' };
+                        const error = validateBoundaryOpening(boundary, selectedBoundarySegment, opening);
+                        if (error) { setPropertyEditError(error); return; }
+                        setPropertyEditError('');
+                        updateBoundarySegment(segment => ({ ...segment, openings: [...(segment.openings || []), opening] }));
+                      }}>Add Gate / Opening</Button>}
+                      {(selectedProperty.boundary.segments[selectedBoundarySegment].openings || []).map(opening => <Box key={opening.id} sx={{ border: "1px solid var(--border-main)", p: 1 }}>
+                        <ValidatedNumberField size="small" fullWidth label="Offset along segment (ft)" value={Number(opening.offsetAlongSegment) || 0} min={0} max={1000000} onCommit={value => updateBoundaryOpening(opening, { offsetAlongSegment: value })} />
+                        <ValidatedNumberField size="small" fullWidth label="Opening width (ft)" value={Number(opening.width) || 1} min={0.1} max={1000000} onCommit={value => updateBoundaryOpening(opening, { width: value })} />
+                        <ValidatedNumberField size="small" fullWidth label="Opening height (ft)" value={Number(opening.height) || 7} min={1} max={100} onCommit={value => updateBoundaryOpening(opening, { height: value })} />
+                        <Select size="small" fullWidth aria-label="Opening kind" value={opening.opening_kind || 'gate'} onChange={event => updateBoundarySegment(segment => ({ ...segment, openings: segment.openings.map(item => item.id === opening.id ? { ...item, opening_kind: event.target.value } : item) }))}>
+                          {['gate', 'door', 'archway', 'open_passage'].map(type => <MenuItem key={type} value={type}>{type.replaceAll('_', ' ')}</MenuItem>)}
+                        </Select>
+                        {['gate', 'door'].includes(opening.opening_kind) && <>
+                          <Select size="small" fullWidth aria-label="Panel style" value={opening.panel_style || 'wood'} onChange={event => updateBoundarySegment(segment => ({ ...segment, openings: segment.openings.map(item => item.id === opening.id ? { ...item, panel_style: event.target.value } : item) }))}>
+                            {['wrought_iron', 'wood', 'custom'].map(type => <MenuItem key={type} value={type}>{type.replaceAll('_', ' ')}</MenuItem>)}
+                          </Select>
+                          <Select size="small" fullWidth aria-label="Gate leaves" value={opening.leaf_configuration || 'single'} onChange={event => updateBoundarySegment(segment => ({ ...segment, openings: segment.openings.map(item => item.id === opening.id ? { ...item, leaf_configuration: event.target.value } : item) }))}>
+                            {['single', 'double', 'sliding'].map(type => <MenuItem key={type} value={type}>{type}</MenuItem>)}
+                          </Select>
+                          <Select size="small" fullWidth aria-label="Opening state" value={opening.state || 'closed'} onChange={event => updateBoundaryOpening(opening, { state: event.target.value })}>
+                            {['open', 'closed', 'locked'].map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+                          </Select>
+                          <Select size="small" fullWidth aria-label="Hinge side" value={opening.hinge_side || 'left'} onChange={event => updateBoundaryOpening(opening, { hinge_side: event.target.value })}>
+                            {['left', 'right'].map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+                          </Select>
+                          <Select size="small" fullWidth aria-label="Swing direction" value={opening.swing_direction || 'inward'} onChange={event => updateBoundaryOpening(opening, { swing_direction: event.target.value })}>
+                            {['inward', 'outward'].map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+                          </Select>
+                        </>}
+                        <Button size="small" color="error" onClick={() => updateBoundarySegment(segment => ({ ...segment, openings: segment.openings.filter(item => item.id !== opening.id) }))}>Remove Opening</Button>
+                      </Box>)}
+                    </>}
+                    </details>
+                  </>}
+                  {(selectedProperty.outdoor_areas || []).map(area => <Box key={area.id} sx={{ border: "1px solid var(--border-main)", p: 1 }}>
+                    <TextField size="small" fullWidth label="Outdoor area name" value={area.name || ''} onChange={event => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, name: event.target.value } : item) }))} />
+                    <Select size="small" fullWidth aria-label="Area Type" value={area.area_type || 'custom'} onChange={event => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, area_type: event.target.value } : item) }))}>{OUTDOOR_AREA_TYPES.map(type => <MenuItem key={type} value={type}>{type}</MenuItem>)}</Select>
+                    <TextField size="small" fullWidth label="Surface color" value={area.material || ''} onChange={event => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, material: event.target.value } : item) }))} />
+                    <Select size="small" fullWidth aria-label="Outdoor elevation mode" value={area.elevation_mode || 'draped_on_terrain'} onChange={event => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, elevation_mode: event.target.value } : item) }))}>
+                      <MenuItem value="draped_on_terrain">Follow terrain</MenuItem><MenuItem value="constant">Fixed elevation</MenuItem>
+                    </Select>
+                    {area.elevation_mode === 'constant' && <ValidatedNumberField size="small" label="Area elevation (ft)" value={Number(area.elevation) || 0} min={-10000} max={10000} onCommit={value => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, elevation: value } : item) }))} />}
+                    <ValidatedNumberField size="small" label="Layer priority" value={Number(area.layering_priority) || 0} min={-100} max={100} onCommit={value => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, layering_priority: value } : item) }))} />
+                    <Typography variant="caption">Higher priority surfaces cover overlapping lower ones. Later areas win ties.</Typography>
+                    <FormControlLabel control={<Checkbox checked={area.walkable !== false} onChange={event => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, walkable: event.target.checked } : item) }))} />} label="Walkable" />
+                    <TextField size="small" fullWidth label="Area capabilities" value={(area.activity_capabilities || []).join(', ')} onChange={event => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.map(item => item.id === area.id ? { ...item, activity_capabilities: event.target.value.split(',').map(value => value.trim()).filter(Boolean) } : item) }))} />
+                    <Button size="small" color="error" onClick={() => updateSelectedProperty(property => ({ ...property, outdoor_areas: property.outdoor_areas.filter(item => item.id !== area.id) }))}>Remove Area</Button>
+                  </Box>)}
+                  {propertyEditError && <Typography variant="caption" color="error">{propertyEditError}</Typography>}
+                </Box>}
+              </Box>}
 
               {/* MODE A: CATALOG ASSET PLACEMENT */}
               {buildMode === 'place-asset' && (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <Typography variant="caption" sx={{ mt: 1, display: 'block', color: "var(--text-muted)", lineHeight: '1.4' }}>
+                    Click directly on the terrain grid to drop the selected model asset template.
+                  </Typography>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '200px', overflowY: 'auto' }}>
                     {assets.map(asset => (
                       <Button
@@ -1848,97 +2175,31 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           justifyContent: 'flex-start',
                           textTransform: 'none',
                           padding: '6px 10px',
-                          backgroundColor: assetKey === asset.key ? '#1e3a34' : '#10231f',
+                          backgroundColor: assetKey === asset.key ? "var(--bg-surface-2)" : "var(--bg-surface)",
                           border: '1px solid',
-                          borderColor: assetKey === asset.key ? '#ffe08a' : '#47423a',
+                          borderColor: assetKey === asset.key ? "var(--primary-border)" : "var(--border-main)",
                           borderRadius: '4px',
-                          color: '#fff',
+                          color: "var(--text-main)",
                           textAlign: 'left',
                           gap: '10px',
-                          '&:hover': { backgroundColor: '#16322c' }
+                          '&:hover': { backgroundColor: "var(--bg-surface)" }
                         }}
                       >
-                        <HomeWorkIcon sx={{ color: assetKey === asset.key ? '#7ce6ff' : '#94a3b8' }} />
+                        <HomeWorkIcon sx={{ color: assetKey === asset.key ? "var(--danger)" : "var(--text-muted)" }} />
                         <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                           <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px', lineHeight: 1.2 }}>{asset.name}</Typography>
-                          <Typography variant="caption" sx={{ color: '#94a3b8' }}>{asset.width_feet} x {asset.depth_feet} ft</Typography>
+                          <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>{asset.width_feet} x {asset.depth_feet} ft</Typography>
                         </Box>
                       </Button>
                     ))}
                   </Box>
-                  <Typography variant="caption" sx={{ mt: 1, display: 'block', color: '#94a3b8', lineHeight: '1.4' }}>
-                    Click directly on the terrain grid to drop the selected model asset template.
-                  </Typography>
-                </Box>
-              )}
-
-              {/* MODE B: POLYGON BLUEPRINT DRAFTING */}
-              {buildMode === 'draw-blueprint' && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  {!blueprintDraft ? (
-                    <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', py: 1 }}>
-                      Click on the map landscape grid to drop the first layout coordinate node of your custom architectural blueprint footprint polygon loop.
-                    </Typography>
-                  ) : (
-                    <>
-                      <Typography variant="body2" sx={{ color: '#fff', fontWeight: 'bold' }}>Drafting: {blueprintDraft.name}</Typography>
-                      <Typography variant="caption" sx={{ color: '#ffe08a', display: 'block', mb: 1 }}>
-                        Active Corners Placed: {blueprintDraft.levels?.[blueprintDraft.levels.length - 1]?.corners?.length || 0}
-                      </Typography>
-
-                      <Button variant="outlined" size="small" fullWidth onClick={() => setBlueprintDraft(closeBlueprintFootprint(blueprintDraft))} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
-                        Close Footprint Polygon Loop
-                      </Button>
-
-                      <Typography variant="caption">Trace the ground floor here. Add upper floors and basements from the building’s Levels section after saving.</Typography>
-
-                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mt: 0.5 }}>
-                        <Button disabled={(blueprintDraft.levels?.[0]?.corners.length || 0) < 3} variant="contained" color="success" size="small" onClick={() => { const finished = closeBlueprintFootprint(blueprintDraft); setBuildings(prev => [...prev.filter(b => b.id !== finished.id), finished]); setSelected(finished); setBlueprintDraft(null); setBuildMode('select-placed'); }}>
-                          Create Building
-                        </Button>
-                        <Button variant="contained" color="error" size="small" onClick={() => { setBlueprintDraft(null); setBuildMode('place-asset'); }}>
-                          Cancel
-                        </Button>
-                      </Box>
-                    </>
-                  )}
                 </Box>
               )}
 
               {/* MODE C: PROPERTY SELECTION & ADJUSTMENT TRACKS */}
               {['select-placed', 'move-selected'].includes(buildMode) && (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto' }}>
-                    {buildings.map(building => (
-                      <Button
-                        key={building.id}
-                        fullWidth
-                        onClick={() => setSelected(building)}
-                        sx={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'flex-start',
-                          textTransform: 'none',
-                          padding: '6px 10px',
-                          backgroundColor: building.id === selectedBuilding?.id ? '#1e3a34' : '#10231f',
-                          border: '1px solid',
-                          borderColor: building.id === selectedBuilding?.id ? '#ffe08a' : '#47423a',
-                          borderRadius: '4px',
-                          color: '#fff',
-                          textAlign: 'left',
-                          '&:hover': { backgroundColor: '#16322c' }
-                        }}
-                      >
-                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{building.name || 'Unnamed Structure'}</Typography>
-                        <Typography variant="caption" sx={{ color: '#94a3b8' }}>{Math.round(building.width_feet)} x {Math.round(building.depth_feet)} ft</Typography>
-                      </Button>
-                    ))}
-                    {!buildings.length && (
-                      <Typography variant="caption" sx={{ color: '#94a3b8', textAlign: 'center', display: 'block', py: 1 }}>No structures deployed yet.</Typography>
-                    )}
-                  </Box>
-
-                  <Typography variant="caption" sx={{ color: '#94a3b8', lineHeight: 1.35 }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-muted)", lineHeight: 1.35 }}>
                     {buildMode === 'move-selected'
                       ? 'Drag the selected structure on the map, then choose Done Moving.'
                       : 'Select a building to edit it or move it on the map.'}
@@ -2026,6 +2287,13 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           <Typography variant="caption">Rotation <strong>{Math.round((selectedBuilding.rotation || 0) * 180 / Math.PI)}°</strong></Typography>
                           <Slider min={0} max={359} step={1} value={Math.round((selectedBuilding.rotation || 0) * 180 / Math.PI)} onChange={(event, value) => updateSelectedBuilding(building => ({ ...building, rotation: Number(value) * Math.PI / 180 }))} />
                         </Box>
+                        <Select size="small" fullWidth aria-label="Structure elevation mode" value={selectedBuilding.elevation_mode || 'relative_to_terrain'} onChange={event => updateSelectedBuilding(building => ({ ...building, elevation_mode: event.target.value }))}>
+                          <MenuItem value="relative_to_terrain">Elevation above terrain</MenuItem>
+                          <MenuItem value="fixed_world">Fixed settlement elevation</MenuItem>
+                        </Select>
+                        <ValidatedNumberField label={selectedBuilding.elevation_mode === 'fixed_world' ? 'Base elevation (ft)' : 'Base elevation above terrain (ft)'} size="small" fullWidth
+                          value={Number(selectedBuilding.elevation) || 0} min={-10000} max={10000}
+                          onCommit={value => updateSelectedBuilding(building => ({ ...building, elevation: value }))} />
                       </section>
 
                       {selectedBuilding.is_blueprint && <BlueprintLevels key={selectedBuilding.id} building={selectedBuilding}
@@ -2039,6 +2307,37 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       </section>
                     </Box>
                   )}
+                  {manageCatalog === 'buildings' && <Box className="tool-existing-list" aria-label="Existing buildings">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto' }}>
+                    {buildings.map(building => (
+                      <Button
+                        key={building.id}
+                        fullWidth
+                        onClick={() => setSelected(building)}
+                        sx={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'flex-start',
+                          textTransform: 'none',
+                          padding: '6px 10px',
+                          backgroundColor: building.id === selectedBuilding?.id ? "var(--bg-surface-2)" : "var(--bg-surface)",
+                          border: '1px solid',
+                          borderColor: building.id === selectedBuilding?.id ? "var(--primary-border)" : "var(--border-main)",
+                          borderRadius: '4px',
+                          color: "var(--text-main)",
+                          textAlign: 'left',
+                          '&:hover': { backgroundColor: "var(--bg-surface)" }
+                        }}
+                      >
+                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px' }}>{building.name || 'Unnamed Structure'}</Typography>
+                        <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>{Math.round(building.width_feet)} x {Math.round(building.depth_feet)} ft</Typography>
+                      </Button>
+                    ))}
+                    {!buildings.length && (
+                      <Typography variant="caption" sx={{ color: "var(--text-muted)", textAlign: 'center', display: 'block', py: 1 }}>No structures deployed yet.</Typography>
+                    )}
+                  </Box>
+                  </Box>}
                 </Box>
               )}
             </aside>
@@ -2046,14 +2345,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
           {activeTool === 'travel' && (
             <aside className="editor-menu travel-manager-panel">
-              <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+              <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
                 PLAN A JOURNEY
               </Typography>
 
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {/* Destination Selector */}
                 <Box>
-                  <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5, fontWeight: 'bold' }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5, fontWeight: 'bold' }}>
                     Destination
                   </Typography>
                   <FormControl size="small" fullWidth>
@@ -2061,10 +2360,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       value={destination?.id || ''}
                       onChange={e => chooseDestination(travelContext.points_of_interest.find(point => point.id === Number(e.target.value)) || null)}
                       sx={{
-                        backgroundColor: '#23352d',
-                        color: '#d5ddd7',
-                        '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' },
-                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' }
+                        backgroundColor: "var(--bg-surface-2)",
+                        color: "var(--text-main)",
+                        '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" },
+                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" }
                       }}
                     >
                       <MenuItem value="">Select a point of interest</MenuItem>
@@ -2087,10 +2386,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
                 {/* Destination Metadata Card & Route Calculator */}
                 {destination && (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, background: '#101815', p: 1.5, borderRadius: '4px', border: '1px solid #3d4d43' }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, background: "var(--bg-app)", p: 1.5, borderRadius: '4px', border: "1px solid var(--border-main)" }}>
                     <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#fff' }}>{destination.name}</Typography>
-                      <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold', color: "var(--text-main)" }}>{destination.name}</Typography>
+                      <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
                         {Math.round(destination.x)} E · {Math.round(destination.y)} N
                       </Typography>
                     </Box>
@@ -2099,7 +2398,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       size="small"
                       startIcon={<NavigationIcon />}
                       onClick={() => calculateTravel()}
-                      sx={{ backgroundColor: '#bd9149', color: '#17211c', fontWeight: 'bold', textTransform: 'none', '&:hover': { backgroundColor: '#d4a75b' } }}
+                      sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", fontWeight: 'bold', textTransform: 'none', '&:hover': { backgroundColor: "var(--accent)" } }}
                     >
                       Calculate Travel Options
                     </Button>
@@ -2108,7 +2407,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
                 {/* Calculated Travel Route Options */}
                 {travelPlan && (
-                  <Box sx={{ borderTop: '1px solid #33443b', pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  <Box sx={{ borderTop: "1px solid var(--border-main)", pt: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: '150px', overflowY: 'auto' }}>
                       {travelPlan.options.map(option => (
                         <Box
@@ -2118,21 +2417,21 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                             flexDirection: 'column',
                             padding: '8px',
                             borderRadius: '4px',
-                            backgroundColor: '#10231f',
-                            border: '1px solid #47423a',
+                            backgroundColor: "var(--bg-surface)",
+                            border: "1px solid var(--border-main)",
                             opacity: option.available ? 1 : 0.4
                           }}
                         >
-                          <Typography variant="body2" sx={{ fontWeight: 600, color: option.available ? '#fff' : '#ef5350' }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: option.available ? "var(--text-main)" : "var(--danger)" }}>
                             {option.label}
                           </Typography>
                           {option.available ? (
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
-                              <Typography variant="caption" sx={{ color: '#ffe08a' }}>{formatDuration(option.elapsed_minutes)}</Typography>
-                              <Typography variant="caption" sx={{ color: '#94a3b8' }}>{option.distance_miles} mi · {formatCost(option.cost_cp)}</Typography>
+                              <Typography variant="caption" sx={{ color: "var(--text-main)" }}>{formatDuration(option.elapsed_minutes)}</Typography>
+                              <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>{option.distance_miles} mi · {formatCost(option.cost_cp)}</Typography>
                             </Box>
                           ) : (
-                            <Typography variant="caption" sx={{ color: '#ef5350', fontStyle: 'italic', mt: 0.5 }}>
+                            <Typography variant="caption" sx={{ color: "var(--danger)", fontStyle: 'italic', mt: 0.5 }}>
                               {option.unavailable_reason}
                             </Typography>
                           )}
@@ -2161,18 +2460,18 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               {/* Economy Title & Trigger Actions Row */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Box>
-                  <Typography variant="caption" sx={{ color: '#cbbd9d', fontWeight: 800, display: 'block', letterSpacing: '.13em' }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-muted)", fontWeight: 800, display: 'block', letterSpacing: '.13em' }}>
                     SETTLEMENT ECONOMY
                   </Typography>
-                  <Typography variant="h6" sx={{ color: '#fff', fontWeight: 700, mt: -0.5 }}>
+                  <Typography variant="h6" sx={{ color: "var(--text-main)", fontWeight: 700, mt: -0.5 }}>
                     Market Day {economy.day_index}
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                  <Button variant="outlined" size="small" onClick={() => runEconomy(1)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+                  <Button variant="outlined" size="small" onClick={() => runEconomy(1)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
                     Run Day
                   </Button>
-                  <Button variant="contained" size="small" onClick={() => runEconomy(10)} sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold', '&:hover': { backgroundColor: '#d4a75b' } }}>
+                  <Button variant="contained" size="small" onClick={() => runEconomy(10)} sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", textTransform: 'none', fontWeight: 'bold', '&:hover': { backgroundColor: "var(--accent)" } }}>
                     Run Tenday
                   </Button>
                 </Box>
@@ -2188,25 +2487,25 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       sx={{
                         padding: '10px',
                         borderRadius: '4px',
-                        backgroundColor: '#10231f',
+                        backgroundColor: "var(--bg-surface)",
                         border: '1px solid',
-                        borderColor: isShortage ? '#ef5350' : '#47423a',
+                        borderColor: isShortage ? "var(--primary-border)" : "var(--border-main)",
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 0.5
                       }}
                     >
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600, color: isShortage ? '#ff8a80' : '#fff' }}>{market.name}</Typography>
-                        <Typography variant="body2" sx={{ color: '#ffe08a', fontWeight: 'bold' }}>{market.current_price_cp} cp</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: isShortage ? "var(--danger)" : "var(--text-main)" }}>{market.name}</Typography>
+                        <Typography variant="body2" sx={{ color: "var(--text-main)", fontWeight: 'bold' }}>{market.current_price_cp} cp</Typography>
                       </Box>
 
-                      <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                      <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
                         {Math.round(market.stock)} / {Math.round(market.target_stock)} units · {market.price_index}× base
                       </Typography>
 
                       {market.last_imported > 0 && (
-                        <Typography variant="caption" sx={{ color: '#81c784', fontStyle: 'italic', display: 'block' }}>
+                        <Typography variant="caption" sx={{ color: "var(--success)", fontStyle: 'italic', display: 'block' }}>
                           Imported {Math.round(market.last_imported)} today
                         </Typography>
                       )}
@@ -2217,9 +2516,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           min={1}
                           value={commodityQuantity}
                           onCommit={setCommodityQuantity}
-                          sx={{ width: '65px', '& .MuiInputBase-input': { padding: '4px 6px', fontSize: '11px', color: '#fff' } }}
+                          sx={{ width: '65px', '& .MuiInputBase-input': { padding: '4px 6px', fontSize: '11px', color: "var(--text-main)" } }}
                         />
-                        <Button variant="contained" size="small" fullWidth onClick={() => disruptMarket(market.commodity_key)} sx={{ backgroundColor: '#23352d', color: '#d5ddd7', textTransform: 'none', fontSize: '10px', padding: '4px' }}>
+                        <Button variant="contained" size="small" fullWidth onClick={() => disruptMarket(market.commodity_key)} sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)", textTransform: 'none', fontSize: '10px', padding: '4px' }}>
                           Party Buys
                         </Button>
                       </Box>
@@ -2229,17 +2528,17 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               </Box>
 
               {/* Business Financial Analytics Section */}
-              <Box sx={{ borderTop: '1px solid #33443b', pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Box sx={{ borderTop: "1px solid var(--border-main)", pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
                   <Box sx={{ flex: 1.2 }}>
-                    <Typography variant="caption" sx={{ color: '#aab4ad', display: 'block', mb: 0.5, fontWeight: 'bold' }}>
+                    <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5, fontWeight: 'bold' }}>
                       Business Venture Selection
                     </Typography>
                     <FormControl size="small" fullWidth>
                       <Select
                         value={selectedBusinessId || ''}
                         onChange={e => setSelectedBusinessId(Number(e.target.value))}
-                        sx={{ backgroundColor: '#23352d', color: '#d5ddd7', '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' } }}
+                        sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)", '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" } }}
                       >
                         {economy.businesses.map(business => (
                           <MenuItem key={business.id} value={business.id}>
@@ -2251,14 +2550,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   </Box>
 
                   {selectedBusiness && (
-                    <Box sx={{ flex: 1, background: '#101815', p: 1, borderRadius: '4px', border: '1px solid #3d4d43' }}>
+                    <Box sx={{ flex: 1, background: "var(--bg-app)", p: 1, borderRadius: '4px', border: "1px solid var(--border-main)" }}>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-                        <Typography variant="caption" sx={{ fontWeight: 'bold', color: selectedBusiness.closed ? '#ef5350' : '#4caf50' }}>
+                        <Typography variant="caption" sx={{ fontWeight: 'bold', color: selectedBusiness.closed ? "var(--danger)" : "var(--success)" }}>
                           {selectedBusiness.closed ? 'CLOSED' : 'OPERATING'}
                         </Typography>
-                        <Typography variant="caption" sx={{ color: '#ffe08a', fontWeight: 'bold' }}>{formatCost(selectedBusiness.cash_reserves_cp)}</Typography>
+                        <Typography variant="caption" sx={{ color: "var(--text-main)", fontWeight: 'bold' }}>{formatCost(selectedBusiness.cash_reserves_cp)}</Typography>
                       </Box>
-                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', lineHeight: 1.2 }}>
+                      <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', lineHeight: 1.2 }}>
                         Foot Traffic: {selectedBusiness.foot_traffic}x <br /> Slump Loop: {selectedBusiness.slump_days} days
                       </Typography>
                     </Box>
@@ -2268,12 +2567,12 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 {/* SVG Analytics Charts Wrap */}
                 <Box className="chart-wrap" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#fff' }}>Daily Performance History</Typography>
-                    <Typography variant="caption" sx={{ color: '#7ce6ff' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', color: "var(--text-main)" }}>Daily Performance History</Typography>
+                    <Typography variant="caption" sx={{ color: "var(--danger)" }}>
                       Tenday: {formatCost(tenday.revenue)} rev · {formatCost(tenday.profit)} prof
                     </Typography>
                   </Box>
-                  <Box sx={{ background: '#0a100d', p: 1, borderRadius: '4px', border: '1px solid #23352d' }}>
+                  <Box sx={{ background: "var(--bg-app)", p: 1, borderRadius: '4px', border: "1px solid var(--border-main)" }}>
                     <SalesChart rows={selectedHistory} />
                   </Box>
                 </Box>
@@ -2284,35 +2583,35 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
           {activeTool === 'time' && (
             <aside className="editor-menu time-manager-panel">
-              <Typography variant="subtitle2" sx={{ color: '#cbbd9d', fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
+              <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
                 TIME OF DAY MANAGER
               </Typography>
 
               {/* SECTION A: STEP JUMP ADVANCEMENTS CONTAINER */}
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 2 }}>
-                <Typography variant="caption" sx={{ color: '#8f9d95', fontWeight: 700, letterSpacing: '0.04em', mb: 0.5 }}>
+                <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontWeight: 700, letterSpacing: '0.04em', mb: 0.5 }}>
                   STEP JUMPS
                 </Typography>
 
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-                  <Button variant="contained" size="small" startIcon={<ArrowBackIcon />} onClick={() => advanceTime(-60)} sx={{ backgroundColor: '#23352d', textTransform: 'none', fontSize: '11px' }}>
+                  <Button variant="contained" size="small" startIcon={<ArrowBackIcon />} onClick={() => advanceTime(-60)} sx={{ backgroundColor: "var(--bg-surface-2)", textTransform: 'none', fontSize: '11px' }}>
                     -1 Hour
                   </Button>
-                  <Button variant="contained" size="small" endIcon={<ArrowForwardIcon />} onClick={() => advanceTime(60)} sx={{ backgroundColor: '#23352d', textTransform: 'none', fontSize: '11px' }}>
+                  <Button variant="contained" size="small" endIcon={<ArrowForwardIcon />} onClick={() => advanceTime(60)} sx={{ backgroundColor: "var(--bg-surface-2)", textTransform: 'none', fontSize: '11px' }}>
                     +1 Hour
                   </Button>
 
-                  <Button variant="contained" size="small" startIcon={<FastRewindIcon />} onClick={() => advanceTime(-720)} sx={{ backgroundColor: '#23352d', textTransform: 'none', fontSize: '11px' }}>
+                  <Button variant="contained" size="small" startIcon={<FastRewindIcon />} onClick={() => advanceTime(-720)} sx={{ backgroundColor: "var(--bg-surface-2)", textTransform: 'none', fontSize: '11px' }}>
                     -12 Hours
                   </Button>
-                  <Button variant="contained" size="small" endIcon={<FastForwardIcon />} onClick={() => advanceTime(720)} sx={{ backgroundColor: '#23352d', textTransform: 'none', fontSize: '11px' }}>
+                  <Button variant="contained" size="small" endIcon={<FastForwardIcon />} onClick={() => advanceTime(720)} sx={{ backgroundColor: "var(--bg-surface-2)", textTransform: 'none', fontSize: '11px' }}>
                     +12 Hours
                   </Button>
 
-                  <Button variant="contained" size="small" startIcon={<CalendarTodayIcon sx={{ scale: '0.8' }} />} onClick={() => advanceTime(-1440)} sx={{ backgroundColor: '#23352d', textTransform: 'none', fontSize: '11px' }}>
+                  <Button variant="contained" size="small" startIcon={<CalendarTodayIcon sx={{ scale: '0.8' }} />} onClick={() => advanceTime(-1440)} sx={{ backgroundColor: "var(--bg-surface-2)", textTransform: 'none', fontSize: '11px' }}>
                     -1 Day
                   </Button>
-                  <Button variant="contained" size="small" endIcon={<CalendarTodayIcon sx={{ scale: '0.8' }} />} onClick={() => advanceTime(1440)} sx={{ backgroundColor: '#23352d', textTransform: 'none', fontSize: '11px' }}>
+                  <Button variant="contained" size="small" endIcon={<CalendarTodayIcon sx={{ scale: '0.8' }} />} onClick={() => advanceTime(1440)} sx={{ backgroundColor: "var(--bg-surface-2)", textTransform: 'none', fontSize: '11px' }}>
                     +1 Day
                   </Button>
                 </Box>
@@ -2320,14 +2619,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
               {/* SECTION B: DYNAMIC CALENDAR SCHEMA SYNC INTEGRATION */}
               {!activeCalendar ? (
-                <Box className="chart-empty" sx={{ padding: '12px', textAlign: 'center', background: '#101815', borderRadius: '4px', border: '1px solid #3d4d43' }}>
-                  <Typography variant="caption" sx={{ color: '#94a3b8', fontStyle: 'italic' }}>
+                <Box className="chart-empty" sx={{ padding: '12px', textAlign: 'center', background: "var(--bg-app)", borderRadius: '4px', border: "1px solid var(--border-main)" }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-muted)", fontStyle: 'italic' }}>
                     Synchronizing calendar matrix with database...
                   </Typography>
                 </Box>
               ) : (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, borderTop: '1px solid #33443b', pt: 1.5, mb: 2 }}>
-                  <Typography variant="caption" sx={{ color: '#8f9d95', fontWeight: 700, letterSpacing: '0.04em' }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, borderTop: "1px solid var(--border-main)", pt: 1.5, mb: 2 }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontWeight: 700, letterSpacing: '0.04em' }}>
                     MANUAL DATE &amp; TIME ENTRY
                   </Typography>
 
@@ -2338,7 +2637,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       size="small"
                       value={manualDate.year}
                       onCommit={value => setManualDate(prev => ({ ...prev, year: value }))}
-                      sx={{ input: { color: '#fff', fontSize: '12px' } }}
+                      sx={{ input: { color: "var(--text-main)", fontSize: '12px' } }}
                     />
 
                     <FormControl size="small" fullWidth>
@@ -2354,9 +2653,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         sx={{
                           height: '40px',
                           fontSize: '11px',
-                          backgroundColor: '#23352d',
-                          color: '#d5ddd7',
-                          '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' }
+                          backgroundColor: "var(--bg-surface-2)",
+                          color: "var(--text-main)",
+                          '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" }
                         }}
                       >
                         {activeCalendar.months.map((m, idx) => (
@@ -2373,7 +2672,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       min={1} max={activeCalendar.months[manualDate.month_index]?.length || 30}
                       value={manualDate.day}
                       onCommit={value => setManualDate(prev => ({ ...prev, day: value }))}
-                      sx={{ input: { color: '#fff', fontSize: '12px' } }}
+                      sx={{ input: { color: "var(--text-main)", fontSize: '12px' } }}
                     />
                   </Box>
 
@@ -2385,7 +2684,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       min={0} max={23}
                       value={manualDate.hour}
                       onCommit={value => setManualDate(prev => ({ ...prev, hour: value }))}
-                      sx={{ input: { color: '#fff', fontSize: '12px' } }}
+                      sx={{ input: { color: "var(--text-main)", fontSize: '12px' } }}
                     />
                     <ValidatedNumberField
                       label="Minute (0-59)"
@@ -2393,7 +2692,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       min={0} max={59}
                       value={manualDate.minute}
                       onCommit={value => setManualDate(prev => ({ ...prev, minute: value }))}
-                      sx={{ input: { color: '#fff', fontSize: '12px' } }}
+                      sx={{ input: { color: "var(--text-main)", fontSize: '12px' } }}
                     />
                   </Box>
 
@@ -2406,7 +2705,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         detail: { ...manualDate }
                       }));
                     }}
-                    sx={{ backgroundColor: '#bd9149', color: '#17211c', fontWeight: 'bold', '&:hover': { backgroundColor: '#d4a75b' } }}
+                    sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", fontWeight: 'bold', '&:hover': { backgroundColor: "var(--accent)" } }}
                   >
                     Apply Exact Target Timeline
                   </Button>
@@ -2414,8 +2713,8 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               )}
 
               {/* SECTION C: SYSTEM HIGH-CONTRAST QUICK ACTION PRESETS */}
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, borderTop: '1px solid #33443b', pt: 1.5 }}>
-                <Typography variant="caption" sx={{ color: '#8f9d95', fontWeight: 700, letterSpacing: '0.04em', mb: 0.5 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, borderTop: "1px solid var(--border-main)", pt: 1.5 }}>
+                <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontWeight: 700, letterSpacing: '0.04em', mb: 0.5 }}>
                   QUICK PRESETS
                 </Typography>
 
@@ -2423,36 +2722,36 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   <Button
                     variant="outlined"
                     size="small"
-                    startIcon={<WbTwilightIcon sx={{ color: '#ffb74d' }} />}
+                    startIcon={<WbTwilightIcon sx={{ color: "var(--text-main)" }} />}
                     onClick={() => window.dispatchEvent(new CustomEvent('settlement-time-absolute-request', { detail: { hour: 6, minute: 0, day } }))}
-                    sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
+                    sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
                   >
                     Dawn (6:00)
                   </Button>
                   <Button
                     variant="outlined"
                     size="small"
-                    startIcon={<WbSunnyIcon sx={{ color: '#fbc02d' }} />}
+                    startIcon={<WbSunnyIcon sx={{ color: "var(--text-main)" }} />}
                     onClick={() => window.dispatchEvent(new CustomEvent('settlement-time-absolute-request', { detail: { hour: 12, minute: 0, day } }))}
-                    sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
+                    sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
                   >
                     Noon (12:00)
                   </Button>
                   <Button
                     variant="outlined"
                     size="small"
-                    startIcon={<NightsStayIcon sx={{ color: '#81c784' }} />}
+                    startIcon={<NightsStayIcon sx={{ color: "var(--success)" }} />}
                     onClick={() => window.dispatchEvent(new CustomEvent('settlement-time-absolute-request', { detail: { hour: 18, minute: 0, day } }))}
-                    sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
+                    sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
                   >
                     Dusk (18:00)
                   </Button>
                   <Button
                     variant="outlined"
                     size="small"
-                    startIcon={<BedtimeIcon sx={{ color: '#90caf9' }} />}
+                    startIcon={<BedtimeIcon sx={{ color: "var(--info)" }} />}
                     onClick={() => window.dispatchEvent(new CustomEvent('settlement-time-absolute-request', { detail: { hour: 0, minute: 0, day } }))}
-                    sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
+                    sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none', fontSize: '11px', justifyContent: 'flex-start' }}
                   >
                     Midnight (0:00)
                   </Button>
@@ -2469,20 +2768,20 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 position: 'absolute',
                 top: '18px',
                 right: '18px',
-                backgroundColor: '#14201cce',
-                border: '1px solid #ffffff2c',
+                backgroundColor: "var(--overlay)",
+                border: "1px solid var(--border-main)",
                 borderRadius: '6px',
                 padding: '12px',
                 width: '260px',
                 zIndex: 45,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                boxShadow: "0 4px 12px var(--border-main)",
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 1.5
               }}
             >
               <Box className="location-search">
-                <Typography variant="caption" sx={{ color: '#8f9d95', fontWeight: 800, display: 'block', letterSpacing: '.13em', mb: 0.5 }}>
+                <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontWeight: 800, display: 'block', letterSpacing: '.13em', mb: 0.5 }}>
                   FIND A LOCATION
                 </Typography>
 
@@ -2494,7 +2793,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   value={locationSearch}
                   onChange={event => setLocationSearch(event.target.value)}
                   inputProps={{ 'aria-label': 'Search settlement locations' }}
-                  sx={{ input: { color: '#fff', fontSize: '12px' } }}
+                  sx={{ input: { color: "var(--text-main)", fontSize: '12px' } }}
                 />
 
                 {/* Dynamic Scrollable Results Stack Container */}
@@ -2508,7 +2807,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       maxHeight: '160px',
                       overflowY: 'auto',
                       mt: 1,
-                      borderTop: '1px solid #33443b',
+                      borderTop: "1px solid var(--border-main)",
                       pt: 1
                     }}
                   >
@@ -2523,26 +2822,26 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           alignItems: 'flex-start',
                           textTransform: 'none',
                           padding: '6px 10px',
-                          backgroundColor: selectedLocation?.id === location.id ? '#1e3a34' : '#10231f',
+                          backgroundColor: selectedLocation?.id === location.id ? "var(--bg-surface-2)" : "var(--bg-surface)",
                           border: '1px solid',
-                          borderColor: selectedLocation?.id === location.id ? '#ffe08a' : '#47423a',
+                          borderColor: selectedLocation?.id === location.id ? "var(--primary-border)" : "var(--border-main)",
                           borderRadius: '4px',
-                          color: '#fff',
+                          color: "var(--text-main)",
                           textAlign: 'left',
-                          '&:hover': { backgroundColor: '#16322c' }
+                          '&:hover': { backgroundColor: "var(--bg-surface)" }
                         }}
                       >
                         <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '12px', lineHeight: 1.2 }}>
                           {location.title}
                         </Typography>
-                        <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '10px' }}>
-                          {location.type}{location.owner ? ` · ${location.owner}` : ''}{textAffiliation(location)}
+                        <Typography variant="caption" sx={{ color: "var(--text-muted)", fontSize: '10px' }}>
+                          {location.type}{location.propertyName ? ` · ${location.propertyName}` : ''}{location.owner ? ` · ${location.owner}` : ''}{textAffiliation(location)}
                         </Typography>
                       </Button>
                     ))}
 
                     {!locationResults.length && (
-                      <Typography variant="caption" sx={{ color: '#94a3b8', textAlign: 'center', display: 'block', py: 1 }}>
+                      <Typography variant="caption" sx={{ color: "var(--text-muted)", textAlign: 'center', display: 'block', py: 1 }}>
                         No matching mapped locations.
                       </Typography>
                     )}
@@ -2555,7 +2854,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                     className="location-search-selection"
                     sx={{
                       mt: 1.5,
-                      borderTop: '1px solid #33443b',
+                      borderTop: "1px solid var(--border-main)",
                       pt: 1.5,
                       display: 'flex',
                       flexDirection: 'column',
@@ -2563,11 +2862,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                     }}
                   >
                     <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#ffe08a' }}>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold', color: "var(--text-main)" }}>
                         {selectedLocation.title}
                       </Typography>
-                      <Typography variant="caption" sx={{ color: '#cbd5e1', display: 'block' }}>
-                        {selectedLocation.type}{selectedLocation.affiliation ? ` · ${selectedLocation.affiliation}` : ''}
+                      <Typography variant="caption" sx={{ color: "var(--text-main)", display: 'block' }}>
+                        {selectedLocation.type}{selectedLocation.propertyName ? ` · ${selectedLocation.propertyName}` : ''}{selectedLocation.affiliation ? ` · ${selectedLocation.affiliation}` : ''}
                       </Typography>
                     </Box>
 
@@ -2576,8 +2875,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         variant="outlined"
                         size="small"
                         startIcon={<CenterFocusStrongIcon />}
-                        onClick={() => centerDmOn(selectedLocation)}
-                        sx={{ color: '#d5ddd7', borderColor: '#53645a', fontSize: '10px', textTransform: 'none', padding: '4px' }}
+                        disabled={!selectedLocation.point}
+                        onClick={() => selectedLocation.kind === 'property' ? focusPropertyBoundary(selectedLocation.source) : centerDmOn(selectedLocation)}
+                        sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", fontSize: '10px', textTransform: 'none', padding: '4px' }}
                       >
                         Center DM
                       </Button>
@@ -2585,8 +2885,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         variant="contained"
                         size="small"
                         startIcon={<OpenInNewIcon />}
+                        disabled={!selectedLocation.point}
                         onClick={() => centerPlayerOnLocation(selectedLocation)}
-                        sx={{ backgroundColor: '#bd9149', color: '#17211c', fontSize: '10px', textTransform: 'none', padding: '4px', '&:hover': { backgroundColor: '#d4a75b' } }}
+                        sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", fontSize: '10px', textTransform: 'none', padding: '4px', '&:hover': { backgroundColor: "var(--accent)" } }}
                       >
                         Center Player
                       </Button>
@@ -2615,29 +2916,29 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
           fullWidth
           PaperProps={{
             sx: {
-              backgroundColor: '#14201c',
+              backgroundColor: "var(--bg-surface)",
               backgroundImage: 'none',
-              border: '1px solid #9f3a3a',
-              color: '#d5ddd7',
+              border: "1px solid var(--border-main)",
+              color: "var(--text-main)",
               p: 1
             }
           }}
         >
-          <DialogTitle id="building-delete-dialog-title" sx={{ color: '#fff', fontWeight: 700, pb: 1 }}>
+          <DialogTitle id="building-delete-dialog-title" sx={{ color: "var(--text-main)", fontWeight: 700, pb: 1 }}>
             Delete {buildingDeleteTarget?.name || 'this building'}?
           </DialogTitle>
           <DialogContent>
-            <Typography id="building-delete-dialog-description" variant="body2" sx={{ color: '#c3cec7', lineHeight: 1.5, mb: 1.5 }}>
+            <Typography id="building-delete-dialog-description" variant="body2" sx={{ color: "var(--text-muted)", lineHeight: 1.5, mb: 1.5 }}>
               This removes the selected building from the settlement. Press Enter to confirm or Escape to cancel.
             </Typography>
             <FormControlLabel
-              control={<Checkbox checked={skipBuildingDeleteConfirmation} onChange={event => setSkipBuildingDeleteConfirmation(event.target.checked)} sx={{ color: '#e05252', '&.Mui-checked': { color: '#e05252' } }} />}
+              control={<Checkbox checked={skipBuildingDeleteConfirmation} onChange={event => setSkipBuildingDeleteConfirmation(event.target.checked)} sx={{ color: "var(--danger)", '&.Mui-checked': { color: "var(--danger)" } }} />}
               label="Don't ask me again for this session"
-              sx={{ color: '#d5ddd7', alignItems: 'center' }}
+              sx={{ color: "var(--text-main)", alignItems: 'center' }}
             />
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
-            <Button variant="outlined" onClick={closeBuildingDeleteDialog} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+            <Button variant="outlined" onClick={closeBuildingDeleteDialog} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
               Cancel
             </Button>
             <Button autoFocus variant="contained" color="error" startIcon={<DeleteIcon />} onClick={confirmBuildingDeletion} sx={{ fontWeight: 'bold', textTransform: 'none' }}>
@@ -2646,17 +2947,18 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
           </DialogActions>
         </Dialog>
 
-        <Dialog
+        <><Dialog
           open={Boolean(buildingEditDraft)}
           onClose={() => setBuildingEditDraft(null)}
           maxWidth="sm"
           fullWidth
           PaperProps={{
+            className: 'building-details-dialog',
             sx: {
-              backgroundColor: '#14201c',
+              backgroundColor: "var(--bg-surface)",
               backgroundImage: 'none', // Overrides default light opacity filter layers
-              border: '1px solid #53645a',
-              color: '#d5ddd7',
+              border: "1px solid var(--border-main)",
+              color: "var(--text-main)",
               p: 1
             }
           }}
@@ -2665,14 +2967,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
             <Box component="form" onSubmit={event => { event.preventDefault(); saveBuildingEditor(); }}>
               <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, px: 2 }}>
                 <Box>
-                  <Typography variant="caption" sx={{ color: '#cbbd9d', fontWeight: 800, display: 'block', letterSpacing: '.06em' }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-muted)", fontWeight: 800, display: 'block', letterSpacing: '.06em' }}>
                     EDIT BUILDING
                   </Typography>
-                  <Typography variant="h5" component="h2" sx={{ color: '#fff', fontWeight: 700, mt: -0.5 }}>
+                  <Typography variant="h5" component="h2" sx={{ color: "var(--text-main)", fontWeight: 700, mt: -0.5 }}>
                     {buildingEditDraft.name || 'Building'}
                   </Typography>
                 </Box>
-                <IconButton onClick={() => setBuildingEditDraft(null)} aria-label="Close" sx={{ color: '#8f9d95' }}>
+                <IconButton onClick={() => setBuildingEditDraft(null)} aria-label="Close" sx={{ color: "var(--text-subtle)" }}>
                   <CloseIcon />
                 </IconButton>
               </DialogTitle>
@@ -2690,7 +2992,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   />
 
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                    <Typography variant="caption" sx={{ color: '#aab4ad', mb: 0.5, fontWeight: 'bold' }}>Model &amp; Footprint</Typography>
+                    <Typography variant="caption" sx={{ color: "var(--text-muted)", mb: 0.5, fontWeight: 'bold' }}>Model &amp; Footprint</Typography>
                     <Select
                       size="small"
                       value={buildingEditDraft.is_blueprint ? buildingEditDraft.asset_key || 'blueprint' : buildingEditDraft.asset_key || ''}
@@ -2708,10 +3010,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         }));
                       }}
                       sx={{
-                        backgroundColor: '#23352d',
-                        color: '#d5ddd7',
-                        '.MuiOutlinedInput-notchedOutline': { borderColor: '#53645a' },
-                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#bd9149' }
+                        backgroundColor: "var(--bg-surface-2)",
+                        color: "var(--text-main)",
+                        '.MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" },
+                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" }
                       }}
                     >
                       {buildingEditDraft.is_blueprint && (
@@ -2789,19 +3091,19 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                     inputProps={{ step: 300 }}
                   />
 
-                  <Typography variant="caption" sx={{ gridColumn: 'span 2', color: '#aab4ad' }}>
+                  <Typography variant="caption" sx={{ gridColumn: 'span 2', color: "var(--text-muted)" }}>
                     Hours repeat daily. A closing time before opening continues past midnight; matching times mean open 24 hours. Leave both blank when hours are unknown.
                   </Typography>
 
                   <FormControl size="small" sx={{ gridColumn: 'span 2' }}>
-                    <Typography variant="caption" sx={{ color: '#aab4ad', mb: 0.5, fontWeight: 'bold' }}>
+                    <Typography variant="caption" sx={{ color: "var(--text-muted)", mb: 0.5, fontWeight: 'bold' }}>
                       Linked economy business
                     </Typography>
                     <Select
                       value={buildingEditDraft.economy_business_id || ''}
                       displayEmpty
                       onChange={event => setBuildingEditDraft(value => ({ ...value, economy_business_id: event.target.value || null }))}
-                      sx={{ backgroundColor: '#23352d', color: '#d5ddd7' }}
+                      sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}
                     >
                       <MenuItem value="">Match a unique business name automatically</MenuItem>
                       {buildingEditDraft.economy_business_id && !economy.businesses.some(business => String(business.id) === String(buildingEditDraft.economy_business_id)) && (
@@ -2833,16 +3135,16 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               </DialogContent>
 
               <DialogActions sx={{ padding: 2, px: 2, gap: 1 }}>
-                <Button variant="outlined" onClick={() => setBuildingEditDraft(null)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+                <Button variant="outlined" onClick={() => setBuildingEditDraft(null)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={Boolean(buildingEditDraft.opens_at) !== Boolean(buildingEditDraft.closes_at)} variant="contained" sx={{ backgroundColor: '#bd9149', color: '#17211c', textTransform: 'none', fontWeight: 'bold', '&:hover': { backgroundColor: '#d4a75b' } }}>
+                <Button type="submit" disabled={Boolean(buildingEditDraft.opens_at) !== Boolean(buildingEditDraft.closes_at)} variant="contained" sx={{ backgroundColor: "var(--accent)", color: "var(--text-on-accent)", textTransform: 'none', fontWeight: 'bold', '&:hover': { backgroundColor: "var(--accent)" } }}>
                   Save Building Changes
                 </Button>
               </DialogActions>
             </Box>
           )}
-        </Dialog>
+        </Dialog></>
 
         <Dialog
           open={Boolean(buildingEvents)}
@@ -2851,10 +3153,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
           fullWidth
           PaperProps={{
             sx: {
-              backgroundColor: '#14201c',
+              backgroundColor: "var(--bg-surface)",
               backgroundImage: 'none',
-              border: '1px solid #53645a',
-              color: '#d5ddd7',
+              border: "1px solid var(--border-main)",
+              color: "var(--text-main)",
               p: 1
             }
           }}
@@ -2863,20 +3165,20 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
             <>
               <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, px: 2 }}>
                 <Box>
-                  <Typography variant="caption" sx={{ color: '#cbbd9d', fontWeight: 800, display: 'block', letterSpacing: '.06em' }}>
+                  <Typography variant="caption" sx={{ color: "var(--text-muted)", fontWeight: 800, display: 'block', letterSpacing: '.06em' }}>
                     CHRONICLE SCENARIO MATRIX
                   </Typography>
-                  <Typography variant="h5" component="h2" sx={{ color: '#fff', fontWeight: 700, mt: -0.5 }}>
+                  <Typography variant="h5" component="h2" sx={{ color: "var(--text-main)", fontWeight: 700, mt: -0.5 }}>
                     {selectedBuilding?.name || 'Local Landmark'} Events
                   </Typography>
                 </Box>
-                <IconButton onClick={() => setBuildingEvents(null)} aria-label="Close" sx={{ color: '#8f9d95' }}>
+                <IconButton onClick={() => setBuildingEvents(null)} aria-label="Close" sx={{ color: "var(--text-subtle)" }}>
                   <CloseIcon />
                 </IconButton>
               </DialogTitle>
 
               <DialogContent sx={{ px: 2, py: 1 }}>
-                <Typography variant="body2" sx={{ color: '#aab4ad', mb: 2, lineHeight: 1.45 }}>
+                <Typography variant="body2" sx={{ color: "var(--text-muted)", mb: 2, lineHeight: 1.45 }}>
                   Choose one reactive event to introduce into the overworld journal log context right now. Available variables are drawn directly from active simulation profiles.
                 </Typography>
 
@@ -2893,19 +3195,19 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         justifyContent: 'flex-start',
                         textTransform: 'none',
                         padding: '10px 14px',
-                        backgroundColor: '#10231f',
-                        border: '1px solid #47423a',
+                        backgroundColor: "var(--bg-surface)",
+                        border: "1px solid var(--border-main)",
                         borderRadius: '4px',
-                        color: '#fff',
+                        color: "var(--text-main)",
                         textAlign: 'left',
                         gap: 2,
-                        '&:hover': { backgroundColor: '#1e3a34', borderColor: '#ffe08a' }
+                        '&:hover': { backgroundColor: "var(--bg-surface-2)", borderColor: "var(--primary-border)" }
                       }}
                     >
-                      <Typography variant="subtitle2" sx={{ color: '#ffe08a', fontWeight: 'bold', minWidth: '20px' }}>
+                      <Typography variant="subtitle2" sx={{ color: "var(--text-main)", fontWeight: 'bold', minWidth: '20px' }}>
                         {index + 1}
                       </Typography>
-                      <Typography variant="body2" sx={{ color: '#cbd5e1', lineHeight: 1.4 }}>
+                      <Typography variant="body2" sx={{ color: "var(--text-main)", lineHeight: 1.4 }}>
                         {event}
                       </Typography>
                     </Button>
@@ -2914,7 +3216,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               </DialogContent>
 
               <DialogActions sx={{ padding: 2, px: 2 }}>
-                <Button variant="outlined" onClick={() => setBuildingEvents(null)} sx={{ color: '#d5ddd7', borderColor: '#53645a', textTransform: 'none' }}>
+                <Button variant="outlined" onClick={() => setBuildingEvents(null)} sx={{ color: "var(--text-main)", borderColor: "var(--border-main)", textTransform: 'none' }}>
                   Dismiss Panel
                 </Button>
               </DialogActions>

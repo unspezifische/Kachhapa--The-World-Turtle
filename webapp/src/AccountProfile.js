@@ -249,9 +249,7 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
       .sort(compareDate).slice(0, 2);
   }, [calendar]);
   const wikiUrl = campaign => `${primaryOrigin}/wiki/${encodeURIComponent(campaign.name)}/${encodeURIComponent('Main Page')}`;
-  const primary = new URL(primaryOrigin);
-  const mtgUrl = process.env.REACT_APP_MTG_SANDBOX_URL || (/^(localhost|127\.0\.0\.1)$/.test(primary.hostname)
-    ? `${primaryOrigin}/mtg/` : `${primary.protocol}//mtg.${primary.hostname}${primary.port ? `:${primary.port}` : ''}/`);
+  const mtgUrl = process.env.REACT_APP_MTG_SANDBOX_URL || `${primaryOrigin}/mtg/`;
 
   return <main className="dashboard-page">
     <header className="dashboard-hero">
@@ -283,7 +281,7 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
             <div className="dashboard-campaign-image" style={{ backgroundImage: `linear-gradient(90deg, rgba(10,20,30,.12), rgba(10,20,30,.72)), url("${campaign.icon || campaignFallback}")` }} aria-hidden="true" />
             <div className="dashboard-campaign-content"><div className="dashboard-card-topline"><span>{dm ? 'Dungeon Master' : 'Player'}</span><span>{campaign.system === 'D&D' ? `D&D · ${campaign.ruleset || '5e'}` : campaign.system}</span></div>
               <h3>{campaign.name}</h3>
-              <div className="dashboard-card-actions"><button type="button" className="dashboard-enter" aria-label={`Open campaign ${campaign.name}`} onClick={() => enterCampaign(campaign)}>Enter campaign <span aria-hidden="true">↗</span></button><a href={wikiUrl(campaign)} target="_blank" rel="noopener noreferrer">Wiki ↗</a></div>
+              <div className="dashboard-card-actions"><button type="button" className="dashboard-button dashboard-enter" aria-label={`Open campaign ${campaign.name}`} onClick={() => enterCampaign(campaign)}>Enter campaign <span aria-hidden="true">↗</span></button><a className="dashboard-button dashboard-button-secondary" href={wikiUrl(campaign)} target="_blank" rel="noopener noreferrer">Wiki ↗</a></div>
               <div className="dashboard-card-links">{options.filter(([path]) => path !== '/settlementManager' && path !== '/worldAtlas').slice(0, 3).map(([path, label]) => <button type="button" key={path} onClick={() => enterCampaign(campaign, path)}>{label}</button>)}</div>
               <label className="dashboard-landing-label">Open to <select aria-label={`Landing page for ${campaign.name}`} value={displayedLanding} onChange={event => saveLanding(campaign, event.target.value)}>{options.map(([path, label]) => <option key={path} value={path}>{label}</option>)}</select></label>
             </div>
@@ -298,7 +296,7 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
         {!isDM && !activeCharacter ? <div className="dashboard-empty-inline">Create a character to keep private notes for this campaign. <button type="button" onClick={() => setCreateCharacterOpen(true)}>Create character</button></div> : <>
           <p className="dashboard-widget-intro">{isDM ? 'A private place for plans, hooks, and everything between sessions.' : `Thoughts and questions for ${characterName(activeCharacter)}.`}</p>
           <textarea aria-label="Quick note" placeholder={isDM ? 'What should happen next?' : 'What does your character want to remember?'} value={draft} onChange={event => setDraft(event.target.value)} maxLength={10000} rows={4} />
-          <div className="dashboard-note-actions"><button type="button" className="dashboard-button dashboard-button-gold" disabled={!draft.trim() || busy} onClick={() => saveNote()}>{editingId ? 'Save changes' : 'Save note'}</button>{editingId && <><button type="button" onClick={() => { setEditingId(null); setDraft(''); }}>New note</button><button type="button" onClick={deleteNote} disabled={busy}>Delete</button></>}</div>
+          <div className="dashboard-note-actions"><button type="button" className="dashboard-button dashboard-button-primary" disabled={!draft.trim() || busy} onClick={() => saveNote()}>{editingId ? 'Save changes' : 'Save note'}</button>{editingId && <><button type="button" onClick={() => { setEditingId(null); setDraft(''); }}>New note</button><button type="button" onClick={deleteNote} disabled={busy}>Delete</button></>}</div>
           <div className="dashboard-recent-notes"><h4>Recent notes</h4>{notes.length ? notes.slice(0, 5).map(note => <button type="button" key={note.id} className={editingId === note.id ? 'is-active' : ''} onClick={() => { setEditingId(note.id); setDraft(note.content); }}><span>{note.content.split('\n')[0].slice(0, 74)}</span><small>{new Date(note.updated_at).toLocaleDateString()}</small></button>) : <p>Nothing written yet. Start with a thought you want to bring to the next session.</p>}</div>
         </>}</section>
       <section className="dashboard-widget dashboard-calendar" aria-labelledby="calendar-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">◷</span><h3 id="calendar-heading">In-world calendar</h3></div><button type="button" className="dashboard-text-action" onClick={() => enterCampaign(activeCampaign, '/calendar')}>Open calendar ↗</button></div>
@@ -317,7 +315,7 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
         {advancedUnlocked ? (
           <div className="dashboard-advanced-links">
             <p>Administrative tools are opened separately so the regular navigation stays focused on play.</p>
-            <a className="dashboard-button dashboard-button-gold" href={`${primaryOrigin}/dashboard/`} target="_blank" rel="noopener noreferrer">Open Flask Dashboard ↗</a>
+            <a className="dashboard-button dashboard-button-primary" href={`${primaryOrigin}/dashboard/`} target="_blank" rel="noopener noreferrer">Open Flask Dashboard ↗</a>
             <a className="dashboard-button dashboard-button-subtle" href={`${primaryOrigin}/admin/`} target="_blank" rel="noopener noreferrer">Open Flask Admin ↗</a>
           </div>
         ) : (
@@ -328,7 +326,7 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
               <Form.Control aria-label="Advanced access password" type="password" autoComplete="current-password" value={advancedPassword} onChange={event => setAdvancedPassword(event.target.value)} required autoFocus />
             </Form.Group>
             {advancedError && <div className="dashboard-alert dashboard-error mt-3 mb-0" role="alert">{advancedError}</div>}
-            <div className="dashboard-advanced-actions"><button type="button" className="dashboard-button dashboard-button-subtle" onClick={() => setAdvancedOpen(false)}>Cancel</button><button type="submit" className="dashboard-button dashboard-button-gold" disabled={advancedBusy}>{advancedBusy ? 'Checking…' : 'Continue'}</button></div>
+            <div className="dashboard-advanced-actions"><button type="button" className="dashboard-button dashboard-button-subtle" onClick={() => setAdvancedOpen(false)}>Cancel</button><button type="submit" className="dashboard-button dashboard-button-primary" disabled={advancedBusy}>{advancedBusy ? 'Checking…' : 'Continue'}</button></div>
           </form>
         )}
       </Modal.Body>

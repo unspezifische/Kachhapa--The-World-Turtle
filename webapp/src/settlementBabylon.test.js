@@ -4,6 +4,8 @@ import {
   oceanVertexData,
   polylinePartsInBounds,
   settlementCameraPanSpeed,
+  settlementCameraTapDistanceFeet,
+  settlementScaleFeet,
 } from './settlementBabylon';
 
 const bounds = { minX: 0, minY: 0, width: 100, height: 100, maxX: 100, maxY: 100 };
@@ -11,6 +13,13 @@ const bounds = { minX: 0, minY: 0, width: 100, height: 100, maxX: 100, maxY: 100
 test('camera pan speed scales down close in and preserves the larger-scale rate', () => {
   expect(settlementCameraPanSpeed(1)).toBeCloseTo(1.8);
   expect(settlementCameraPanSpeed(20)).toBe(36);
+});
+
+test('close map scales pan four and a half scale units per key tap', () => {
+  expect(settlementCameraTapDistanceFeet(5)).toBe(22.5);
+  expect(settlementCameraTapDistanceFeet(10)).toBe(45);
+  expect(settlementCameraTapDistanceFeet(20)).toBeNull();
+  expect(settlementScaleFeet(1, 0.8, 900)).toBe(5);
 });
 
 test('ocean geometry emits no surface over terrain at or above sea level', () => {

@@ -1,5 +1,5 @@
 /* Journal.css */
-.journal-page {
+:where(html[data-kachhapa-ui="core"]) .journal-page {
   height: 100%;
   min-height: 0;
   display: flex;
@@ -10,38 +10,38 @@
   background: var(--bg-app);
 }
 
-.journal-page h1 {
+:where(html[data-kachhapa-ui="core"]) .journal-page h1 {
   margin-bottom: 1rem;
   color: var(--text-main);
 }
 
-.journal-page .form-control,
-.journal-page .form-select {
+:where(html[data-kachhapa-ui="core"]) .journal-page .form-control,
+:where(html[data-kachhapa-ui="core"]) .journal-page .form-select {
   background: var(--bg-surface);
   color: var(--text-main);
   border: 1px solid var(--border-main);
 }
 
-.journal-page .form-control::placeholder {
+:where(html[data-kachhapa-ui="core"]) .journal-page .form-control::placeholder {
   color: var(--text-subtle);
 }
 
-.journal-page .form-control:focus,
-.journal-page .form-select:focus {
+:where(html[data-kachhapa-ui="core"]) .journal-page .form-control:focus,
+:where(html[data-kachhapa-ui="core"]) .journal-page .form-select:focus {
   background: var(--bg-surface);
   color: var(--text-main);
   border-color: var(--accent-2);
   box-shadow: 0 0 0 0.2rem rgba(96, 165, 250, 0.15);
 }
 
-.journal-date-picker-wrap {
+:where(html[data-kachhapa-ui="core"]) .journal-date-picker-wrap {
   background: var(--bg-surface-2);
   border: 1px solid var(--border-main);
   border-radius: 0.5rem;
   padding: 0.75rem;
 }
 
-.journal-date-picker-header {
+:where(html[data-kachhapa-ui="core"]) .journal-date-picker-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -50,7 +50,7 @@
   color: var(--text-main);
 }
 
-.journal-editor-wrap {
+:where(html[data-kachhapa-ui="core"]) .journal-editor-wrap {
   flex: 1 1 auto;
   min-height: 0;
   max-height: 60vh;
@@ -60,7 +60,7 @@
   background: var(--bg-surface);
 }
 
-.journal-table-wrap {
+:where(html[data-kachhapa-ui="core"]) .journal-table-wrap {
   flex: 0 0 auto;
   max-height: 30vh;
   overflow: auto;
@@ -69,13 +69,13 @@
   background: var(--bg-surface);
 }
 
-.journal-page .table {
+:where(html[data-kachhapa-ui="core"]) .journal-page .table {
   margin-bottom: 0;
   color: var(--text-main);
   background: transparent;
 }
 
-.journal-page .table thead th {
+:where(html[data-kachhapa-ui="core"]) .journal-page .table thead th {
   position: sticky;
   top: 0;
   z-index: 2;
@@ -84,90 +84,90 @@
   border-color: var(--border-main);
 }
 
-.journal-page .table td,
-.journal-page .table th {
+:where(html[data-kachhapa-ui="core"]) .journal-page .table td,
+:where(html[data-kachhapa-ui="core"]) .journal-page .table th {
   border-color: var(--border-main);
   background: transparent;
 }
 
-.journal-page .table tbody tr {
+:where(html[data-kachhapa-ui="core"]) .journal-page .table tbody tr {
   cursor: pointer;
 }
 
-.journal-page .table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.04);
+:where(html[data-kachhapa-ui="core"]) .journal-page .table tbody tr:hover {
+  background: color-mix(in srgb, var(--border-main) 18%, transparent);
 }
 
-[data-theme="light"] .journal-page .table tbody tr:hover {
-  background: rgba(15, 23, 42, 0.04);
+:where(html[data-kachhapa-ui="core"][data-theme="light"]) .journal-page .table tbody tr:hover {
+  background: color-mix(in srgb, var(--border-main) 18%, transparent);
 }
 
-.journal-page .EasyMDEContainer {
+:where(html[data-kachhapa-ui="core"]) .journal-page .EasyMDEContainer {
   background: var(--bg-surface);
   color: var(--text-main);
 }
 
-.journal-page .editor-toolbar {
+:where(html[data-kachhapa-ui="core"]) .journal-page .editor-toolbar {
   background: var(--bg-surface-2);
   border: 1px solid var(--border-main);
   border-bottom: 1px solid var(--border-main);
 }
 
-.journal-page .editor-toolbar button {
+:where(html[data-kachhapa-ui="core"]) .journal-page .editor-toolbar button {
   color: var(--text-main) !important;
 }
 
-.journal-page .editor-toolbar button:hover,
-.journal-page .editor-toolbar button.active {
+:where(html[data-kachhapa-ui="core"]) .journal-page .editor-toolbar button:hover,
+:where(html[data-kachhapa-ui="core"]) .journal-page .editor-toolbar button.active {
   background: var(--bg-surface-3);
   border-color: var(--border-main);
 }
 
-.journal-page .CodeMirror {
+:where(html[data-kachhapa-ui="core"]) .journal-page .CodeMirror {
   background: var(--bg-surface);
   color: var(--text-main);
   border: none;
   min-height: 320px;
 }
 
-.journal-page .CodeMirror-cursor {
+:where(html[data-kachhapa-ui="core"]) .journal-page .CodeMirror-cursor {
   border-left: 1px solid var(--text-main);
 }
 
-.journal-page .CodeMirror-gutters {
+:where(html[data-kachhapa-ui="core"]) .journal-page .CodeMirror-gutters {
   background: var(--bg-surface);
   border-right: 1px solid var(--border-main);
 }
 
-.journal-page .CodeMirror-lines {
+:where(html[data-kachhapa-ui="core"]) .journal-page .CodeMirror-lines {
   color: var(--text-main);
 }
 
-.journal-page .CodeMirror-selected {
-  background: rgba(96, 165, 250, 0.18) !important;
+:where(html[data-kachhapa-ui="core"]) .journal-page .CodeMirror-selected {
+  background: color-mix(in srgb, var(--border-main) 18%, transparent) !important;
 }
 
-.journal-page .editor-preview,
-.journal-page .editor-preview-side {
+:where(html[data-kachhapa-ui="core"]) .journal-page .editor-preview,
+:where(html[data-kachhapa-ui="core"]) .journal-page .editor-preview-side {
   background: var(--bg-surface);
   color: var(--text-main);
 }
 
-.journal-page .editor-statusbar {
+:where(html[data-kachhapa-ui="core"]) .journal-page .editor-statusbar {
   background: var(--bg-surface-2);
   color: var(--text-muted);
   border-top: 1px solid var(--border-main);
 }
 
-.journal-page .table tbody td {
+:where(html[data-kachhapa-ui="core"]) .journal-page .table tbody td {
   color: var(--text-main);
 }
 
-.journal-page .table tbody tr td[colspan] {
+:where(html[data-kachhapa-ui="core"]) .journal-page .table tbody tr td[colspan] {
   color: var(--text-muted);
 }
 
-.journal-page .table {
+:where(html[data-kachhapa-ui="core"]) .journal-page .table {
   --bs-table-color: var(--text-main);
   --bs-table-bg: transparent;
   --bs-table-striped-color: var(--text-main);

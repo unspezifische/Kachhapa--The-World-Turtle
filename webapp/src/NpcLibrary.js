@@ -1,0 +1,65 @@
+import NpcImportMapping from './NpcImportMapping';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Button, Modal, Form, Alert, Table } from 'react-bootstrap';
+import axios from 'axios';
+import NpcCreator from './NpcCreator';
+import NpcScheduleEditor from './NpcScheduleEditor';
+import './NpcWorkflow.css';
+export default function NpcLibrary({ headers, createOpen = false, onCreateClose = () => {}, visible = true, onSaved = () => {} }) {
+  const [includeDisabled, setIncludeDisabled] = useState(false);
+  const [legacy, setLegacy] = useState(false);
+  const [items, setItems] = useState([]), [search, setSearch] = useState(''), [sort, setSort] = useState('name'), [direction, setDirection] = useState('asc');
+  const [cursor, setCursor] = useState('0'), [next, setNext] = useState(null), [pages, setPages] = useState([]);
+  const [selected, setSelected] = useState(null), [editing, setEditing] = useState(false), [creating, setCreating] = useState(false);
+  const [error, setError] = useState(''), [resetPreview, setResetPreview] = useState(false);
+  const [batchPage, setBatchPage] = useState(0);
+  const [batch, setBatch] = useState([]), [report, setReport] = useState([]), [importOpen, setImportOpen] = useState(false), [busy, setBusy] = useState(false);
+  const [columns, setColumns] = useState(() => { try { return JSON.parse(localStorage.getItem('kachhapa-npc-library-columns')) || ['name', 'source', 'creature_subtype', 'challenge']; } catch { return ['name', 'source', 'creature_subtype', 'challenge']; } });
+  const fields = ['name', 'source', 'creature_type', 'creature_subtype', 'size', 'alignment', 'ac', 'hp', 'speed', 'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma', 'skills', 'languages', 'challenge'];
+  const labels = { name: 'Name', source: 'Source', creature_type: 'Type', creature_subtype: 'Race', size: 'Size', alignment: 'Alignment', ac: 'AC', hp: 'HP', speed: 'Speed', strength: 'STR', dexterity: 'DEX', constitution: 'CON', intelligence: 'INT', wisdom: 'WIS', charisma: 'CHA', challenge: 'CR' };
+  const shown = legacy ? items.filter(npc => Object.values(npc).join(' ').toLowerCase().includes(search.toLowerCase())).sort((a,b) => { const number = value => { const match = String(value || '').match(/^(\d+)(?:\/(\d+))?/); return match ? Number(match[1]) / Number(match[2] || 1) : 0; }; const diff = sort === 'challenge' ? number(a[sort])-number(b[sort]) : String(a[sort] || '').localeCompare(String(b[sort] || ''), undefined, { numeric: true }); return direction === 'desc' ? -diff : diff; }) : items;
+  const load = useCallback(async () => {
+    const { data } = await axios.get('/api/npcs', { headers, params: { limit: 50, cursor, search, sort, direction, include_disabled: includeDisabled } });
+    setLegacy(Array.isArray(data)); setItems(Array.isArray(data) ? data : data.items); setNext(data.next_cursor || null);
+  }, [headers, cursor, search, sort, direction, includeDisabled]);
+  useEffect(() => { if (visible) { let active = true; load().catch(() => { if (active) setError('Could not load NPC library.'); }); return () => { active = false; }; } }, [visible, load]);
+  useEffect(() => { setCursor('0'); setPages([]); }, [search, sort, direction, includeDisabled]);
+  const run = async operation => { setBusy(true); setError(''); try { await operation(); } catch (err) { setError(err.response?.data?.message || 'Could not update this NPC.'); } finally { setBusy(false); } };
+  const view = npc => run(async () => { const { data } = await axios.get(`/api/npcs/${npc.id}`, { headers }); setSelected(data); setResetPreview(false); });
+  const saved = npc => { setSelected(npc); setEditing(false); setCreating(false); onCreateClose(); onSaved(npc); load().catch(() => setError('Saved; refresh the library to see the update.')); };
+  const importBatch = apply => run(async () => {
+    const results = [];
+    for (let start = 0; start < batch.length; start += 50) {
+      const records = batch.slice(start, start + 50).map((record, index) => {
+        const result = report[start + index];
+        return apply ? { schedule: record.schedule || record, npc_id: record.npc_id || result?.npc_id, expected_revision: result?.expected_revision } : record;
+      });
+      const { data } = await axios.post('/api/npcs/schedules/import', { records, apply }, { headers });
+      results.push(...data.results); setReport([...results]);
+    }
+    if (apply) await load();
+  });
+  return <>
+    {visible && <section className="npc-library-workspace">
+      <div className="npc-inline-actions"><Button onClick={() => { setSelected(null); setCreating(true); }}>Create NPC</Button><Button variant="outline-secondary" onClick={() => { setImportOpen(true); setBatch([]); setReport([]); }}>Import Schedules</Button></div>
+      <div className="npc-inline-actions"><Form.Control type="search" aria-label="Search NPC library" placeholder="Search names, types, traits, languages…" value={search} onChange={event => setSearch(event.target.value)} /><Form.Check id="npc-show-disabled" label="Show disabled NPCs" checked={includeDisabled} onChange={event => setIncludeDisabled(event.target.checked)} /><details><summary>Columns</summary>{fields.map(key => <Form.Check key={key} id={`npc-column-${key}`} label={labels[key] || key.replace(/_/g, ' ')} checked={columns.includes(key)} onChange={event => { const value = event.target.checked ? [...columns, key] : columns.filter(column => column !== key); setColumns(value); localStorage.setItem('kachhapa-npc-library-columns', JSON.stringify(value)); }} />)}</details></div>
+      <div className="dmtools-table-shell"><Table className="dmtools-table"><thead><tr>{columns.filter(key => fields.includes(key)).map(key => <th key={key}><button className="dmtools-sort-header" aria-label={`Sort NPCs by ${labels[key] || key}`} onClick={() => { if (sort === key) setDirection(direction === 'asc' ? 'desc' : 'asc'); else { setSort(key); setDirection('asc'); } }}>{labels[key] || key.replace(/_/g, ' ')} {sort === key ? direction === 'asc' ? '▲' : '▼' : ''}</button></th>)}<th>Actions</th></tr></thead><tbody>{shown.map(npc => <tr key={npc.id}>{columns.filter(key => fields.includes(key)).map(key => <td key={key}>{npc[key] ?? '—'}{key === 'source' && npc.is_override ? ' · Override' : ''}</td>)}<td><Button size="sm" onClick={() => view(npc)}>View NPC</Button></td></tr>)}</tbody></Table></div>
+      {!items.length && <p>No matching NPCs.</p>}
+      <div className="npc-inline-actions"><Button disabled={!pages.length || busy} onClick={() => { setCursor(pages[pages.length - 1]); setPages(pages.slice(0, -1)); }}>Previous</Button><Button disabled={!next || busy} onClick={() => { setPages([...pages, cursor]); setCursor(next); }}>Next Page</Button></div>
+    </section>}
+    {error && !selected && !importOpen && <Alert variant="danger" role="alert">{error}</Alert>}
+    <NpcCreator show={creating || createOpen || editing} initial={editing ? selected : null} headers={headers} onClose={() => { setCreating(false); setEditing(false); onCreateClose(); }} onSaved={saved} />
+    <Modal show={!!selected && !editing && !creating && !createOpen} onHide={() => setSelected(null)} size="lg" className="npc-workflow-modal" backdropClassName="npc-workflow-backdrop"><Modal.Header closeButton><Modal.Title>{selected?.name}</Modal.Title></Modal.Header><Modal.Body>{error && <Alert variant="danger" role="alert">{error}</Alert>}{selected && <>
+      {selected.profile_metadata?.disabled && <Alert variant="warning">Disabled in this campaign. Hidden from active NPC lists.</Alert>}
+      <p>{selected.source}{selected.original_source ? ` · Original: ${selected.original_source}` : ''}{selected.is_override ? ' · Homebrew override' : ''}</p><p>{selected.size} {selected.creature_type} ({selected.creature_subtype}) · {selected.alignment}</p><p>AC {selected.ac} · HP {selected.hp} · Speed {selected.speed}</p><p>{['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'].map(key => `${key.slice(0, 3).toUpperCase()} ${selected[key]}`).join(' · ')}</p>
+      {['skills', 'saving_throws', 'senses', 'languages', 'immunities', 'resistance', 'challenge', 'traits', 'actions', 'description'].map(key => selected[key] ? <p key={key}><strong>{key.replace(/_/g, ' ')}:</strong> {selected[key]}</p> : null)}
+      <h3>Schedule</h3><p>Planned Now: {selected.planned?.current?.activity || 'Idle / no scheduled activity'}</p><p>Next Scheduled Activity: {selected.planned?.next?.activity || 'None'}</p>{selected.planned?.reason && <Alert variant="warning">{selected.planned.reason}</Alert>}
+      <NpcScheduleEditor readOnly value={selected.schedule} clock={selected.schedule_clock} warnings={selected.schedule_warnings} />
+      {resetPreview && <Alert variant="warning">Restore this module’s original character and original schedule? The NPC ID and references stay the same; prior edits remain in history.<div className="npc-inline-actions"><Button disabled={busy} onClick={() => run(async () => { const { data } = await axios.post(`/api/npcs/${selected.id}/reset-override`, { expected_revision: selected.revision }, { headers }); saved(data); setResetPreview(false); })}>Restore Original</Button><Button onClick={() => setResetPreview(false)}>Keep Override</Button></div></Alert>}
+    </>}</Modal.Body><Modal.Footer><Button disabled={busy} variant="outline-secondary" onClick={() => run(async () => { const {data} = await axios.patch(`/api/npcs/${selected.id}`, {expected_revision:selected.revision, disabled:!selected.profile_metadata?.disabled}, {headers}); saved(data); })}>{selected?.profile_metadata?.disabled ? 'Enable in Campaign' : 'Disable in Campaign'}</Button><Button onClick={() => setEditing(true)}>Edit Character &amp; Schedule</Button>{selected?.can_reset && selected?.is_override && <Button variant="outline-secondary" onClick={() => setResetPreview(true)}>Reset to Module Original</Button>}</Modal.Footer></Modal>
+    <Modal show={importOpen} onHide={() => setImportOpen(false)} size="lg" className="npc-workflow-modal" backdropClassName="npc-workflow-backdrop"><Modal.Header closeButton><Modal.Title>Import NPC Schedules</Modal.Title></Modal.Header><Modal.Body>{error && <Alert variant="danger" role="alert">{error}</Alert>}<p>JSON schedule or JSONL, one schedule per line. Module identities are matched by stable keys. Each unmapped record needs an NPC selection before previewing again.</p><Form.Control type="file" accept=".json,.jsonl" aria-label="Import NPC schedules" onChange={async event => { try { const file = event.target.files[0]; if (!file || file.size > 10 * 1024 * 1024) throw new Error(); const text = await file.text(); let records; try { const parsed = JSON.parse(text); records = Array.isArray(parsed) ? parsed : [parsed]; } catch { records = text.split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line)); } setBatch(records); setBatchPage(0); setReport([]); } catch { setError('Choose valid JSON or JSONL under 10 MB. Split larger files into batches.'); } }} />
+      {batch.slice(batchPage * 50, batchPage * 50 + 50).map((record, offset) => { const index = batchPage * 50 + offset; return <div key={index} className="npc-schedule-rule"><strong>{(record.schedule || record).npc_key || (record.schedule || record).schedule_key || `Record ${index + 1}`}</strong><NpcImportMapping headers={headers} index={index} value={record.npc_id} onChange={npc_id => { setBatch(current => current.map((item, i) => i === index ? { schedule: item.schedule || item, npc_id } : item)); setReport([]); }} /><p>{report[index]?.status} {report[index]?.name} {report[index]?.message}</p>{report[index]?.warnings?.map(warning => <small key={warning}>{warning}<br /></small>)}</div>; })}
+      <div className="npc-inline-actions"><Button disabled={batchPage === 0} onClick={() => setBatchPage(batchPage - 1)}>Previous Batch</Button><span>Records {batchPage * 50 + 1}–{Math.min(batch.length, batchPage * 50 + 50)} of {batch.length}</span><Button disabled={(batchPage + 1) * 50 >= batch.length} onClick={() => setBatchPage(batchPage + 1)}>Next Batch</Button></div>
+    </Modal.Body><Modal.Footer><Button disabled={busy || !batch.length} onClick={() => importBatch(false)}>Validate &amp; Preview</Button><Button disabled={busy || report.length !== batch.length || !report.some(result => result.status === 'valid')} onClick={() => importBatch(true)}>Apply Valid Schedules</Button></Modal.Footer></Modal>
+  </>;
+}

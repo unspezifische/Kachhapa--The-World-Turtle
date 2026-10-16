@@ -5,6 +5,7 @@
   <script>
     document.addEventListener("DOMContentLoaded", function () {
         var editor = Jodit.make('#editor', {
+          "theme": document.documentElement.dataset.theme === "light" ? "default" : "dark",
           "autofocus": true,
           "spellcheck": true,
           "showCharsCounter": false,

@@ -8,6 +8,7 @@ import {
   overwriteHeightmapIntoTiles,
   sampleHeightmapPlacement,
   seedStoreFromHeightMap,
+  serializeTerrainTile,
   serializeTiles,
   TILE_FEET,
   TILE_GRID,
@@ -15,6 +16,22 @@ import {
   tileKey,
 } from './settlementTiles';
 import { heightmapHeightAt } from './settlementEditor';
+
+test('terrain tile save serialization keeps the backend wire shape and rounding', () => {
+  const store = createTileStore();
+  const tile = ensureTile(store, 0, 0);
+  tile.generated = false;
+  tile.values[0] = 12.3456;
+  const serialized = serializeTerrainTile(tile);
+  expect(serialized).toMatchObject({
+    layer_type: 'heightmap_tile',
+    tile_x: 0,
+    tile_z: 0,
+    generated: false,
+  });
+  expect(serialized.values[0]).toBe(12.35);
+  expect(serialized.oceanMask).toBeUndefined();
+});
 
 test('new tile edges are initialized and continuous even before neighbors exist', () => {
   const store = createTileStore({ baseFeet: 1000 });
@@ -219,6 +236,47 @@ test('committed tile elevations survive serialization and hydration', () => {
 
   expect(committedHeight).toBeCloseTo(18, 5);
   expect(restoredHeight).toBeCloseTo(committedHeight, 5);
+});
+
+test.each([
+  [{ x: 512, y: 512, radius: 80, mode: 'set-elevation', target_elevation_feet: 75 },
+    [512, 512], 75],
+  [{ x: TILE_FEET - 64, y: 512, end_x: TILE_FEET + 64, end_y: 512,
+    radius: 80, mode: 'slope', start_elevation_feet: 20, end_elevation_feet: 100 },
+    [TILE_FEET, 512], 60],
+])('grading preview and saved tiles agree after reload', (stroke, [x, y], expected) => {
+  const store = createTileStore();
+  hydrateTiles(store, [flatTileLayer(0, 0), flatTileLayer(1, 0)]);
+  let strokes = [stroke];
+  const sample = createWorldSampler(store, () => strokes);
+  const preview = sample(x, y);
+  expect(preview).toBeCloseTo(expected, 5);
+  bakeStrokesIntoTiles(store, strokes);
+  strokes = [];
+  expect(sample(x, y)).toBeCloseTo(preview, 5);
+  const restored = createTileStore();
+  hydrateTiles(restored, serializeTiles(store));
+  expect(createWorldSampler(restored, () => [])(x, y)).toBeCloseTo(preview, 5);
+});
+
+test('Smooth uses the same frozen neighborhood across a tile seam in preview and baking', () => {
+  const store = createTileStore();
+  hydrateTiles(store, [flatTileLayer(0, 0, 0), flatTileLayer(1, 0, 0)]);
+  const j = 32;
+  store.get(tileKey(0, 0)).values[j * TILE_GRID + TILE_GRID - 1] = 100;
+  store.get(tileKey(1, 0)).values[j * TILE_GRID] = 100;
+  const x = TILE_FEET, y = j * CELL_FEET;
+  let strokes = [{ x, y, radius: 80, mode: 'smooth', smoothing_version: 2,
+    amount: 1, target_elevation_feet: 100 }];
+  const sample = createWorldSampler(store, () => strokes);
+  const preview = sample(x, y);
+  expect(preview).toBeLessThan(100);
+  expect(preview).toBeGreaterThan(0);
+  bakeStrokesIntoTiles(store, strokes);
+  strokes = [];
+  expect(sample(x, y)).toBeCloseTo(preview, 4);
+  expect(store.get(tileKey(0, 0)).values[j * TILE_GRID + TILE_GRID - 1])
+    .toBeCloseTo(store.get(tileKey(1, 0)).values[j * TILE_GRID], 4);
 });
 
 test('a stroke crossing into a new tile is applied only once at the shared edge', () => {

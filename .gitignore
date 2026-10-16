@@ -1,5 +1,6 @@
 .DS_Store
 MtG-webapp/
+docs/
 
 Flask/migrations/*
 !Flask/migrations/versions/
@@ -48,3 +49,5 @@ clinerules/
 
 modules/
 *.babylonproj
+
+Kachhapa_Elion_Elariel_Characters.json

@@ -146,13 +146,80 @@ probe_content_type() {
   failures=$((failures + 1))
 }
 
+probe_frontend_assets() {
+  local manifest_url="http://$target_ip/asset-manifest.json"
+  local status path expected_type asset_paths checked=0
+
+  status=$(curl --silent --noproxy '*' "${curl_resolve_args[@]}" \
+    --connect-timeout 5 --max-time 30 --output "$response_body" \
+    --write-out '%{http_code}' "$manifest_url") || status="000"
+  if [[ "$status" != "200" ]] ||
+     ! asset_paths=$(python3 - "$response_body" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    manifest = json.load(manifest_file)
+for path in sorted(set(manifest["files"].values())):
+    if path.startswith("/static/") and path.endswith((".js", ".css")):
+        print(path)
+PY
+     ); then
+    echo "  FAIL Kachhapa assets: could not read $manifest_url (HTTP $status)" >&2
+    failures=$((failures + 1))
+    return
+  fi
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    expected_type="javascript"
+    [[ "$path" != *.css ]] || expected_type="text/css"
+    : >"$response_headers"
+    status=$(curl --silent --noproxy '*' "${curl_resolve_args[@]}" \
+      --connect-timeout 5 --max-time 30 --output /dev/null \
+      --dump-header "$response_headers" --write-out '%{http_code}' \
+      "http://$target_ip$path") || status="000"
+    if [[ "$status" != "200" ]] ||
+       ! grep -Eqi "^Content-Type: [^[:space:]]*${expected_type}" "$response_headers"; then
+      printf '  FAIL Kachhapa asset     %s (HTTP %s; expected %s)\n' \
+        "$path" "$status" "$expected_type" >&2
+      failures=$((failures + 1))
+    fi
+    checked=$((checked + 1))
+  done <<< "$asset_paths"
+  if (( checked == 0 )); then
+    echo "  FAIL Kachhapa assets: manifest lists no JavaScript or CSS files" >&2
+    failures=$((failures + 1))
+  elif (( failures == 0 )); then
+    printf '  OK   Kachhapa assets   %s JavaScript/CSS files\n' "$checked"
+  fi
+}
+
+probe_missing_frontend_asset() {
+  local url="http://$target_ip/static/js/__kachhapa_missing_chunk__.js"
+  local status
+  status=$(curl --silent --noproxy '*' "${curl_resolve_args[@]}" \
+    --connect-timeout 5 --max-time 30 --output /dev/null \
+    --write-out '%{http_code}' "$url") || status="000"
+  if [[ "$status" == "404" ]]; then
+    printf '  OK   Missing JS asset   %s (404)\n' "$url"
+  else
+    printf '  FAIL Missing JS asset   %s (expected 404; HTTP %s)\n' "$url" "$status" >&2
+    failures=$((failures + 1))
+  fi
+}
+
 echo "==> Checking deployed routes from $(hostname) via $target_ip"
 probe "Kachhapa" "http://$hostname/" "Kachhapa- The World Turtle"
 probe "Kachhapa IP" "http://$target_ip/" "Kachhapa- The World Turtle"
+probe_frontend_assets
+probe_missing_frontend_asset
 probe "Kachhapa app" "http://app.$hostname/" "Kachhapa- The World Turtle"
 if command -v node >/dev/null 2>&1 && [[ -f scripts/check-socket-transport.cjs ]]; then
   node scripts/check-socket-transport.cjs "http://$target_ip" || failures=$((failures + 1))
   node scripts/check-socket-transport.cjs "http://$target_ip" "app.$hostname" || failures=$((failures + 1))
+  node scripts/check-socket-transport.cjs "http://$target_ip" "" "/mtg/socket.io/" || failures=$((failures + 1))
+  node scripts/check-socket-transport.cjs "http://$target_ip" "mtg.$hostname" || failures=$((failures + 1))
 else
   echo "Socket.IO transport probe requires Node and scripts/check-socket-transport.cjs" >&2
   failures=$((failures + 1))
@@ -165,6 +232,10 @@ probe_content_type "Wiki assets" "http://app.$hostname/wiki-static/bootstrap.min
 probe_content_type "Waterdeep media" "http://app.$hostname/media/modules/waterdeep_dragon_heist/waterdeep_texture.jpg" "image/jpeg"
 probe "5etools" "http://tools.$hostname/index.html" "<title>5etools</title>"
 probe "MTG frontend" "http://mtg.$hostname/" "<title>MTG Sandbox</title>"
+probe "MTG IP subpath" "http://$target_ip/mtg/" "<title>MTG Sandbox</title>"
+probe "MTG subpath API" "http://$target_ip/mtg/api/health" '"ok":true'
+probe "MTG named subpath" "http://$hostname/mtg/" "<title>MTG Sandbox</title>"
+probe_content_type "Shared appearance" "http://mtg.$hostname/wiki-static/appearance.js" "text/javascript"
 probe "MTG API" "http://mtg.$hostname/api/health" '"ok":true'
 probe "Settlement entry" "http://app.$hostname/settlementManager" "Kachhapa- The World Turtle"
 if $skip_foundry; then

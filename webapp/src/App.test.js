@@ -219,3 +219,33 @@ test('a network login failure explains that the backend is unreachable', async (
 
   expect(await screen.findByText('Unable to connect to the server backend. Check that it is running and try again.')).toBeInTheDocument();
 });
+
+test('theme changes from another Kachhapa tab update the current core page', async () => {
+  render(<App />);
+  act(() => window.dispatchEvent(new StorageEvent('storage', {key:'theme',newValue:'light'})));
+  await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('light'));
+  expect(document.documentElement.getAttribute('data-kachhapa-ui')).toBe('core');
+  act(() => window.dispatchEvent(new StorageEvent('storage', {key:'theme',newValue:'dark'})));
+  await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('dark'));
+});
+
+
+test('a resumed saved encounter restores the player tracker using stable character identity', async () => {
+  storeCampaignSession();
+  localStorage.setItem('accountType','Player');
+  window.history.replaceState({}, '', '/characterSheet');
+  axios.post.mockResolvedValue({ data:{success:true,username:'player',id:9} });
+  axios.get.mockImplementation(url => Promise.resolve({data:url === '/api/character' ? {id:11,Name:'Same Name'} : {encounter:null}}));
+  render(<App />);
+  await screen.findByText('Character sheet');
+  await waitFor(() => expect(io).toHaveBeenCalled());
+  const socket=io.mock.results.at(-1).value;
+  const handler=event => socket.on.mock.calls.filter(([name])=>name===event).at(-1)[1];
+  await act(async () => handler('connect')());
+  await waitFor(() => expect(axios.get).toHaveBeenCalledWith('/api/character',expect.anything()));
+  await act(async () => handler('combatants')([{id:'npc',characterName:'Same Name',character_id:null,initiative:15},{id:'pc',characterName:'Same Name',character_id:11,initiative:10}]));
+  expect(screen.getByText('Current:')).toBeInTheDocument();
+  expect(document.querySelector('.combat-banner')).toHaveTextContent('You: 2');
+  await act(async () => handler('combatants')([{id:'pc',characterName:'Same Name',character_id:11,initiative:10}]));
+  expect(document.querySelector('.combat-banner')).toHaveTextContent('Next: Same Name (1)');
+});

@@ -26,3 +26,23 @@ test('fog distances expand with the streamed terrain window', () => {
   expect(wide.startFeet).toBeGreaterThan(close.startFeet);
   expect(wide.endFeet).toBeGreaterThan(close.endFeet);
 });
+
+test('a low top-down view clears edge vignette while atlas altitude restores haze', () => {
+  const low = calculateTerrainFog({
+    cameraRadius: 50,
+    cameraBeta: 0.02,
+    spanFeet: 12000,
+    fogDensity: 0.01,
+  });
+  const high = calculateTerrainFog({
+    cameraRadius: 400,
+    cameraBeta: 0.02,
+    spanFeet: 12000,
+    fogDensity: 0.01,
+  });
+
+  expect(low.topDownRelief).toBeGreaterThan(0.8);
+  expect(low.edgeOcclusion).toBe(0);
+  expect(high.topDownRelief).toBeLessThan(low.topDownRelief);
+  expect(high.edgeOcclusion).toBeGreaterThan(low.edgeOcclusion);
+});

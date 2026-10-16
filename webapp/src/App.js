@@ -1,3 +1,5 @@
+import ThemeEditor from './ThemeEditor';
+import { AppearanceProvider } from './AppearanceContext';
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -25,7 +27,7 @@ import ChatIcon from '@mui/icons-material/Chat';
 import { DMSoundPlayerBar, DMSoundPlayerProvider } from './DMSoundPlayer';
 
 import './App.css';
-import 'bootstrap/dist/css/bootstrap.min.css';
+import CoreTheme from './CoreTheme';
 import { IconButton, Badge } from '@mui/material';
 
 const EMPTY_CAMPAIGN = { id: null, name: null, dmId: null, ownerId: null };
@@ -125,7 +127,7 @@ function App() {
   const primaryOrigin = `${window.location.protocol}//${primaryHostname}${window.location.port ? `:${window.location.port}` : ''}`;
   const dmLandingPath = isMapsHost ? '/settlementManager' : '/dmTools';
 
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const [theme, setTheme] = useState(window.KachhapaAppearance?.mode() || localStorage.getItem('theme') || 'dark');
 
   // High-level Chat states
   const [showChat, setShowChat] = useState(false);
@@ -137,6 +139,7 @@ function App() {
 
   // User and session states
   const [token, setToken] = useState(localStorage.getItem('token') || '');
+  useEffect(() => { if (token) window.KachhapaAppearance?.refresh().catch(() => {}); }, [token]);
   const [username, setUsername] = useState('');
   const [userID, setUserID] = useState(null);
   const [character, setCharacter] = useState(null);
@@ -171,6 +174,7 @@ function App() {
   }, []);
 
   const expireSession = useCallback(() => {
+    window.KachhapaAppearance?.clear();
     localStorage.removeItem('token');
     localStorage.removeItem('userID');
     setToken('');
@@ -181,9 +185,19 @@ function App() {
   }, [resetCampaignSelection]);
 
   useEffect(() => {
+    const syncTheme = event => { if (!window.KachhapaAppearance && event.key === 'theme' && ['dark','light'].includes(event.newValue)) setTheme(event.newValue); };
+    const syncAppearance=()=>setTheme(window.KachhapaAppearance?.mode() || 'dark');
+    window.addEventListener('appearance-changed', syncAppearance);
+    window.addEventListener('storage', syncTheme);
+    return () => { window.removeEventListener('storage', syncTheme); window.removeEventListener('appearance-changed', syncAppearance); };
+  }, []);
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
+    if(!window.KachhapaAppearance)localStorage.setItem('theme', theme);
   }, [theme]);
+
+  const changeTheme=next=>{const mode=typeof next==='function'?next(theme):next;setTheme(mode);window.KachhapaAppearance?.setMode(mode).catch(()=>{});};
 
   useEffect(() => {
     if (selectedCampaign?.id && accountType) {
@@ -348,14 +362,13 @@ function App() {
     const updateCombatants = (combatants) => {
       setCombatants(combatants);
 
-      const yourSpot =
-        combatants.findIndex(
-          (combatant) => combatant.characterName === characterName
-        ) + 1;
+      const yourSpot = combatants.findIndex(combatant => 'character_id' in combatant ? combatant.character_id != null && String(combatant.character_id) === String(characterID) : combatant.characterName === characterName) + 1;
+      setInCombat(yourSpot > 0);
 
-      if (combatants.length >= 2) {
+      if (combatants.length >= 1) {
         const current = { character: combatants[0], order: 1 };
-        const next = { character: combatants[1], order: 2 };
+        const nextIndex = combatants.length > 1 ? 1 : 0;
+        const next = { character: combatants[nextIndex], order: nextIndex + 1 };
         setTurnInfo({ current, next, yourSpot });
       }
     };
@@ -373,8 +386,30 @@ function App() {
       socket.off('turn update', handleTurnUpdate);
       socket.off('end of combat', handleEndOfCombat);
     };
-  }, [socketConnected, characterName]);
+  }, [socketConnected, characterName, characterID]);
 
+
+  // Restore the public saved tracker after refresh/reconnect without exposing DM prep.
+  useEffect(() => {
+    if (!socketConnected || !selectedCampaign?.id) return;
+    let live = true;
+    axios.get(`/api/campaigns/${selectedCampaign.id}/encounter-state`, { headers }).then(({ data }) => {
+      if (!live) return;
+      if (!data.encounter) { setCombatants([]); setInCombat(false); return; }
+      const encounter = data.encounter;
+      const members = encounter.combatants;
+      setCombatants(members);
+      const isOwnCharacter = member => 'character_id' in member ? member.character_id != null && String(member.character_id) === String(characterID) : member.characterName === characterName;
+      setInCombat(members.some(isOwnCharacter));
+      if (!encounter.started && members.some(member => isOwnCharacter(member) && member.initiative === null)) setShow(true);
+      if (members.length) setTurnInfo({
+        current: { character: members[encounter.turn], order: encounter.turn + 1 },
+        next: { character: members[(encounter.turn + 1) % members.length], order: (encounter.turn + 1) % members.length + 1 },
+        yourSpot: members.findIndex(isOwnCharacter) + 1,
+      });
+    }).catch(() => { /* Existing live socket updates remain available on older servers. */ });
+    return () => { live = false; };
+  }, [socketConnected, selectedCampaign?.id, characterName, characterID, headers]);
 
   // Chat message handling and active users
   useEffect(() => {
@@ -411,7 +446,7 @@ function App() {
   }, [socketConnected, selectedCampaign?.id, username, userID, showChat]);
 
   const handleInitiativeSubmit = () => {
-    socketRef.current.emit('initiative roll', { characterName, roll: initiativeOrder });
+    socketRef.current.emit('initiative roll', { characterName, character_id: characterID, roll: initiativeOrder });
     setShow(false);
     setInCombat(true);
   };
@@ -425,6 +460,7 @@ function App() {
   return (
     <UserContext.Provider value={{ characterName, accountType, headers, setIsLoggedIn, socket: socketRef.current }}>
       <Router>
+        <AppearanceProvider><CoreTheme mode={theme}>
         {isLoading && (
           <div className="app-spinner-wrap">
             <Spinner animation="border" role="status" />
@@ -454,7 +490,7 @@ function App() {
                   selectedCampaign,
                   setSelectedCampaign,
                   theme,
-                  setTheme,
+                  setTheme: changeTheme,
                   primaryOrigin,
                 }}
               >
@@ -469,7 +505,7 @@ function App() {
                   <Routes>
                     <Route path="/" element={<Navigate to="/accountProfile" replace />} />
                     <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} setCharacterName={setCharacterName} />} />
-                    <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} accountType={accountType} onSoundWorkspaceChange={setSoundWorkspaceActive} soundPlayerOpenRequest={soundPlayerOpenRequest} />} />
+                    <Route path="/dmTools" element={<DMTools headers={headers} socket={socketRef.current} accountType={accountType} onSoundWorkspaceChange={setSoundWorkspaceActive} soundPlayerOpenRequest={soundPlayerOpenRequest} onSoundWorkspaceRequestHandled={setSoundPlayerOpenRequest} />} />
                     <Route
                       path="/settlementManager"
                       element={
@@ -486,6 +522,8 @@ function App() {
                     <Route path="/calendar" element={<Calendar headers={headers} socket={socketRef.current} characterName={characterName} username={username} accountType={accountType} campaignID={selectedCampaign.id} />} />
                     <Route path="/campaignSettings" element={<Navigate to={accountType === 'DM' ? '/dmTools' : '/characterSheet'} replace />} />
                     <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} dmLandingPath={dmLandingPath} primaryOrigin={primaryOrigin} />} />
+                    <Route path="/themes/new" element={<ThemeEditor headers={headers} />} />
+                    <Route path="/themes/:themeId" element={<ThemeEditor headers={headers} />} />
                     <Route path="/profile" element={<UserProfile headers={headers} />} />
                     <Route path="*" element={<Navigate to={accountType === 'DM' ? dmLandingPath : '/characterSheet'} replace />} />
                   </Routes>
@@ -564,7 +602,9 @@ function App() {
                   />
                 }
               />
-              <Route path="/profile" element={<UserProfile headers={headers} />} />
+              <Route path="/themes/new" element={<ThemeEditor headers={headers} />} />
+                    <Route path="/themes/:themeId" element={<ThemeEditor headers={headers} />} />
+                    <Route path="/profile" element={<UserProfile headers={headers} />} />
               <Route path="*" element={<Navigate to="/accountProfile" replace />} />
             </Routes>
           )
@@ -584,6 +624,7 @@ function App() {
             </Routes>
           </Container>
         )}
+        </CoreTheme></AppearanceProvider>
       </Router>
     </UserContext.Provider>
   );

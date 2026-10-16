@@ -1,8 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html data-kachhapa-ui="core" data-theme="dark">
   <head>
     <meta charset="UTF-8">
+    <script src="/wiki-static/appearance.js?v=4253bd49afdf"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="/wiki-static/kachhapa-theme.js?v=720f3ef3fb30"></script>
+    <meta name="theme-color" content="#0f1729">
     <title>{{ page_title }} - {{ campaign_name }}</title>
     <style>
       @font-face {
@@ -49,11 +52,11 @@
     <link rel="stylesheet" href="/wiki-static/bootstrap.min.css">
     <link rel="stylesheet" href="/wiki-static/jquery.autocomplete.css" />
     <link rel="stylesheet" href="/wiki-static/jodit.min.css" />
+    <link rel="stylesheet" href="/wiki-static/kachhapa-theme.css?v=720f3ef3fb30">
     <script src="/wiki-static/jquery-3.5.1.min.js"></script>
     <script src="/wiki-static/jquery.autocomplete.js"></script>
     <script src="/wiki-static/axios.min.js"></script>
     <script src="/wiki-static/bootstrap.min.js"></script>
-    <script src="/wiki-static/jodit.min.js"></script>
     <script src="/wiki-static/jodit.min.js"></script>
     
     <!-- Socket.IO client library -->
@@ -68,20 +71,17 @@
         const token = localStorage.getItem('token');
         const userID = localStorage.getItem('userID');
         const characterName = localStorage.getItem('characterName');
-        console.log("token:", token);
-        console.log("userID:", userID);
         // console.log("characterName:", characterName);
 
         if (token && userID) {
-          console.log('Headers found in local storage:', token, userID);
 
           // Store them in global variables
           window.authInfo = {
             token: token,
             userID: userID,
           };
+          if (characterName) window.authInfo.characterName = characterName;
         }
-        if (characterName) {
       });
     </script>
     
@@ -134,18 +134,12 @@
         }
       }
     </script>
-          console.log('Character name found in local storage:', characterName);
-          window.authInfo.characterName = characterName;
-        } else {
-          console.log('No header info found in local storage');
-        }
-      });
-    </script>
   </head>
 
   <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top" style="padding-left:20px;">
+    <nav class="navbar navbar-expand-lg wiki-navbar sticky-top" style="padding-left:20px;">
       <a class="navbar-brand" href="Main%20Page">{{ campaign_name }}</a>
+      <button type="button" class="btn btn-outline-secondary mx-2" id="wiki-theme-toggle">Switch theme</button>
       <div class="dropdown">
         <input class="form-control mr-sm-2 dropdown-toggle" type="text" id="search" placeholder="Search..."
           aria-label="Search" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
@@ -164,7 +158,7 @@
       </div> -->
     </nav>
 
-    <div class="container mt-4">
+    <div class="container mt-4 wiki-shell">
       {% block content %}{% endblock %}
     </div>
 

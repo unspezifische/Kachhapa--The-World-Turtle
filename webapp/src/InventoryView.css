@@ -1,50 +1,46 @@
-.sticky-section-container {
+:where(html[data-kachhapa-ui="core"]) .sticky-section-container {
   height: calc(100vh - 55px);
   overflow: hidden;
 }
 
-.sticky-header {
-  position: -webkit-sticky; /* For Safari */
+:where(html[data-kachhapa-ui="core"]) .sticky-header { /* For Safari */
   position: sticky;
   top: 0;
   padding: 10px;
-  background-color: white; /* Ensure the background color matches your design */
-  z-index: 1000; /* Ensure it stays above other content */
+  background-color: var(--bg-surface-2);
+  z-index: 1000;
 }
 
-.sticky-table-header {
-  position: -webkit-sticky; /* For Safari */
+:where(html[data-kachhapa-ui="core"]) .sticky-table-header { /* For Safari */
   position: sticky;
-  top: 0; /* Adjust this value based on the height of the sticky header */
-  background-color: white; /* Ensure the background color matches your design */
-  z-index: 999; /* Ensure it stays above other content */
+  top: 0;
+  background-color: var(--bg-surface-2);
+  z-index: 999;
   overflow: auto;
 }
 
-.modal-full-height .modal-dialog {
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-dialog {
   height: 100vh;
   margin: 0;
 }
 
-.modal-full-height .modal-content {
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-content {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.modal-full-height .modal-header,
-.modal-full-height .modal-footer {
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-header,
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-footer {
   flex-shrink: 0;
 }
 
-.modal-full-height .modal-body {
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-body {
   flex: 1 1 auto;
   overflow-y: auto;
 }
-
-/* Optional: Adjust padding and margins if needed */
-.modal-full-height .modal-body,
-.modal-full-height .modal-header,
-.modal-full-height .modal-footer {
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-body,
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-header,
+:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-footer {
   padding: 15px;
 }

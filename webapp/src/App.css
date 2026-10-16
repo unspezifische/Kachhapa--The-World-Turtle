@@ -81,7 +81,7 @@ body {
   height: 100%;
   flex-shrink: 0;
   background: var(--menu-bg);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid var(--menu-border);
   overflow: hidden;
 }
 

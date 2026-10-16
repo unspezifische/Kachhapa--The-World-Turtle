@@ -1,0 +1,30 @@
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import axios from 'axios';
+import NpcLibrary from './NpcLibrary';
+jest.mock('axios',()=>({get:jest.fn(),post:jest.fn(),patch:jest.fn()}));
+const headers={CampaignID:'1'};
+const npc={id:7,name:'Module Resident',source:'Homebrew',module_key:'module',source_key:'resident',is_override:true,can_reset:true,original_source:'Module',revision:2,profile_metadata:{},planned:{current:{activity:'sleep'},next:{activity:'work'}},schedule:null};
+beforeEach(()=>{jest.resetAllMocks();axios.get.mockImplementation(url=>Promise.resolve({data:url==='/api/npcs'?{items:[npc],next_cursor:null}:url.includes('generation')?{ancestries:[],occupations:[]}:url.includes('schedule-locations')?{locations:[]}:npc}));});
+test('library loads details lazily and displays intended schedule separately from actual activity',async()=>{
+  render(<NpcLibrary headers={headers}/>);
+  await screen.findByText('Module Resident');
+  expect(axios.get.mock.calls.some(([url])=>url==='/api/npcs/7')).toBe(false);
+  fireEvent.click(screen.getByText('View NPC'));
+  await screen.findByText('Planned Now: sleep');
+  expect(screen.getByText('Next Scheduled Activity: work')).toBeInTheDocument();
+  expect(axios.get.mock.calls.some(([url])=>url==='/api/npcs/7')).toBe(true);
+  fireEvent.click(screen.getByText('Edit Character & Schedule'));
+  await screen.findByText(/Saving creates a linked Homebrew override/);
+  expect(screen.getByRole('textbox',{name:'Name'})).toHaveValue('Module Resident');
+});
+test('module reset previews its impact and submits the current revision',async()=>{
+  axios.post.mockResolvedValue({data:{...npc,is_override:false,source:'Module',revision:3}});
+  render(<NpcLibrary headers={headers}/>);
+  fireEvent.click(await screen.findByText('View NPC'));
+  fireEvent.click(await screen.findByText('Reset to Module Original'));
+  expect(axios.post).not.toHaveBeenCalled();
+  expect(screen.getByText(/The NPC ID and references stay the same/)).toBeInTheDocument();
+  fireEvent.click(screen.getByText('Restore Original'));
+  await waitFor(()=>expect(axios.post).toHaveBeenCalledWith('/api/npcs/7/reset-override',{expected_revision:2},{headers}));
+});

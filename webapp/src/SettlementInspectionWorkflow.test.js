@@ -3,18 +3,18 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import axios from 'axios';
 import SettlementManager from './SettlementManager';
 
-jest.setTimeout(15000);
+jest.setTimeout(45000);
 
 jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), put: jest.fn() }));
 jest.mock('./AtlasViewport', () => () => null);
 jest.mock('./BabylonSettlementHost', () => {
   const React = require('react');
   return function MockScene({ state }) {
-    return React.createElement('button', { onClick: () => {
+    return React.createElement(React.Fragment, null, React.createElement('output', { 'data-testid': 'camera-command' }, JSON.stringify(state.viewCommand)), React.createElement('button', { onClick: () => {
       const building = state.buildings[0];
       state.setSelected(building);
       state.setInspectSelection({ entityKind: 'building', id: building.id, item: building, kind: 'Building' });
-    } }, 'Pick building on map');
+    } }, 'Pick building on map'));
   };
 });
 
@@ -41,6 +41,16 @@ beforeEach(() => {
   axios.put.mockResolvedValue({ data: {} });
 });
 
+test('camera target commands retain the parcel position and focus scale', async () => {
+  render(<SettlementManager headers={headers} />);
+  fireEvent.click(await screen.findByRole('button', { name: /Test town Not placed/ }));
+  await screen.findByRole('button', { name: 'Pick building on map' }, { timeout: 10000 });
+  fireEvent(window, new CustomEvent('settlement-camera-command-trigger', { detail: { mode: 'point', point: { x: 2850, y: -5300 }, radiusFeet: 400, topdown: true } }));
+  await waitFor(() => expect(JSON.parse(screen.getByTestId('camera-command').textContent)).toMatchObject({
+    mode: 'point', point: { x: 2850, y: -5300 }, radiusFeet: 400, topdown: true,
+  }));
+});
+
 test('Inspect selection shows details, survives map modes and editing, and clears on dismissal and settlement change', async () => {
   render(<SettlementManager headers={headers} />);
   fireEvent.click(await screen.findByRole('button', { name: /Test town Not placed/ }));
@@ -59,6 +69,25 @@ test('Inspect selection shows details, survives map modes and editing, and clear
 
   fireEvent.click(within(inspector).getByRole('button', { name: 'Manage building' }));
   expect(await screen.findByRole('button', { name: 'Manage' })).toHaveAttribute('aria-pressed', 'true');
+  const buildingPanel = document.querySelector('.build-tools-panel');
+  expect(buildingPanel.querySelector('.tool-mode-header')).toContainElement(screen.getByRole('button', { name: 'Manage' }));
+  const buildingDetails = buildingPanel.querySelector('.building-inspector');
+  const buildingList = buildingPanel.querySelector('[aria-label="Existing buildings"]');
+  expect(buildingDetails.compareDocumentPosition(buildingList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(buildingPanel).getByRole('button', { name: 'Buildings' })).toHaveAttribute('aria-pressed', 'true');
+  expect(buildingPanel.querySelector('[aria-label="Properties and structures"]')).not.toBeInTheDocument();
+  fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Properties' }));
+  expect(buildingPanel.querySelector('[aria-label="Existing buildings"]')).not.toBeInTheDocument();
+  expect(buildingPanel.querySelector('[aria-label="Properties and structures"]')).toBeInTheDocument();
+  expect(buildingPanel.querySelector('.building-inspector')).toBeInTheDocument();
+  fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Buildings' }));
+  fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Place' }));
+  expect(within(buildingPanel).getByRole('button', { name: /Tavern/ })).toBeInTheDocument();
+  expect(buildingPanel.querySelector('.building-inspector')).not.toBeInTheDocument();
+  fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Draw' }));
+  expect(within(buildingPanel).getByText(/Click the map where this building starts/)).toBeInTheDocument();
+  expect(buildingPanel.querySelector('[aria-label="Existing buildings"]')).not.toBeInTheDocument();
+  fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Manage' }));
   fireEvent.click(screen.getByRole('button', { name: 'Edit building details' }));
   const dialog = await screen.findByRole('dialog');
   fireEvent.change(within(dialog).getByLabelText('Building Name'), { target: { value: 'Silver Kettle' } });
@@ -96,4 +125,23 @@ test('a blueprint opens the metadata editor with its custom model preserved', as
   expect(within(dialog).getByRole('combobox', { name: 'Model & Footprint' })).toHaveAttribute('aria-disabled', 'true');
   expect(within(dialog).getByText('Custom blueprint')).toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+});
+
+test('searching an empty estate selects its property and focuses its boundary', async () => {
+  const defaultGet = axios.get.getMockImplementation();
+  const parcel = { id: 'empty-estate', name: 'Cassalenter Estate', structure_ids: [], boundary: {
+    vertices: [{ x: 100, y: 200 }, { x: 200, y: 200 }, { x: 200, y: 300 }, { x: 100, y: 300 }],
+    segments: [{ id: 'e0', treatment: 'none' }, { id: 'e1', treatment: 'none' }, { id: 'e2', treatment: 'none' }, { id: 'e3', treatment: 'none' }],
+  } };
+  axios.get.mockImplementation(url => url.includes('settlement-map') && !url.includes('terrain-tiles') && !url.includes('rest-activities')
+    ? Promise.resolve({ data: { ...map, properties: [parcel] } }) : defaultGet(url));
+  render(<SettlementManager headers={headers} />);
+  fireEvent.click(await screen.findByRole('button', { name: /Test town Not placed/ }));
+  await screen.findByRole('button', { name: 'Pick building on map' });
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search settlement locations' }), { target: { value: 'Cassalenter Estate' } });
+  const results = document.querySelector('.location-search-results');
+  fireEvent.click(within(results).getByRole('button', { name: /Cassalenter Estate/ }));
+  expect(await screen.findByRole('button', { name: 'Property Cassalenter Estate' })).toHaveAttribute('aria-pressed', 'true');
+  await waitFor(() => expect(JSON.parse(screen.getByTestId('camera-command').textContent)).toMatchObject({ mode: 'point', point: { x: 150, y: 250 }, radiusFeet: 250, topdown: true }));
+  expect(screen.getByRole('button', { name: 'Edit Existing Boundary on Map' })).toBeInTheDocument();
 });

@@ -3,6 +3,7 @@ import {
   FEET_PER_SCENE_UNIT,
   isFortificationTowerPoint,
   roadWidthAt,
+  wallSegmentProperties,
   waterDepthAtSeaLevel,
 } from './settlementEditor';
 
@@ -13,9 +14,6 @@ import {
   Texture,
   DynamicTexture
 } from '@babylonjs/core';
-
-import earcut from 'earcut';
-
 
 /** Keeps animated water relative to the authored surface instead of snapping it
  * back to sea level on the first animation frame. */
@@ -40,6 +38,24 @@ export function settlementCameraClipPlanes(radius, spanFeet, firstPerson = false
 
 export function settlementCameraPanSpeed(radius) {
   return Math.max(0, Number(radius) || 0) * 1.8;
+}
+
+
+export function settlementScaleFeet(radius, fov = 0.8, canvasHeight = 900, indicatorPixels = 110) {
+  const visibleHeightFeet =
+    2 * Math.tan((Number(fov) || 0.8) / 2) *
+    Math.max(0.02, Number(radius) || 0.02) * FEET_PER_SCENE_UNIT;
+  const feetPerPixel = visibleHeightFeet / Math.max(1, Number(canvasHeight) || 1);
+  const desired = Math.max(0.1, feetPerPixel * indicatorPixels);
+  const power = 10 ** Math.floor(Math.log10(desired));
+  const ratio = desired / power;
+  return (ratio < 1.5 ? 1 : ratio < 3.5 ? 2 : ratio < 7.5 ? 5 : 10) * power;
+}
+
+
+export function settlementCameraTapDistanceFeet(scaleFeet) {
+  const scale = Number(scaleFeet) || 0;
+  return scale > 0 && scale <= 10 ? scale * 4.5 : null;
 }
 
 
@@ -360,6 +376,31 @@ export function applyTerrainTextureWrapModes(nodeMaterial) {
 // TERRAIN MATERIAL LOADING
 // -----------------------------------------------------------------------------
 
+/** Decode color textures before terrain blending and PBR lighting. Follow only
+ * the base-color branch: normal maps and scalar data must retain their values.
+ * Babylon skips this decode automatically for textures already marked linear.
+ */
+export function terrainMaterialWithLinearColor(serialized) {
+  const blocks = serialized.blocks || [];
+  const byId = new Map(blocks.map(block => [block.id, block]));
+  const visited = new Set();
+  const colorTextures = new Set();
+  const visit = id => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const block = byId.get(id);
+    if (!block) return;
+    if (block.customType === 'BABYLON.TextureBlock') colorTextures.add(id);
+    (block.inputs || []).forEach(input => visit(input.targetBlockId));
+  };
+  blocks.filter(block => block.customType === 'BABYLON.PBRMetallicRoughnessBlock').forEach(block => {
+    visit(block.inputs?.find(input => input.name === 'baseColor')?.targetBlockId);
+  });
+  return { ...serialized, blocks: blocks.map(block => colorTextures.has(block.id)
+    ? { ...block, convertToLinearSpace: true, convertToGammaSpace: false }
+    : block) };
+}
+
 export async function loadTerrainMaterialFromJson(
   scene,
   jsonUrl,
@@ -367,7 +408,7 @@ export async function loadTerrainMaterialFromJson(
 ) {
   const response = await fetch(jsonUrl);
   const serialized = await response.json();
-  const nodeMaterial = NodeMaterial.Parse(serialized, scene);
+  const nodeMaterial = NodeMaterial.Parse(terrainMaterialWithLinearColor(serialized), scene);
 
   const initialReference = Array.isArray(referenceLayer)
     ? referenceLayer[0]
@@ -606,15 +647,15 @@ function terrainInfluenceBounds({
 }
 
 
-function roadPattern(context, surfaceType, scale) {
+function roadPattern(context, surfaceType, scale, seed = '') {
   if (typeof document === 'undefined') return null;
 
   const tile = document.createElement('canvas');
   const size = Math.max(
-    12,
+    24,
     Math.min(
-      80,
-      Math.round(18 * scale)
+      144,
+      Math.round(42 * scale)
     )
   );
 
@@ -626,6 +667,14 @@ function roadPattern(context, surfaceType, scale) {
 
   const line = Math.max(1, size * 0.055);
   const mid = size / 2;
+  let randomState = Array.from(String(seed || surfaceType)).reduce(
+    (value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0,
+    2166136261
+  );
+  const random = () => {
+    randomState = (randomState * 1664525 + 1013904223) >>> 0;
+    return randomState / 4294967296;
+  };
 
   if (surfaceType === 'cobblestone') {
     ctx.fillStyle = '#77736a';
@@ -734,6 +783,16 @@ function roadPattern(context, surfaceType, scale) {
       line,
       line
     );
+  }
+
+  for (let index = 0; index < 18; index += 1) {
+    const radius = Math.max(0.6, line * (0.25 + random() * 0.7));
+    ctx.fillStyle = random() > 0.5
+      ? 'rgba(255,255,255,0.055)'
+      : 'rgba(25,20,16,0.07)';
+    ctx.beginPath();
+    ctx.arc(random() * size, random() * size, radius, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   return context.createPattern(tile, 'repeat');
@@ -894,12 +953,6 @@ function drawTerrainInfluences(
 
 
       // Visible road core.
-      const pattern = roadPattern(
-        context,
-        road.surface_type || 'dirt',
-        scale
-      );
-
       context.save();
 
       context.globalAlpha = Math.max(
@@ -909,10 +962,6 @@ function drawTerrainInfluences(
           Number(road.opacity ?? 1)
         )
       );
-
-      context.strokeStyle =
-        pattern ||
-        '#817261';
 
       context.lineCap = 'round';
       context.lineJoin = 'round';
@@ -946,6 +995,28 @@ function drawTerrainInfluences(
           1,
           widthFeet * scale
         );
+
+        const surfaceType =
+          road.segments?.[index]?.surface_type ||
+          road.surface_type ||
+          'dirt';
+        const pattern = roadPattern(
+          context,
+          surfaceType,
+          scale,
+          `${road.id || road.name || 'road'}:${index}`
+        );
+
+        if (pattern?.setTransform && typeof DOMMatrix !== 'undefined') {
+          const angle = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
+          pattern.setTransform(
+            new DOMMatrix()
+              .translate(start.x, start.y)
+              .rotate(angle + (index % 2) * 180)
+          );
+        }
+
+        context.strokeStyle = pattern || '#817261';
 
         context.beginPath();
         context.moveTo(start.x, start.y);
@@ -1619,6 +1690,20 @@ function getSplinePoint(points, amount) {
   );
 }
 
+// Walls are drafted from map linework, where a direction control normally
+// means a deliberate corner rather than a wide road-like curve.  Retain a
+// small amount of rounding at direction controls without letting Catmull-Rom
+// pull the wall far away from the authored span.
+function getFortificationSplinePoint(points, amount) {
+  const count = points.length;
+  if (count < 3) return getSplinePoint(points, amount);
+  const scaled = Math.max(0, Math.min(1, amount)) * (count - 1);
+  const index = Math.min(count - 2, Math.floor(scaled));
+  const linear = Vector3.Lerp(points[index], points[index + 1], scaled - index);
+  const smooth = getSplinePoint(points, amount);
+  return linear.scale(.82).add(smooth.scale(.18));
+}
+
 /** World-space centerline used by rendering, snapping, and linked boundaries. */
 export function sampleRoadCenterline(road) {
   const source = (road?.points || []).map(point =>
@@ -1638,7 +1723,7 @@ export function sampleFortificationCenterline(wall) {
     const source = section.map(point => new Vector3(point.x / FEET_PER_SCENE_UNIT, 0, point.y / FEET_PER_SCENE_UNIT));
     const samples = Math.max(24, section.length * 18);
     for (let index = sectionIndex ? 1 : 0; index <= samples; index += 1) {
-      const point = getSplinePoint(source, index / samples);
+      const point = getFortificationSplinePoint(source, index / samples);
       all.push({ x: point.x * FEET_PER_SCENE_UNIT, y: point.z * FEET_PER_SCENE_UNIT });
     }
   });
@@ -1804,11 +1889,41 @@ export function roadVertexData(road, strokes, heightMap, heightSampler) {
 // FORTIFICATION GEOMETRY
 // -----------------------------------------------------------------------------
 
+export function wallSegmentMaterialColor(wall, index) {
+  return ({ stone: '#82786a', brick: '#956454', wood: '#71543a', earth: '#776345' })[
+    wallSegmentProperties(wall, index).material] || '#82786a';
+}
+
+export function wallSegmentBattlements(wall, index, heightSampler) {
+  const properties = wallSegmentProperties(wall, index);
+  if (!properties.battlements) return [];
+  let sectionStart = 0;
+  const section = fortificationSplineSections(wall).find(points => {
+    if (index >= sectionStart && index < sectionStart + points.length - 1) return true;
+    sectionStart += points.length - 1;
+    return false;
+  });
+  if (!section) return [];
+  const source = section.map(point => worldToBabylon(point.x, point.y));
+  const a = wall.points[index], b = wall.points[index + 1];
+  const count = Math.max(1, Math.floor(Math.hypot(b.x - a.x, b.y - a.y) / 12));
+  return Array.from({ length: count }, (_, merlonIndex) => {
+    const t = (index - sectionStart + (merlonIndex + .5) / count) / (section.length - 1);
+    const point = getFortificationSplinePoint(source, t);
+    const before = getFortificationSplinePoint(source, Math.max(0, t - .001));
+    const after = getFortificationSplinePoint(source, Math.min(1, t + .001));
+    const x = point.x * FEET_PER_SCENE_UNIT, y = point.z * FEET_PER_SCENE_UNIT;
+    return { x, y, elevation: heightSampler(x, y) + properties.base_elevation_feet + properties.height_feet + 2,
+      rotation: -Math.atan2(after.z - before.z, after.x - before.x), width_feet: properties.width_feet };
+  });
+}
+
 export function fortificationVertexData(
   wall,
   strokes,
   heightMap,
-  heightSampler
+  heightSampler,
+  selectedSegmentIndex = null
 ) {
   heightSampler =
     heightSampler ||
@@ -1824,15 +1939,10 @@ export function fortificationVertexData(
   const positions = [];
   const indices = [];
 
-  const halfWidth =
-    (Number(wall.width_feet) || 24) /
-    (2 * FEET_PER_SCENE_UNIT);
-
-  const height =
-    (Number(wall.height_feet) || 35) /
-    FEET_PER_SCENE_UNIT;
-
+  let sectionStart = 0;
   sections.forEach(section => {
+    const startSegment = sectionStart;
+    sectionStart += section.length - 1;
     const source = section.map(
       point =>
         new Vector3(
@@ -1842,18 +1952,30 @@ export function fortificationVertexData(
         )
     );
 
-    const samples = Math.max(24, source.length * 18);
+    const samplesPerSpan = 24;
+    const spanCount = source.length - 1;
+    const firstSpan = selectedSegmentIndex == null ? 0 : selectedSegmentIndex - startSegment;
+    const lastSpan = selectedSegmentIndex == null ? spanCount - 1 : firstSpan;
+    if (firstSpan < 0 || firstSpan >= spanCount) return;
+    const samples = (lastSpan - firstSpan + 1) * samplesPerSpan;
     const sectionVertexOffset = positions.length / 3;
 
     for (let index = 0; index <= samples; index += 1) {
-      const amount = index / samples;
+      const amount = (firstSpan + index / samplesPerSpan) / spanCount;
+      const segmentIndex = Math.min(
+        startSegment + lastSpan,
+        startSegment + Math.floor(amount * spanCount)
+      );
+      const properties = wallSegmentProperties(wall, segmentIndex);
+      const halfWidth = properties.width_feet / (2 * FEET_PER_SCENE_UNIT);
+      const height = properties.height_feet / FEET_PER_SCENE_UNIT;
 
-      const point = getSplinePoint(source, amount);
-      const before = getSplinePoint(
+      const point = getFortificationSplinePoint(source, amount);
+      const before = getFortificationSplinePoint(
         source,
         Math.max(0, amount - 1 / samples)
       );
-      const after = getSplinePoint(
+      const after = getFortificationSplinePoint(
         source,
         Math.min(1, amount + 1 / samples)
       );
@@ -1884,15 +2006,15 @@ export function fortificationVertexData(
           centerWorldX,
           centerWorldY
         ) /
-        FEET_PER_SCENE_UNIT;
+        FEET_PER_SCENE_UNIT + properties.base_elevation_feet / FEET_PER_SCENE_UNIT;
 
       positions.push(
         left.x,
-        wallBaseElevation,
+        wallBaseElevation - properties.foundation_depth_feet / FEET_PER_SCENE_UNIT,
         left.z,
 
         right.x,
-        wallBaseElevation,
+        wallBaseElevation - properties.foundation_depth_feet / FEET_PER_SCENE_UNIT,
         right.z,
 
         left.x,
@@ -1903,6 +2025,15 @@ export function fortificationVertexData(
         wallBaseElevation + height,
         right.z
       );
+
+      // Close each rendered span at dimension steps and endpoints. These
+      // vertical faces prevent an exposed opening when a neighbour is lower
+      // or thinner, while the side/top faces continue to follow the terrain.
+      if (selectedSegmentIndex != null && (index === 0 || index === samples)) {
+        const cap = sectionVertexOffset + index * 4;
+        if (index === 0) indices.push(cap, cap + 2, cap + 1, cap + 1, cap + 2, cap + 3);
+        else indices.push(cap, cap + 1, cap + 2, cap + 1, cap + 3, cap + 2);
+      }
 
       if (index < samples) {
         const offset = sectionVertexOffset + index * 4;
@@ -2357,84 +2488,6 @@ export function oceanVertexData(
 
   data.waveDirection = waveDirection;
   data.hasWater = indices.length > 0;
-
-  return data;
-}
-
-
-// -----------------------------------------------------------------------------
-// AUTHORED WATER AREA
-// -----------------------------------------------------------------------------
-
-export function waterAreaVertexData(points, elevationFeet) {
-  const outline = (points || []).filter(
-    point =>
-      Number.isFinite(Number(point?.x)) &&
-      Number.isFinite(Number(point?.y))
-  );
-
-  if (outline.length < 3) return null;
-
-  const flat = outline.flatMap(
-    point => [
-      Number(point.x),
-      Number(point.y)
-    ]
-  );
-
-  const indices = earcut(flat);
-
-  if (!indices.length) return null;
-
-  const positions = [];
-  const uvs = [];
-
-  const minX = Math.min(
-    ...outline.map(point => Number(point.x))
-  );
-
-  const maxX = Math.max(
-    ...outline.map(point => Number(point.x))
-  );
-
-  const minY = Math.min(
-    ...outline.map(point => Number(point.y))
-  );
-
-  const maxY = Math.max(
-    ...outline.map(point => Number(point.y))
-  );
-
-  const width = Math.max(1, maxX - minX);
-  const height = Math.max(1, maxY - minY);
-
-  outline.forEach(point => {
-    positions.push(
-      Number(point.x) / FEET_PER_SCENE_UNIT,
-      elevationFeet / FEET_PER_SCENE_UNIT,
-      Number(point.y) / FEET_PER_SCENE_UNIT
-    );
-
-    uvs.push(
-      (Number(point.x) - minX) / width,
-      (Number(point.y) - minY) / height
-    );
-  });
-
-  const normals = [];
-
-  VertexData.ComputeNormals(
-    positions,
-    indices,
-    normals
-  );
-
-  const data = new VertexData();
-
-  data.positions = positions;
-  data.indices = indices;
-  data.uvs = uvs;
-  data.normals = normals;
 
   return data;
 }

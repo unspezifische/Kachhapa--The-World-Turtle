@@ -1,53 +1,6 @@
+import { closestPointOnSegment2d } from './geometry2d';
+
 export const FEET_PER_SCENE_UNIT = 50;
-
-
-export function rotatePositionAroundVerticalAxis(position, target, angle) {
-  const dx = position.x - target.x;
-  const dz = position.z - target.z;
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-
-  return {
-    x: target.x + dx * cos + dz * sin,
-    y: position.y,
-    z: target.z - dx * sin + dz * cos
-  };
-}
-
-
-export function pitchPositionAroundTarget(
-  position,
-  target,
-  angle,
-  minimumPitch = 0.08,
-  maximumPitch = 1.48
-) {
-  const offset = {
-    x: position.x - target.x,
-    y: position.y - target.y,
-    z: position.z - target.z
-  };
-
-  const radius = Math.hypot(offset.x, offset.y, offset.z) || 1;
-  const horizontal = Math.hypot(offset.x, offset.z) || 1;
-  const azimuth = Math.atan2(offset.z, offset.x);
-
-  const pitch = Math.max(
-    minimumPitch,
-    Math.min(
-      maximumPitch,
-      Math.atan2(offset.y, horizontal) + angle
-    )
-  );
-
-  const horizontalRadius = Math.cos(pitch) * radius;
-
-  return {
-    x: target.x + Math.cos(azimuth) * horizontalRadius,
-    y: target.y + Math.sin(pitch) * radius,
-    z: target.z + Math.sin(azimuth) * horizontalRadius
-  };
-}
 
 
 export const FALLBACK_ASSET_CATALOG = [
@@ -144,20 +97,6 @@ export const FALLBACK_ASSET_CATALOG = [
 ];
 
 
-export const worldToThree = (xFeet, yFeet, elevationFeet = 0) => [
-  xFeet / FEET_PER_SCENE_UNIT,
-  elevationFeet / FEET_PER_SCENE_UNIT,
-  -yFeet / FEET_PER_SCENE_UNIT
-];
-
-
-export const threeToWorld = point => ({
-  x: point.x * FEET_PER_SCENE_UNIT,
-  y: -point.z * FEET_PER_SCENE_UNIT,
-  elevation: point.y * FEET_PER_SCENE_UNIT
-});
-
-
 export function referenceLayerUv(layer, xFeet, yFeet) {
   const angle = (Number(layer?.rotation_degrees) || 0) * Math.PI / 180;
   const cos = Math.cos(angle);
@@ -174,39 +113,6 @@ export function referenceLayerUv(layer, xFeet, yFeet) {
   return {
     u: localX / Math.max(1, Number(layer?.width_feet) || 1) + 0.5,
     v: localY / Math.max(1, Number(layer?.height_feet) || 1) + 0.5
-  };
-}
-
-
-export function firstPersonLookAngles(
-  yaw,
-  pitch,
-  movementX,
-  movementY,
-  settings = {}
-) {
-  const sensitivity =
-    Math.max(0.1, Number(settings.sensitivity) || 50) *
-    0.000044;
-
-  const nextYaw =
-    yaw +
-    movementX *
-    sensitivity *
-    (settings.invertX ? -1 : 1);
-
-  const nextPitch =
-    pitch -
-    movementY *
-    sensitivity *
-    (settings.invertY ? -1 : 1);
-
-  return {
-    yaw: nextYaw,
-    pitch: Math.max(
-      -Math.PI * 0.48,
-      Math.min(Math.PI * 0.48, nextPitch)
-    )
   };
 }
 
@@ -241,6 +147,8 @@ export function calibrateReferenceLayer(
     ...layer,
     width_feet: width,
     height_feet: height,
+    origin_x: pointA.x + ((Number(layer.origin_x) || 0) - pointA.x) * scale,
+    origin_y: pointA.y + ((Number(layer.origin_y) || 0) - pointA.y) * scale,
     feet_per_pixel:
       width /
       Math.max(1, Number(layer.pixel_width) || 1),
@@ -426,40 +334,64 @@ export function heightmapHeightAt(heightmap, x, y) {
 }
 
 
+const clampUnit = value => Math.max(0, Math.min(1, Number(value) || 0));
+const softEdge = (distance, radius) => {
+  const t = clampUnit((radius - distance) / Math.max(1, radius * 0.2));
+  return t * t * (3 - 2 * t);
+};
+
+export function terrainStrokeBounds(stroke) {
+  const radius = Math.max(1, Number(stroke.radius) || 1);
+  const endX = stroke.mode === 'slope' ? Number(stroke.end_x) : Number(stroke.x);
+  const endY = stroke.mode === 'slope' ? Number(stroke.end_y) : Number(stroke.y);
+  return {
+    minX: Math.min(Number(stroke.x), endX) - radius,
+    maxX: Math.max(Number(stroke.x), endX) + radius,
+    minY: Math.min(Number(stroke.y), endY) - radius,
+    maxY: Math.max(Number(stroke.y), endY) + radius
+  };
+}
+
+function neighborhoodHeight(sample, x, y, radius) {
+  const step = Math.max(16, Math.min(96, radius * 0.3));
+  const offsets = [[0, 0, 4], [1, 0, 2], [-1, 0, 2], [0, 1, 2], [0, -1, 2],
+    [1, 1, 1], [1, -1, 1], [-1, 1, 1], [-1, -1, 1]];
+  const weighted = offsets.reduce((sum, [dx, dy, weight]) => sum + sample(x + dx * step, y + dy * step) * weight, 0);
+  return weighted / 16;
+}
+
+export function applyTerrainStrokeAt(height, stroke, x, y, frozenHeightAt) {
+  const radius = Math.max(1, Number(stroke.radius) || 1);
+  let distance = Math.hypot(x - Number(stroke.x), y - Number(stroke.y));
+  let target = Number(stroke.target_elevation_feet);
+  if (stroke.mode === 'slope') {
+    const dx = Number(stroke.end_x) - Number(stroke.x);
+    const dy = Number(stroke.end_y) - Number(stroke.y);
+    const lengthSquared = dx * dx + dy * dy;
+    if (!(lengthSquared > 0)) return height;
+    const t = clampUnit(((x - stroke.x) * dx + (y - stroke.y) * dy) / lengthSquared);
+    distance = Math.hypot(x - (stroke.x + t * dx), y - (stroke.y + t * dy));
+    target = Number(stroke.start_elevation_feet) + t *
+      (Number(stroke.end_elevation_feet) - Number(stroke.start_elevation_feet));
+  }
+  if (distance >= radius) return height;
+  if (stroke.mode === 'set-elevation' || stroke.mode === 'slope') {
+    return Number.isFinite(target) ? height + (target - height) * softEdge(distance, radius) : height;
+  }
+  const falloff = (1 - (distance / radius) ** 2) ** 2;
+  if (stroke.mode === 'smooth' && stroke.smoothing_version === 2) {
+    const average = neighborhoodHeight(frozenHeightAt, x, y, radius);
+    return height + (average - height) * clampUnit(stroke.amount) * falloff;
+  }
+  if (stroke.mode === 'flatten' || stroke.mode === 'smooth') {
+    return Number.isFinite(target) ? height + (target - height) * clampUnit(stroke.amount) * falloff : height;
+  }
+  return height + Number(stroke.delta || 0) * falloff;
+}
+
 export function terrainHeightAt(strokes, x, y, heightmap = null) {
-  return (strokes || []).reduce((height, stroke) => {
-    const radius = Math.max(1, Number(stroke.radius) || 1);
-
-    const distance = Math.hypot(
-      x - Number(stroke.x),
-      y - Number(stroke.y)
-    );
-
-    if (distance >= radius) return height;
-
-    const normalized = 1 - (distance / radius) ** 2;
-    const falloff = normalized * normalized;
-
-    if (stroke.mode === 'flatten' || stroke.mode === 'smooth') {
-      const target = Number(stroke.target_elevation_feet);
-
-      const amount =
-        Math.max(
-          0,
-          Math.min(
-            1,
-            Number(stroke.amount) || 0
-          )
-        ) *
-        falloff;
-
-      return Number.isFinite(target)
-        ? height + (target - height) * amount
-        : height;
-    }
-
-    return height + Number(stroke.delta || 0) * falloff;
-  }, heightmapHeightAt(heightmap, x, y));
+  const base = (px, py) => heightmapHeightAt(heightmap, px, py);
+  return (strokes || []).reduce((height, stroke) => applyTerrainStrokeAt(height, stroke, x, y, base), base(x, y));
 }
 
 
@@ -482,7 +414,8 @@ export function createTerrainHeightSampler(
 export function createTerrainStrokeSampler(
   strokes,
   getBaseHeight,
-  cellSizeFeet = 160
+  cellSizeFeet = 160,
+  getFrozenHeight = getBaseHeight
 ) {
   const cellSize = Math.max(
     16,
@@ -500,6 +433,8 @@ export function createTerrainStrokeSampler(
       delta: Number(source.delta || 0),
       target_elevation_feet:
         Number(source.target_elevation_feet),
+      end_x: Number(source.end_x),
+      end_y: Number(source.end_y),
       amount: Math.max(
         0,
         Math.min(
@@ -509,25 +444,11 @@ export function createTerrainStrokeSampler(
       )
     };
 
-    const minColumn = Math.floor(
-      (stroke.x - stroke.radius) /
-      cellSize
-    );
-
-    const maxColumn = Math.floor(
-      (stroke.x + stroke.radius) /
-      cellSize
-    );
-
-    const minRow = Math.floor(
-      (stroke.y - stroke.radius) /
-      cellSize
-    );
-
-    const maxRow = Math.floor(
-      (stroke.y + stroke.radius) /
-      cellSize
-    );
+    const bounds = terrainStrokeBounds(stroke);
+    const minColumn = Math.floor(bounds.minX / cellSize);
+    const maxColumn = Math.floor(bounds.maxX / cellSize);
+    const minRow = Math.floor(bounds.minY / cellSize);
+    const maxRow = Math.floor(bounds.maxY / cellSize);
 
     for (let row = minRow; row <= maxRow; row += 1) {
       let columns = rows.get(row);
@@ -559,35 +480,8 @@ export function createTerrainStrokeSampler(
       ||
       [];
 
-    return candidates.reduce((height, stroke) => {
-      const distance = Math.hypot(
-        x - stroke.x,
-        y - stroke.y
-      );
-
-      if (distance >= stroke.radius) return height;
-
-      const falloff =
-        (
-          1 -
-          (distance / stroke.radius) ** 2
-        ) ** 2;
-
-      if (stroke.mode === 'flatten' || stroke.mode === 'smooth') {
-        const amount = stroke.amount * falloff;
-
-        return Number.isFinite(stroke.target_elevation_feet)
-          ? height +
-          (
-            stroke.target_elevation_feet -
-            height
-          ) *
-          amount
-          : height;
-      }
-
-      return height + stroke.delta * falloff;
-    }, getBaseHeight(x, y));
+    return candidates.reduce((height, stroke) =>
+      applyTerrainStrokeAt(height, stroke, x, y, getFrozenHeight), getBaseHeight(x, y));
   };
 }
 
@@ -762,53 +656,17 @@ export function waterDepthAtSeaLevel(
 
 
 function projectToSegment(point, start, end) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-
-  const lengthSquared =
-    dx * dx +
-    dy * dy;
-
-  const amount = lengthSquared
-    ? Math.max(
-      0,
-      Math.min(
-        1,
-        (
-          (
-            point.x -
-            start.x
-          ) *
-          dx +
-          (
-            point.y -
-            start.y
-          ) *
-          dy
-        ) /
-        lengthSquared
-      )
-    )
-    : 0;
-
-  const projected = {
-    x: start.x + dx * amount,
-    y: start.y + dy * amount
-  };
-
-  const length = Math.hypot(dx, dy) || 1;
+  const result = closestPointOnSegment2d(point, start, end);
+  const length = Math.hypot(end.x - start.x, end.y - start.y) || 1;
 
   return {
-    point: projected,
-    distance: Math.hypot(
-      point.x - projected.x,
-      point.y - projected.y
-    ),
+    point: result.point,
+    distance: result.distance,
     tangent: {
-      x: dx / length,
-      y: dy / length
+      x: (end.x - start.x) / length,
+      y: (end.y - start.y) / length
     },
-    amount
+    amount: result.t
   };
 }
 
@@ -988,6 +846,30 @@ export function snapRoadNetworkPoint(
   return best;
 }
 
+/** Snap a wall control point to another wall's authored node.  This mirrors
+ * road-network snapping while deliberately excluding the wall being edited. */
+export function snapFortificationNetworkPoint(
+  point,
+  fortifications,
+  { wallId = null, tolerance = 80 } = {}
+) {
+  let best = { ...point, x: Math.round(point.x), y: Math.round(point.y) };
+  let bestDistance = Number(tolerance) || 80;
+
+  (fortifications || []).forEach(wall => {
+    if (wall.id === wallId || wall.visible === false) return;
+    (wall.points || []).forEach(candidate => {
+      const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+      if (distance <= bestDistance) {
+        best = { ...best, x: candidate.x, y: candidate.y };
+        bestDistance = distance;
+      }
+    });
+  });
+
+  return best;
+}
+
 
 export function snapRoadSplineTranslation(
   points,
@@ -1045,6 +927,7 @@ export function insertRoadControlPoint(road, point) {
   let nearestDistance = Infinity;
   let nearestPoint = point;
   let widthFeet = Number(road.width_feet) || 30;
+  let sourceSegmentIndex = 0;
 
   const segmentCount = road?.closed
     ? points.length
@@ -1062,6 +945,13 @@ export function insertRoadControlPoint(road, point) {
       nearestDistance = candidate.distance;
       insertAt = index + 1;
       nearestPoint = candidate.point;
+      sourceSegmentIndex = index;
+
+      const segmentWidth = Number(road.segments?.[index]?.width_feet);
+      if (Number.isFinite(segmentWidth)) {
+        widthFeet = segmentWidth;
+        return;
+      }
 
       const startWidth =
         Number(start.width_feet ?? road.width_feet) ||
@@ -1096,8 +986,18 @@ export function insertRoadControlPoint(road, point) {
     width_feet: Math.round(widthFeet)
   };
 
+  const segments = Array.isArray(road.segments)
+    ? [
+      ...road.segments.slice(0, sourceSegmentIndex),
+      { ...road.segments[sourceSegmentIndex] },
+      { ...road.segments[sourceSegmentIndex] },
+      ...road.segments.slice(sourceSegmentIndex + 1)
+    ]
+    : undefined;
+
   return {
     ...road,
+    ...(segments ? { segments } : {}),
     points: [
       ...points.slice(0, insertAt),
       controlPoint,
@@ -1108,6 +1008,8 @@ export function insertRoadControlPoint(road, point) {
 
 
 export function insertOpenSplineControlPoint(item, point, pointProperties = {}) {
+  const isWall = 'tower' in pointProperties || item?.wall_type || item?.feature_type === 'city_wall';
+  if (isWall) item = normalizeWallTopology(item);
   const points = item?.points || [];
 
   if (
@@ -1144,16 +1046,51 @@ export function insertOpenSplineControlPoint(item, point, pointProperties = {}) 
     y: Math.round(nearestPoint.y),
     ...pointProperties
   };
+  if (isWall) controlPoint.point_id = `wall-point-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   return {
     item: {
       ...item,
+      ...(isWall ? { segments: [
+        ...item.segments.slice(0, insertAt - 1),
+        item.segments[insertAt - 1],
+        { ...item.segments[insertAt - 1], id: `${controlPoint.point_id}-segment` },
+        ...item.segments.slice(insertAt)
+      ] } : {}),
       points: [
         ...points.slice(0, insertAt),
         controlPoint,
         ...points.slice(insertAt)
       ]
     },
+    index: insertAt
+  };
+}
+
+export function insertClosedSplineControlPoint(item, point) {
+  const points = item?.points || [];
+  if (points.length < 3 || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+    return { item, index: null };
+  }
+
+  let insertAt = null;
+  let nearestDistance = Infinity;
+  let nearestPoint = point;
+  for (let index = 0; index < points.length; index += 1) {
+    const candidate = projectToSegment(point, points[index], points[(index + 1) % points.length]);
+    if (candidate.distance < nearestDistance) {
+      nearestDistance = candidate.distance;
+      nearestPoint = candidate.point;
+      insertAt = index + 1;
+    }
+  }
+
+  return {
+    item: { ...item, points: [
+      ...points.slice(0, insertAt),
+      { x: Math.round(nearestPoint.x), y: Math.round(nearestPoint.y) },
+      ...points.slice(insertAt)
+    ] },
     index: insertAt
   };
 }
@@ -1176,6 +1113,19 @@ export function isFortificationTowerPoint(wall, index) {
     index === points.length - 1 ||
     index % 2 === 0
   );
+}
+
+/** Freeze legacy inferred roles before topology changes.  Once a point has an
+ * explicit role, inserting or deleting neighbours can never change it. */
+export function materializeFortificationTowerRoles(wall) {
+  if (!wall?.points?.length) return wall;
+  return {
+    ...wall,
+    points: wall.points.map((point, index) => ({
+      ...point,
+      tower: isFortificationTowerPoint(wall, index)
+    }))
+  };
 }
 
 
@@ -1209,9 +1159,18 @@ export function deleteSplineControlPoint(
     return item;
   }
 
+  const stableItem = item?.wall_type || item?.fortification || item?.feature_type === 'city_wall'
+    ? normalizeWallTopology(item)
+    : item;
+
   return {
-    ...item,
-    points: points.filter(
+    ...stableItem,
+    ...(stableItem !== item ? {
+      segments: stableItem.segments.filter((_, segmentIndex) => segmentIndex !== index),
+      ...(stableItem.towers ? { towers: stableItem.towers.map(tower => tower.point_id === stableItem.points[index].point_id
+        ? { ...tower, attachment_needs_repair: true } : tower) } : {})
+    } : {}),
+    points: stableItem.points.filter(
       (_, pointIndex) => pointIndex !== index
     )
   };
@@ -1278,6 +1237,9 @@ export function roadWidthAt(road, amount) {
 
   const fraction = scaled - startIndex;
 
+  const segmentWidth = Number(road?.segments?.[startIndex]?.width_feet);
+  if (Number.isFinite(segmentWidth)) return segmentWidth;
+
   const startWidth =
     Number(
       points[startIndex]?.width_feet ??
@@ -1293,6 +1255,95 @@ export function roadWidthAt(road, amount) {
     30;
 
   return startWidth + (endWidth - startWidth) * fraction;
+}
+
+export function roadSegmentIndexAt(road, point) {
+  return nearestRoadPoint(point, [road])?.segmentIndex ?? null;
+}
+
+export function updateRoadSegments(road, indexes, changes) {
+  if (!road?.points?.length) return road;
+  const selected = new Set(indexes || []);
+  const segmentCount = road.closed ? road.points.length : Math.max(0, road.points.length - 1);
+  const segments = Array.from({ length: segmentCount }, (_, index) => ({
+    width_feet: Number(road.segments?.[index]?.width_feet ?? road.width_feet) || 30,
+    surface_type: road.segments?.[index]?.surface_type || road.surface_type || 'dirt',
+    ...(road.segments?.[index] || {}),
+    ...(selected.has(index) ? changes : {})
+  }));
+  return { ...road, segments };
+}
+
+export function applyRoadClassDefaults(road, defaults) {
+  if (!road) return road;
+  const segmentCount = road.closed ? road.points?.length || 0 : Math.max(0, (road.points?.length || 0) - 1);
+  const width_feet = defaults.width;
+  const surface_type = defaults.surface;
+  return updateRoadSegments({ ...road, width_feet, surface_type },
+    Array.from({ length: segmentCount }, (_, index) => index),
+    { width_feet, surface_type });
+}
+
+export function updateFortificationSegment(wall, index, changes) {
+  wall = normalizeWallTopology(wall);
+  if (!wall?.points?.length || !Number.isInteger(index)) return wall;
+  const segmentCount = wall.closed ? wall.points.length : Math.max(0, wall.points.length - 1);
+  if (index < 0 || index >= segmentCount) return wall;
+  const segments = Array.from({ length: segmentCount }, (_, segmentIndex) => ({
+    ...(wall.segments?.[segmentIndex] || {}),
+    ...(segmentIndex === index ? changes : {})
+  }));
+  const endIndex = (index + 1) % wall.points.length;
+  return {
+    ...wall,
+    segments,
+    points: wall.points.map((point, pointIndex) =>
+      changes.gate_type && (pointIndex === index || pointIndex === endIndex)
+        ? { ...point, tower: true }
+        : point)
+  };
+}
+
+export function normalizeWallTopology(wall) {
+  const points = (wall?.points || []).map((point, index) => ({ ...point,
+    point_id: point.point_id || `${wall.id}-point-${index}`,
+    tower: isFortificationTowerPoint(wall, index) }));
+  const segments = points.slice(1).map((_, index) => ({
+    ...wall.segments?.[index], id: wall.segments?.[index]?.id || `${wall.id}-segment-${index}`
+  }));
+  const towers = (wall.towers || []).map(tower => {
+    const point = tower.point_id ? points.find(value => value.point_id === tower.point_id) : points[tower.point_index];
+    const { point_index, ...rest } = tower;
+    return { ...rest, point_id: point?.point_id || tower.point_id, attachment_needs_repair: !point };
+  });
+  return { ...wall, points, segments, ...(wall.towers ? { towers } : {}) };
+}
+
+export function attachedWallTower(wall, point, index) {
+  return (wall.towers || []).find(tower => tower.point_id
+    ? Boolean(point.point_id) && tower.point_id === point.point_id
+    : tower.point_index === index);
+}
+
+export function wallSegmentProperties(wall, index) {
+  const override = wall?.segments?.[index] || {};
+  return {
+    width_feet: Number(override.width_feet ?? wall?.width_feet) || 24,
+    height_feet: Number(override.height_feet ?? wall?.height_feet) || 35,
+    base_elevation_feet: Number(override.base_elevation_feet ?? wall?.base_elevation_feet) || 0,
+    material: override.material || wall?.material || 'stone',
+    battlements: override.battlements ?? wall?.battlements ?? true,
+    walkway: override.walkway ?? wall?.walkway ?? false,
+    walkway_width_feet: Number(override.walkway_width_feet ?? wall?.walkway_width_feet) || 8,
+    foundation_depth_feet: Number(override.foundation_depth_feet ?? wall?.foundation_depth_feet) || 0,
+    ...override
+  };
+}
+
+export function restoreFortificationSegmentDefaults(wall, index) {
+  if (!wall?.segments?.length || !Number.isInteger(index)) return wall;
+  return { ...wall, segments: wall.segments.map((segment, segmentIndex) =>
+    segmentIndex === index ? { id: segment.id } : segment) };
 }
 
 
@@ -1442,6 +1493,7 @@ export function createBuilding(asset, point, buildings, roads) {
     x: point.x,
     y: point.y,
     elevation: 0,
+    elevation_mode: 'relative_to_terrain',
     rotation: 0,
     width_feet: asset.width_feet,
     depth_feet: asset.depth_feet,
@@ -1515,6 +1567,8 @@ export function createBlueprintBuilding(point) {
     name: 'Custom Blueprint Building',
     x: point.x,
     y: point.y,
+    elevation: 0,
+    elevation_mode: 'relative_to_terrain',
     rotation: 0,
     is_blueprint: true,
     coordinate_space: 'local',
@@ -1578,65 +1632,10 @@ export function closeBlueprintFootprint(building) {
     ...building,
     levels: building.levels.map(level => ({
       ...level,
-      closed: level.corners.length >= 3
+      closed: level.corners.length >= 3,
+      ...(level.outline?.length && Math.hypot(level.outline[level.outline.length - 1].end.x - level.outline[0].start.x, level.outline[level.outline.length - 1].end.y - level.outline[0].start.y) > 0.001 ? { outline: [...level.outline, { id: `${building.id}-closing-edge`, type: 'line', start: level.outline[level.outline.length - 1].end, end: level.outline[0].start, thickness: 0.5 }] } : {}),
     }))
   };
-}
-
-
-export function addBlueprintLevel(building) {
-  const next = { ...building };
-  const prevLevel = next.levels[next.levels.length - 1];
-
-  next.levels.push({
-    floor_height: prevLevel.floor_height,
-    corners: prevLevel.corners.map(corner => ({ ...corner })),
-    doors: [],
-    windows: [],
-    stairs: [],
-    hatches: []
-  });
-
-  return next;
-}
-
-
-export function addBlueprintStairs(
-  building,
-  levelIndex,
-  stairsData
-) {
-  const next = { ...building };
-
-  next.levels[levelIndex].stairs.push({
-    start_x: stairsData.x,
-    start_y: stairsData.y,
-    direction: stairsData.direction || 0,
-    width: stairsData.width || 3,
-    turns: stairsData.turns || 0,
-    going_down: stairsData.going_down || false,
-    ...stairsData
-  });
-
-  return next;
-}
-
-
-export function addBlueprintHatch(
-  building,
-  levelIndex,
-  hatchData
-) {
-  const next = { ...building };
-
-  next.levels[levelIndex].hatches.push({
-    width: 3,
-    depth: 3,
-    has_ladder: true,
-    ...hatchData
-  });
-
-  return next;
 }
 
 

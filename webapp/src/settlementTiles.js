@@ -1,4 +1,4 @@
-import { createTerrainHeightSampler, createTerrainStrokeSampler, heightmapHeightAt } from './settlementEditor';
+import { createTerrainStrokeSampler, heightmapHeightAt, terrainStrokeBounds } from './settlementEditor';
 
 export const TILE_GRID = 257;              // 256 intervals = 16 ft; supports 30-ft brushes reliably
 export const TILE_FEET = 4096;             // world footprint of one tile
@@ -68,9 +68,6 @@ function blankTile(tx, tz) {
         generated: true, dirty: false,
     };
 }
-
-/** A tile object IS a valid heightMap object for terrainHeightAt()/samplers. */
-export const tileAsHeightMap = tile => tile;
 
 /** Seed the store with the original settlement heightmap (resampled if misaligned). */
 export function seedStoreFromHeightMap(store, hm) {
@@ -304,17 +301,17 @@ export function bakeStrokesIntoTiles(store, strokeList) {
     const touched = new Set();
     const affectedRanges = new Map();
     strokeList.forEach(stroke => {
-        const r = Number(stroke.radius) || 100;
-        const t0 = tileIndexAt(stroke.x - r, stroke.y - r), t1 = tileIndexAt(stroke.x + r, stroke.y + r);
+        const bounds = terrainStrokeBounds(stroke);
+        const t0 = tileIndexAt(bounds.minX, bounds.minY), t1 = tileIndexAt(bounds.maxX, bounds.maxY);
         for (let tz = t0.tz; tz <= t1.tz; tz++) for (let tx = t0.tx; tx <= t1.tx; tx++) {
             const key = tileKey(tx, tz);
             touched.add(key);
             const originX = tx * TILE_FEET, originY = tz * TILE_FEET;
             const range = {
-                minI: Math.max(0, Math.floor((stroke.x - r - originX) / CELL_FEET)),
-                maxI: Math.min(TILE_GRID - 1, Math.ceil((stroke.x + r - originX) / CELL_FEET)),
-                minJ: Math.max(0, Math.floor((stroke.y - r - originY) / CELL_FEET)),
-                maxJ: Math.min(TILE_GRID - 1, Math.ceil((stroke.y + r - originY) / CELL_FEET)),
+                minI: Math.max(0, Math.floor((bounds.minX - originX) / CELL_FEET)),
+                maxI: Math.min(TILE_GRID - 1, Math.ceil((bounds.maxX - originX) / CELL_FEET)),
+                minJ: Math.max(0, Math.floor((bounds.minY - originY) / CELL_FEET)),
+                maxJ: Math.min(TILE_GRID - 1, Math.ceil((bounds.maxY - originY) / CELL_FEET)),
             };
             if (range.minI <= range.maxI && range.minJ <= range.maxJ) {
                 const ranges = affectedRanges.get(key) || [];
@@ -338,12 +335,19 @@ export function bakeStrokesIntoTiles(store, strokeList) {
     tiles.forEach((tile, key) => {
         baseTiles.set(key, { ...tile, values: tile.values.slice() });
     });
+    const frozenHeightAt = (x, y) => {
+        const { tx, tz } = tileIndexAt(x, y);
+        const key = tileKey(tx, tz);
+        const tile = baseTiles.get(key) || store.get(key);
+        return tile ? heightmapHeightAt(tile, x, y) : sampleFrontier(store, x, y);
+    };
 
     // One spatially-bucketed sampler per tile for the whole gesture —
     // O(strokes) to build, then ~O(1) per cell instead of O(strokes) per cell.
     touched.forEach(key => {
         const tile = tiles.get(key);
-        const sampleHeight = createTerrainHeightSampler(strokeList, baseTiles.get(key));
+        const sampleHeight = createTerrainStrokeSampler(strokeList,
+            (x, y) => heightmapHeightAt(baseTiles.get(key), x, y), 160, frozenHeightAt);
         const ranges = affectedRanges.get(key) || [];
         const estimatedMarks = ranges.reduce((total, range) => total
             + (range.maxI - range.minI + 1) * (range.maxJ - range.minJ + 1), 0);
@@ -370,6 +374,22 @@ export function bakeStrokesIntoTiles(store, strokeList) {
 export const serializeTiles = store => [...store.values()]
     .filter(t => !t.generated || t.dirty)
     .map(({ oceanMask, ...rest }) => ({ ...rest, values: Array.from(rest.values) }));
+
+export const serializeTerrainTile = tile => ({
+    layer_type: 'heightmap_tile',
+    tile_x: tile.tile_x,
+    tile_z: tile.tile_z,
+    grid_width: tile.grid_width,
+    grid_height: tile.grid_height,
+    width_feet: tile.width_feet,
+    height_feet: tile.height_feet,
+    origin_x: tile.origin_x,
+    origin_y: tile.origin_y,
+    min_elevation_feet: tile.min_elevation_feet,
+    max_elevation_feet: tile.max_elevation_feet,
+    generated: !!tile.generated,
+    values: Array.from(tile.values, value => Math.round(value * 100) / 100),
+});
 
 
 /**

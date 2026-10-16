@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import {
   BLUEPRINT_ROOF_TYPES,
@@ -52,8 +52,13 @@ export default function BlueprintRoofs({
   const [newRoofType, setNewRoofType] = useState('gable');
   const [sourceLevelId, setSourceLevelId] = useState(level.id);
   const [selectedRoofId, setSelectedRoofId] = useState(null);
-  const roofs = building.roofs || [];
+  const roofs = useMemo(() => building.roofs || [], [building.roofs]);
   const selectedRoof = roofs.find(roof => roof.id === selectedRoofId);
+  useEffect(() => {
+    if (roofs.length && !roofs.some(roof => roof.id === selectedRoofId)) {
+      setSelectedRoofId(roofs[roofs.length - 1].id);
+    }
+  }, [roofs, selectedRoofId]);
   const lowerLevel = levelBelow(building, level);
   const sourceLevel = building.levels.find(item => item.id === sourceLevelId) || level;
   const roofVisibilityLevel = support => levelAbove(building, support) || support;
@@ -107,7 +112,7 @@ export default function BlueprintRoofs({
 
   const beginCustomRoof = () => {
     const template = roofTemplate({
-      type: 'custom',
+      type: newRoofType,
       support: level,
       visibility: roofVisibilityLevel(level),
       footprint: [],

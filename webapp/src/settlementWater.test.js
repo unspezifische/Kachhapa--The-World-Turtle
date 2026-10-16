@@ -2,17 +2,7 @@ import {
   animatedWaterSurfaceY,
   settlementCameraClipPlanes,
   terrainClippedWaterAreaVertexData,
-  waterAreaVertexData,
 } from './settlementBabylon';
-
-test('an authored ocean coastline remains one continuous polygon at any terrain LOD', () => {
-  const data = waterAreaVertexData([
-    { x: -100, y: -100 }, { x: 20, y: -100 }, { x: 20, y: 100 }, { x: -100, y: 100 },
-  ], 12);
-  expect(data.positions).toEqual([-2, 0.24, -2, .4, .24, -2, .4, .24, 2, -2, .24, 2]);
-  expect(data.indices).toHaveLength(6);
-  expect(data.normals.every(Number.isFinite)).toBe(true);
-});
 
 test('animated ocean waves preserve the authored surface clearance', () => {
   expect(animatedWaterSurfaceY(.015, .5)).toBeCloseTo(.025);

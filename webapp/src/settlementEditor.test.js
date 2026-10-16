@@ -1,25 +1,32 @@
-import { calibrateReferenceLayer, createTerrainHeightSampler, firstPersonLookAngles, heightmapHeightAt, insertClosedBoundaryPoint, insertOpenSplineControlPoint, insertRoadControlPoint, isFortificationTowerPoint, nearestRoadPoint, pitchPositionAroundTarget, referenceLayerUv, resizeBuildingFromCorner, roadWidthAt, rotatePositionAroundVerticalAxis, snapBuildingPlacement, snapRegionBoundaryPoint, snapRoadNetworkPoint, snapRoadSplineTranslation, terrainHeightAt, terrainSurfaceWeights, waterDepthAtSeaLevel, waterFlowSpeed } from './settlementEditor';
+import { applyRoadClassDefaults, applyTerrainStrokeAt, calibrateReferenceLayer, createTerrainHeightSampler, deleteSplineControlPoint, heightmapHeightAt, insertClosedBoundaryPoint, insertClosedSplineControlPoint, insertOpenSplineControlPoint, insertRoadControlPoint, isFortificationTowerPoint, materializeFortificationTowerRoles, nearestRoadPoint, referenceLayerUv, resizeBuildingFromCorner, roadWidthAt, snapBuildingPlacement, snapFortificationNetworkPoint, snapRegionBoundaryPoint, snapRoadNetworkPoint, snapRoadSplineTranslation, terrainHeightAt, terrainSurfaceWeights, updateFortificationSegment, updateRoadSegments, waterDepthAtSeaLevel, waterFlowSpeed } from './settlementEditor';
 import { babylonToWorld, buildWorldMapData, fortificationSplineSections, fortificationVertexData, roadVertexData, worldToBabylon } from './settlementBabylon';
 
-test('camera rotation preserves radius and opposite turns restore the position', () => {
-  const target={x:3,y:0,z:-2},position={x:13,y:15,z:8};
-  const turned=rotatePositionAroundVerticalAxis(position,target,Math.PI/2);
-  expect(Math.hypot(turned.x-target.x,turned.z-target.z)).toBeCloseTo(Math.hypot(position.x-target.x,position.z-target.z));
-  const restored=rotatePositionAroundVerticalAxis(turned,target,-Math.PI/2);
-  expect(restored.x).toBeCloseTo(position.x);
-  expect(restored.y).toBe(position.y);
-  expect(restored.z).toBeCloseTo(position.z);
+test('region refinement inserts a point on the closing edge', () => {
+  const region = { id: 'ward', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }] };
+  const result = insertClosedSplineControlPoint(region, { x: 47, y: 52 });
+  expect(result.index).toBe(3);
+  expect(result.item.points).toEqual([...region.points, { x: 50, y: 50 }]);
 });
 
-test('camera pitch preserves orbit radius and can be reversed', () => {
-  const target={x:3,y:2,z:-2},position={x:13,y:10,z:8};
-  const pitched=pitchPositionAroundTarget(position,target,.2);
-  expect(Math.hypot(pitched.x-target.x,pitched.y-target.y,pitched.z-target.z)).toBeCloseTo(Math.hypot(position.x-target.x,position.y-target.y,position.z-target.z));
-  expect(pitched.y).toBeGreaterThan(position.y);
-  const restored=pitchPositionAroundTarget(pitched,target,-.2);
-  expect(restored.x).toBeCloseTo(position.x);
-  expect(restored.y).toBeCloseTo(position.y);
-  expect(restored.z).toBeCloseTo(position.z);
+test('region refinement can remove the first vertex but keeps a valid polygon', () => {
+  const region = { id: 'ward', points: [{ x: 0, y: 0 }, { x: 100, y: 0 },
+    { x: 100, y: 100 }, { x: 0, y: 100 }] };
+  const result = deleteSplineControlPoint(region, 0, { protectEndpoints: false, minimumPoints: 3 });
+  expect(result.points).toEqual(region.points.slice(1));
+  expect(deleteSplineControlPoint(result, 0, { protectEndpoints: false, minimumPoints: 3 })).toBe(result);
+});
+
+test('applying road class defaults updates every authored segment', () => {
+  const road = { id: 'main', width_feet: 20, surface_type: 'dirt',
+    points: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 40, y: 0 }],
+    segments: [{ width_feet: 12, surface_type: 'brick', label: 'west' },
+      { width_feet: 40, surface_type: 'stone', label: 'east' }] };
+  const updated = applyRoadClassDefaults(road, { width: 30, surface: 'cobblestone' });
+  expect(updated).toMatchObject({ width_feet: 30, surface_type: 'cobblestone' });
+  expect(updated.segments).toEqual([
+    { width_feet: 30, surface_type: 'cobblestone', label: 'west' },
+    { width_feet: 30, surface_type: 'cobblestone', label: 'east' }
+  ]);
 });
 
 test('known-distance calibration scales a reference layer without changing its aspect ratio', () => {
@@ -30,19 +37,19 @@ test('known-distance calibration scales a reference layer without changing its a
   expect(calibrated.feet_per_pixel).toBe(1.25);
 });
 
+test('reference calibration keeps the first picked image point in place', () => {
+  const layer = { origin_x: 100, origin_y: 200, width_feet: 200, height_feet: 100, pixel_width: 1000, pixel_height: 500 };
+  const anchor = { x: 50, y: 200 };
+  const before = referenceLayerUv(layer, anchor.x, anchor.y);
+  const calibrated = calibrateReferenceLayer(layer, anchor, { x: 100, y: 200 }, 25);
+  expect(calibrated).toMatchObject({ origin_x: 75, origin_y: 200, width_feet: 100, height_feet: 50 });
+  expect(referenceLayerUv(calibrated, anchor.x, anchor.y)).toEqual(before);
+});
+
 test('reference layer UVs keep map north at the top and respect calibrated extents', () => {
   const layer={width_feet:100,height_feet:200,origin_x:10,origin_y:20,rotation_degrees:0};
   expect(referenceLayerUv(layer,10,120)).toEqual({u:.5,v:1});
   expect(referenceLayerUv(layer,-40,20)).toEqual({u:0,v:.5});
-});
-
-test('first-person mouse look follows conventional axes and supports inversion', () => {
-  const normal=firstPersonLookAngles(0,0,10,-10,{sensitivity:50});
-  expect(normal.yaw).toBeGreaterThan(0);
-  expect(normal.pitch).toBeGreaterThan(0);
-  const inverted=firstPersonLookAngles(0,0,10,-10,{sensitivity:50,invertX:true,invertY:true});
-  expect(inverted.yaw).toBeLessThan(0);
-  expect(inverted.pitch).toBeLessThan(0);
 });
 
 test('Babylon coordinate transforms preserve world feet and elevation', () => {
@@ -102,7 +109,8 @@ test('tower points split wall curves so either side can use a different angle', 
 test('newly inserted wall controls default to smooth direction points', () => {
   const wall = { points: [{ x: 0, y: 0, tower: true }, { x: 100, y: 0, tower: true }] };
   const result = insertOpenSplineControlPoint(wall, { x: 50, y: 10 }, { tower: false });
-  expect(result.item.points[1]).toEqual({ x: 50, y: 0, tower: false });
+  expect(result.item.points[1]).toMatchObject({ x: 50, y: 0, tower: false });
+  expect(result.item.points[1].point_id).toBeTruthy();
 });
 
 test('terrain strokes blend smoothly and stop at their radius', () => {
@@ -117,6 +125,36 @@ test('flatten and smooth terrain strokes blend toward their sampled target', () 
   const smooth={x:0,y:0,radius:100,mode:'smooth',target_elevation_feet:20,amount:.25};
   expect(terrainHeightAt([flatten],0,0,{values:[255],grid_width:1,grid_height:1,width_feet:100,height_feet:100,min_elevation_feet:0,max_elevation_feet:100})).toBe(30);
   expect(terrainHeightAt([smooth],0,0,{values:[0],grid_width:1,grid_height:1,width_feet:100,height_feet:100,min_elevation_feet:0,max_elevation_feet:100})).toBe(5);
+});
+
+test('Set Elevation holds its exact target in the core and feathers only the outer fifth', () => {
+  const stroke = { x: 0, y: 0, radius: 100, mode: 'set-elevation', target_elevation_feet: 80 };
+  expect(applyTerrainStrokeAt(10, stroke, 0, 0)).toBe(80);
+  expect(applyTerrainStrokeAt(10, stroke, 80, 0)).toBe(80);
+  expect(applyTerrainStrokeAt(10, stroke, 90, 0)).toBeCloseTo(45);
+  expect(applyTerrainStrokeAt(10, stroke, 100, 0)).toBe(10);
+});
+
+test('Slope has an exact linear center grade, soft sides, and rounded end caps', () => {
+  const stroke = { x: 0, y: 0, end_x: 200, end_y: 0, radius: 50,
+    mode: 'slope', start_elevation_feet: 20, end_elevation_feet: 120 };
+  expect(applyTerrainStrokeAt(0, stroke, 0, 0)).toBe(20);
+  expect(applyTerrainStrokeAt(0, stroke, 100, 0)).toBe(70);
+  expect(applyTerrainStrokeAt(0, stroke, 200, 0)).toBe(120);
+  expect(applyTerrainStrokeAt(0, stroke, 100, 40)).toBe(70);
+  expect(applyTerrainStrokeAt(0, stroke, 100, 45)).toBeCloseTo(35);
+  expect(applyTerrainStrokeAt(0, stroke, -45, 0)).toBeCloseTo(10);
+  expect(applyTerrainStrokeAt(0, stroke, 100, 50)).toBe(0);
+});
+
+test('new Smooth averages frozen neighbors instead of flattening toward the first click', () => {
+  const bump = (x, y) => Math.abs(x) < 1 && Math.abs(y) < 1 ? 100 : 0;
+  const stroke = { x: 0, y: 0, radius: 100, mode: 'smooth', smoothing_version: 2,
+    amount: 1, target_elevation_feet: 100 };
+  const height = applyTerrainStrokeAt(100, stroke, 0, 0, bump);
+  expect(height).toBe(25);
+  expect(height).toBeLessThan(applyTerrainStrokeAt(100,
+    { ...stroke, smoothing_version: undefined }, 0, 0, bump));
 });
 
 test('heightmaps are bilinearly sampled in world-foot bounds and remain sculptable', () => {
@@ -188,6 +226,25 @@ test('road width interpolates between control points and survives point insertio
   expect(roadWidthAt(road,.5)).toBe(40);
   const updated=insertRoadControlPoint(road,{x:25,y:12});
   expect(updated.points[1]).toEqual({x:25,y:0,width_feet:30});
+});
+
+test('road spans retain their own width and surface without changing adjacent spans', () => {
+  const road = { id: 'road', width_feet: 20, surface_type: 'dirt', points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 200, y: 0 }] };
+  const updated = updateRoadSegments(road, [1], { width_feet: 48, surface_type: 'cobblestone' });
+  expect(roadWidthAt(updated, .25)).toBe(20);
+  expect(roadWidthAt(updated, .75)).toBe(48);
+  expect(updated.segments).toEqual([{ width_feet: 20, surface_type: 'dirt' }, { width_feet: 48, surface_type: 'cobblestone' }]);
+});
+
+test('wall snapping joins another wall node and topology edits preserve established roles', () => {
+  const other = { id: 'other', points: [{ x: 100, y: 100, tower: true }] };
+  expect(snapFortificationNetworkPoint({ x: 108, y: 96 }, [other], { tolerance: 20 })).toMatchObject({ x: 100, y: 100 });
+  const legacy = { id: 'legacy', wall_type: 'city_wall', points: [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 }] };
+  const stable = materializeFortificationTowerRoles(legacy);
+  expect(stable.points.map(point => point.tower)).toEqual([true, false, true]);
+  const gate = updateFortificationSegment(stable, 0, { gate_type: 'gatehouse' });
+  expect(gate.segments[0].gate_type).toBe('gatehouse');
+  expect(gate.points.slice(0, 2).every(point => point.tower)).toBe(true);
 });
 
 test('duplicate road names retain independent IDs and local widths', () => {

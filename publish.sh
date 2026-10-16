@@ -25,6 +25,7 @@ SKIP_FOUNDRY_CHECK=false
 SKIP_TOOLS_TRANSFER=false
 CURRENT_STEP="initialization"
 RENDERED_NGINX_CONFIG=""
+PUBLISH_KACHHAPA_BUILD_DIR=""
 
 usage() {
   cat <<'EOF'
@@ -398,6 +399,7 @@ local_preflight() {
     done
     validate_python_syntax MtG-webapp/backend/run.py
     validate_service_file MtG-webapp/backend/mtg-backend.service
+    python3 scripts/check-mtg-socket-config.py
     grep -qi '^gunicorn==' MtG-webapp/backend/requirements.txt ||
       fail "MtG-webapp/backend/requirements.txt must pin gunicorn."
     grep -q '/venv/bin/gunicorn' MtG-webapp/backend/mtg-backend.service ||
@@ -426,8 +428,11 @@ build_frontends() {
   if $DEPLOY_KACHHAPA && ! $USE_DOCKER; then
     CURRENT_STEP="Kachhapa frontend build"
     echo "==> Building Kachhapa frontend locally"
-    npm --prefix webapp run build
-    require_path webapp/build/index.html
+    # A dev build or another chat may replace webapp/build while publishing.
+    # Give this run an immutable output location through CRA's BUILD_PATH.
+    PUBLISH_KACHHAPA_BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/kachhapa-publish-build.XXXXXX")
+    BUILD_PATH="$PUBLISH_KACHHAPA_BUILD_DIR" npm --prefix webapp run build
+    require_path "$PUBLISH_KACHHAPA_BUILD_DIR/index.html"
   fi
 
   if $DEPLOY_MTG; then
@@ -598,7 +603,7 @@ REMOTE
 
   CURRENT_STEP="Kachhapa frontend deployment"
   ssh "$DESTINATION" "mkdir -p '$KACHHAPA_ROOT/webapp/build.next'"
-  rsync -avz --delete webapp/build/ "$DESTINATION:$KACHHAPA_ROOT/webapp/build.next/"
+  rsync -avz --delete "$PUBLISH_KACHHAPA_BUILD_DIR/" "$DESTINATION:$KACHHAPA_ROOT/webapp/build.next/"
   CURRENT_STEP="Kachhapa frontend artifact verification"
   ssh "$DESTINATION" "bash -s" -- "$KACHHAPA_ROOT" <<'REMOTE'
 set -Eeuo pipefail
@@ -611,6 +616,16 @@ test -r "$next/index.html" && test -s "$next/index.html" || {
   echo "The staged Kachhapa frontend is missing a readable, non-empty build/index.html." >&2
   exit 1
 }
+# A tab loaded before this publish can request lazy chunks after activation.
+# Keep recent hashed assets from both deployed generations available while the
+# new index and manifest continue to describe only the new build.
+for existing in "$previous" "$live"; do
+  if [[ -d "$existing/static" ]]; then
+    rsync -a --ignore-existing "$existing/static/" "$next/static/"
+  fi
+done
+# Bound retained assets while allowing long-lived tabs to finish loading.
+find "$next/static/js" "$next/static/css" -type f -mtime +30 -delete
 rm -rf "$previous"
 if [[ -d "$live" ]]; then
   mv "$live" "$previous"

@@ -23,7 +23,6 @@
     "papaparse": "^5.4.1",
     "polygon-clipping": "^0.15.7",
     "react": "19.0.0",
-    "react-babylonjs": "^4.0.2",
     "react-bootstrap": "^2.10.10",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
@@ -42,7 +41,9 @@
     "start": "react-scripts start",
     "build": "NODE_OPTIONS='--max-old-space-size=6144' react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "prebuild": "node ../scripts/sync-core-theme.cjs --check && node ../scripts/build-appearance.cjs --check",
+    "check:theme": "node ../scripts/sync-core-theme.cjs --check"
   },
   "eslintConfig": {
     "extends": [

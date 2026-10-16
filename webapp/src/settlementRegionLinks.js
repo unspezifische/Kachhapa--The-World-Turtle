@@ -1,4 +1,5 @@
 import { sampleRoadCenterline, sampleFortificationCenterline } from './settlementBabylon';
+import { closestPointOnSegment2d } from './geometry2d';
 
 export function sourceCenterline(source, roads = [], fortifications = []) {
   if (!source) return [];
@@ -14,11 +15,10 @@ export function nearestSplinePoint(point, roads = [], fortifications = [], toler
     const path = sourceCenterline({ kind, id: item.id }, roads, fortifications);
     for (let index = 0; index < path.length - 1; index += 1) {
       const start = path[index], end = path[index + 1];
-      const dx = end.x - start.x, dy = end.y - start.y;
-      const fraction = Math.max(0, Math.min(1,
-        ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy || 1)));
-      const x = start.x + fraction * dx, y = start.y + fraction * dy;
-      const distance = Math.hypot(x - point.x, y - point.y);
+      const projected = closestPointOnSegment2d(point, start, end);
+      const fraction = projected.t;
+      const { x, y } = projected.point;
+      const distance = projected.distance;
       if (distance <= (preferredSource ? Infinity : tolerance) && (!best || distance < best.distance)) {
         best = { x, y, t: start.t + fraction * (end.t - start.t), distance,
           source: { kind, id: item.id } };
@@ -97,13 +97,10 @@ function slicePath(path, from, to) {
 function compactPath(points, tolerance = 0.25) {
   if (points.length < 3) return points;
   const start = points[0], end = points[points.length - 1];
-  const dx = end.x - start.x, dy = end.y - start.y;
   let farthest = 0, distance = tolerance;
   for (let index = 1; index < points.length - 1; index += 1) {
     const point = points[index];
-    const amount = Math.max(0, Math.min(1,
-      ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy || 1)));
-    const error = Math.hypot(point.x - start.x - amount * dx, point.y - start.y - amount * dy);
+    const error = closestPointOnSegment2d(point, start, end).distance;
     if (error > distance) { farthest = index; distance = error; }
   }
   return farthest ? [...compactPath(points.slice(0, farthest + 1), tolerance).slice(0, -1),

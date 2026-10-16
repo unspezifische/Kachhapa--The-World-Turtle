@@ -34,17 +34,22 @@ test('terrain drag stages placement, releases off terrain, and never calibrates 
 test('calibration mode records terrain points without moving the draft image', () => {
   let listener;
   const canvas = document.createElement('canvas');
+  let ground = { x: 2, y: 0, z: 3 };
   const state = { activeTool: 'reference', referenceCalibrationMode: true,
-    referencePlacement: { id: 'preview' }, setReferencePlacement: jest.fn(), onReferencePoint: jest.fn() };
+    referencePlacement: { id: 'preview', origin_x: 100, origin_y: 150, width_feet: 200, height_feet: 100 },
+    setReferencePlacement: jest.fn(), onReferencePoint: jest.fn() };
   const scene = {
     getEngine: () => ({ getRenderingCanvas: () => canvas }),
     onPointerObservable: { add: fn => { listener = fn; return fn; }, remove: jest.fn() },
     pick: (x, y, predicate) => predicate({ name: 'terrain' })
-      ? { hit: true, pickedPoint: { x: 2, y: 0, z: 3 } } : { hit: false },
+      ? { hit: true, pickedPoint: ground } : { hit: false },
   };
   const dispose = createSettlementBabylonWorkflow(() => state).attach(scene);
   listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 } });
   expect(state.onReferencePoint).toHaveBeenCalledWith(expect.objectContaining({ x: 100, y: 150 }));
+  ground = { x: 20, y: 0, z: 30 };
+  listener({ type: PointerEventTypes.POINTERDOWN, event: { button: 0 } });
+  expect(state.onReferencePoint).toHaveBeenCalledTimes(1);
   expect(state.setReferencePlacement).not.toHaveBeenCalled();
   dispose();
 });

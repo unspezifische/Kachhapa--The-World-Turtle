@@ -627,6 +627,12 @@ class Message(db.Model):
 
 
 class NPC(db.Model):
+    revision = db.Column(db.Integer, nullable=False, default=1, server_default='1')
+    profile_metadata = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    module_key = db.Column(db.String(120), nullable=True, index=True)
+    source_key = db.Column(db.String(120), nullable=True, index=True)
+    origin_snapshot = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    override_patch = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
     id = db.Column(db.Integer, primary_key=True)
     source = db.Column(db.String(80), nullable=False, default='Homebrew')  # Denotes the source of the NPC, e.g., a module or homebrew
 
@@ -670,6 +676,9 @@ class NPC(db.Model):
         return {
             'id': self.id,
             'campaign_id': self.campaign_id,
+            'source': self.source, 'revision': self.revision,
+            'module_key': self.module_key, 'source_key': self.source_key,
+            'is_override': bool(self.override_patch), 'profile_metadata': self.profile_metadata or {},
             'name': self.name,
             'size': self.size,
             'creature_type': self.creature_type,
@@ -848,6 +857,7 @@ class Calendar(db.Model):
     current_day = db.Column(db.Integer, nullable=False, default=1)
     current_hour = db.Column(db.Integer, nullable=False, default=0)
     current_minute = db.Column(db.Integer, nullable=False, default=0)
+    current_second = db.Column(db.Integer, nullable=False, default=0, server_default='0')
 
     epoch_year = db.Column(db.Integer, nullable=True, default=1)
     epoch_month_index = db.Column(db.Integer, nullable=True, default=0)
@@ -923,6 +933,7 @@ class Calendar(db.Model):
                 'day': self.current_day,
                 'hour': self.current_hour,
                 'minute': self.current_minute,
+                'second': self.current_second or 0,
             },
             'time_period': self.get_time_period(),
             'hours_in_day': self.get_hours_in_day(),
@@ -1081,6 +1092,7 @@ class SettlementMapDesign(db.Model):
     terrain_strokes = db.Column(db.JSON, nullable=False, default=list)
     roads = db.Column(db.JSON, nullable=False, default=list)
     buildings = db.Column(db.JSON, nullable=False, default=list)
+    properties = db.Column(db.JSON, nullable=False, default=list)
     reference_layers = db.Column(db.JSON, nullable=False, default=list)
     updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -1091,6 +1103,8 @@ class SettlementMapDesign(db.Model):
             'terrain_strokes': self.terrain_strokes or [],
             'roads': self.roads or [],
             'buildings': self.buildings or [],
+            'properties': self.properties or [],
+            'property_schema_version': 1,
             'reference_layers': self.reference_layers or [],
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -1117,6 +1131,7 @@ class WorldAtlasLocation(db.Model):
     roads = db.Column(db.JSON, nullable=False, default=list)
     water_bodies = db.Column(db.JSON, nullable=False, default=list)
     buildings = db.Column(db.JSON, nullable=False, default=list)
+    properties = db.Column(db.JSON, nullable=False, default=list)
     reference_layers = db.Column(db.JSON, nullable=False, default=list)
     environment = db.Column(db.JSON, nullable=False, default=dict)
     generation_config = db.Column(db.JSON, nullable=False, default=dict)
@@ -1166,6 +1181,8 @@ class WorldAtlasLocation(db.Model):
             'roads': self.roads or [],
             'water_bodies': self.water_bodies or [],
             'buildings': self.buildings or [],
+            'properties': self.properties or [],
+            'property_schema_version': 1,
             'reference_layers': self.reference_layers or [], # Keep for local overlays
             'weather': self.weather,
             
@@ -1584,3 +1601,83 @@ class SoundTranscodeError(RuntimeError):
     def __init__(self, code, message):
         super().__init__(message)
         self.code = code
+
+
+class SettlementRestActivity(db.Model):
+    """One explicit DM-managed rest reservation per campaign NPC."""
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False, index=True)
+    settlement_id = db.Column(db.Integer, db.ForeignKey('world_atlas_location.id'), nullable=False, index=True)
+    npc_id = db.Column(db.Integer, db.ForeignKey('npc.id'), nullable=False)
+    destination_key = db.Column(db.Text, nullable=False)
+    capacity_slot = db.Column(db.Integer, nullable=True)
+    state = db.Column(db.String(30), nullable=False, default='awaiting_arrival')
+    route = db.Column(db.JSON, nullable=False)
+    actor = db.Column(db.JSON, nullable=False, default=dict)
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        UniqueConstraint('campaign_id', 'npc_id', name='uq_rest_npc'),
+        UniqueConstraint('settlement_id', 'destination_key', 'capacity_slot', name='uq_rest_capacity_slot'),
+    )
+
+    def to_dict(self):
+        return {'id': self.id, 'npc_id': self.npc_id, 'settlement_id': self.settlement_id,
+                'state': self.state, 'route': self.route,
+                'updated_at': self.updated_at.isoformat() if self.updated_at else None}
+
+
+class NpcScheduleDefinition(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    npc_id = db.Column(db.Integer, db.ForeignKey('npc.id'), nullable=False, index=True)
+    revision = db.Column(db.Integer, nullable=False)
+    document = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False)
+    warnings = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=list)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('npc_id', 'revision', name='uq_npc_schedule_revision'),)
+
+
+class NpcScheduleRule(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    definition_id = db.Column(db.Integer, db.ForeignKey('npc_schedule_definition.id', ondelete='CASCADE'), nullable=False, index=True)
+    rule_id = db.Column(db.String(120), nullable=False)
+    start_minute = db.Column(db.Integer, nullable=False)
+    duration_minutes = db.Column(db.Integer, nullable=False)
+    priority = db.Column(db.Integer, nullable=False)
+    data = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False)
+
+
+class NpcProfileHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    npc_id = db.Column(db.Integer, db.ForeignKey('npc.id'), nullable=False, index=True)
+    revision = db.Column(db.Integer, nullable=False)
+    snapshot = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class CampaignSessionState(db.Model):
+    """Campaign aggregate: sessions, groups, saved encounters, journeys and DM activity."""
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), primary_key=True)
+    revision = db.Column(db.Integer, nullable=False, default=0)
+    document = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+
+
+class SessionCommandReceipt(db.Model):
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), primary_key=True)
+    request_id = db.Column(db.String(64), primary_key=True)
+    fingerprint = db.Column(db.String(64), nullable=False)
+    revision = db.Column(db.Integer, nullable=False)
+
+
+class UserAppearance(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
+    revision = db.Column(db.Integer, nullable=False, default=0)
+    preferences = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+
+
+class UserColorTheme(db.Model):
+    id = db.Column(db.String(36), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    name = db.Column(db.String(100), nullable=False)
+    version = db.Column(db.Integer, nullable=False, default=1)
+    revision = db.Column(db.Integer, nullable=False, default=1)
+    palettes = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False)

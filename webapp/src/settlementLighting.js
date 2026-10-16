@@ -16,6 +16,8 @@ export function calculateSettlementLighting({
   sunIntensity = 2.2,
   moonIntensity = 0.15,
   cloudCover = 0,
+  moonIllumination = 0,
+  moonAltitude = 0,
 } = {}) {
   const safeHour = finiteNumber(hour, 12);
   const safeMinute = finiteNumber(minute, 0);
@@ -29,7 +31,11 @@ export function calculateSettlementLighting({
   const safeSunIntensity = Math.max(0, finiteNumber(sunIntensity, 2.2));
   const safeMoonIntensity = Math.max(0, finiteNumber(moonIntensity, 0.15));
   const safeCloudCover = clamp(finiteNumber(cloudCover, 0), 0, 1);
-  const moonStrength = nightStrength * safeMoonIntensity;
+  const moonStrength = nightStrength * safeMoonIntensity *
+    clamp(finiteNumber(moonIllumination, 0), 0, 1) *
+    clamp(finiteNumber(moonAltitude, 0), 0, 1) *
+    (1 - safeCloudCover * 0.72);
+  const twilight = clamp(1 - Math.abs(sinAngle) / 0.25, 0, 1);
 
   return {
     cosAngle,
@@ -37,6 +43,7 @@ export function calculateSettlementLighting({
     daylightStrength,
     nightStrength,
     moonStrength,
+    twilight,
     sunIntensity:
       daylightStrength *
       safeSunIntensity *
@@ -44,11 +51,11 @@ export function calculateSettlementLighting({
     // These share the same twilight baseline so crossing sunrise or sunset
     // cannot cause a one-frame jump between unrelated day/night values.
     ambientIntensity:
-      0.35 +
+      0.12 + twilight * 0.16 +
       daylightStrength * 0.9 +
       moonStrength,
     topDownIntensity:
-      0.18 +
+      0.05 + twilight * 0.07 +
       daylightStrength * 0.57 +
       moonStrength * 0.7,
   };

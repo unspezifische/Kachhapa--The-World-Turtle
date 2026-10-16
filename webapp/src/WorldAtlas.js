@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import AddIcon from '@mui/icons-material/Add';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CloseIcon from '@mui/icons-material/Close';
@@ -51,6 +52,7 @@ function GenerationWorkflow({ draft, setDraft, options, step, setStep, onCancel,
 }
 
 export default function WorldAtlas({ headers, socket }) {
+  const navigate = useNavigate();
   const campaignId = headers?.campaignID || headers?.CampaignID;
   const [atlas, setAtlas] = useState({ atlas: { name: 'Campaign World' }, locations: [] });
   const [options, setOptions] = useState(EMPTY_OPTIONS);
@@ -118,12 +120,15 @@ export default function WorldAtlas({ headers, socket }) {
   const remove = async (location) => { if (!window.confirm(`Permanently delete ${location.name}? Use “Destroy” if the settlement was lost during the story.`)) return; try { const response = await axios.delete(`/api/world-atlas/${campaignId}/settlements/${location.id}?reason=mistake`, { headers }); setAtlas((value) => { const remaining = value.locations.filter((item) => item.id !== location.id); const replacement = response.data.active_settlement; return { ...value, locations: remaining.length || !replacement ? remaining : [replacement] }; }); setSelectedId(response.data.active_settlement?.id || null); setStatus(`${location.name} deleted.`); } catch (error) { setStatus(error.response?.data?.message || 'Unable to delete settlement'); } };
 
   const openWorkflow = () => { const next = newDraft(); const inheritedRace = options.inherited?.races?.[0] || options.races[0]; if (inheritedRace) next.primary_race = inheritedRace; next.secondary_race = options.races.find((item) => item !== next.primary_race) || next.primary_race; next.factions_text = (options.inherited?.factions || []).join(', '); setDraft(next); setStep(0); setWorkflowOpen(true); setStatus('Click the overworld to choose where this settlement belongs.'); };
+  const openSettlement = useCallback((settlementId) => {
+    navigate(`/settlementManager?settlement_id=${encodeURIComponent(settlementId)}`);
+  }, [navigate]);
 
   return <div className="world-atlas-page">
     <header className="atlas-page-header"><div><span>CAMPAIGN CARTOGRAPHY</span><h1>World Atlas</h1><p>Generate settlements from their place in the world, or preserve destroyed places as part of its history.</p></div><strong>{atlas.locations.length} settlements</strong></header>
     <div className="world-atlas standalone">
       <section className="atlas-stage"><div className="atlas-heading"><div><span>OVERWORLD</span><h3>{atlas.atlas?.name || 'Campaign World'}</h3></div>{atlas.atlas?.source_url && <a href={atlas.atlas.source_url} target="_blank" rel="noreferrer">Open reference atlas ↗</a>}</div>
-        <AtlasViewport atlas={atlas.atlas} locations={atlas.locations.map((item) => pendingMove?.id === item.id ? { ...item, atlas_x: pendingMove.atlas_x, atlas_y: pendingMove.atlas_y } : item)} selectedId={movingId || selectedId} movableId={movingId} onSelect={setSelectedId} onMove={(id, atlas_x, atlas_y) => movingId === id && setPendingMove({ id, atlas_x, atlas_y })} onPlace={place} placementEnabled={workflowOpen} draftMarker={workflowOpen ? draft : null}/><small className="atlas-help">{movingId ? `Drag the pin tip to preview ${atlas.locations.find((item) => item.id === movingId)?.name}'s new position, then choose Apply.` : 'Wheel to zoom and drag to pan. Choose Move before repositioning a pin.'}</small>
+        <AtlasViewport atlas={atlas.atlas} locations={atlas.locations.map((item) => pendingMove?.id === item.id ? { ...item, atlas_x: pendingMove.atlas_x, atlas_y: pendingMove.atlas_y } : item)} selectedId={movingId || selectedId} movableId={movingId} onSelect={setSelectedId} onOpen={openSettlement} onMove={(id, atlas_x, atlas_y) => movingId === id && setPendingMove({ id, atlas_x, atlas_y })} onPlace={place} placementEnabled={workflowOpen} draftMarker={workflowOpen ? draft : null}/><small className="atlas-help">{movingId ? `Drag the pin tip to preview ${atlas.locations.find((item) => item.id === movingId)?.name}'s new position, then choose Apply.` : 'Wheel to zoom and drag to pan. Choose Move before repositioning a pin.'}</small>
       </section>
       <aside className="atlas-list"><div><span>SETTLEMENTS</span><strong>{atlas.locations.length}</strong></div>
         {(!atlas.atlas?.image_url || showAtlasUpload) && <form className="atlas-image-upload" onSubmit={async (event) => { await uploadAtlasImage(event); setShowAtlasUpload(false); }}><strong>World atlas image</strong><small>Upload a map you are permitted to use for this private campaign.</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setAtlasUpload((value) => ({ ...value, file: event.target.files?.[0] || null }))}/><input value={atlasUpload.attribution} onChange={(event) => setAtlasUpload((value) => ({ ...value, attribution: event.target.value }))} placeholder="Attribution or source note (optional)"/><button type="submit" disabled={!atlasUpload.file}>Store atlas</button></form>}

@@ -1,6 +1,6 @@
 import { NullEngine, Scene } from '@babylonjs/core';
 import { createBlueprintBuilding, addBlueprintCorner, closeBlueprintFootprint } from './settlementEditor';
-import { addBuildingLevel, arcFromThreePoints, exposedRoofFootprints, foundationPerimeter, isRoofVisible, normalizeBlueprint, levelConnectionGuides, resizeBlueprintFootprint, snapOpening, snapPointToLevelBelow, snapPointToRightAngle, stairGeometry, stairOpeningsForLevel, wallPanels } from './buildingBlueprint';
+import { addBuildingLevel, arcFromThreePoints, automaticRoofFootprints, exposedRoofFootprints, foundationPerimeter, isRoofVisible, normalizeBlueprint, levelConnectionGuides, normalizeFlightShares, redistributeFlightShares, resizeBlueprintFootprint, resizeFlightShares, snapOpening, snapPointToLevelBelow, snapPointToRightAngle, stairGeometry, stairOpeningsForLevel, wallPanels } from './buildingBlueprint';
 import { createBlueprintMesh } from './blueprintMesh';
 
 const house = () => {
@@ -121,6 +121,20 @@ test('exposed roof footprints retain courtyard holes between levels', () => {
   expect(exposed[0].holes[0]).toHaveLength(4);
 });
 
+test('an exposed lower extension gets a lean-to roof beside the upper roof', () => {
+  const lower = { id: 'ground', name: 'Ground', elevation_feet: 0,
+    corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }] };
+  const upper = { id: 'upper', name: 'Upper', elevation_feet: 10,
+    corners: [{ x: 10, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 10, y: 30 }] };
+  const roofs = automaticRoofFootprints({ levels: [lower, upper], roofs: [] });
+  expect(roofs).toHaveLength(2);
+  expect(roofs.find(roof => roof.support_level_id === 'ground')).toMatchObject({
+    type: 'shed', visibility_level_id: 'upper', pitch: 18,
+  });
+  expect(roofs.find(roof => roof.support_level_id === 'upper').type).toBe('gable');
+  expect(roofs.find(roof => roof.support_level_id === 'ground').slope_direction).toBeCloseTo(0);
+});
+
 test('roofs normalize as building elements and follow their visibility level', () => {
   const b = house();
   b.levels.push({
@@ -194,6 +208,18 @@ test('roof mesh generation supports every initial type and visibility only hides
   engine.dispose();
 });
 
+test('thick exterior wall intersections receive closing geometry', () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  const building = house();
+  building.levels[0].outline = building.levels[0].outline.map(wall => ({ ...wall, thickness: 3 }));
+  const root = createBlueprintMesh(scene, building, 0);
+  const joints = root.getChildMeshes().filter(mesh => mesh.name.startsWith('wall-joint-'));
+  expect(joints).toHaveLength(4);
+  expect(joints.every(mesh => mesh.getTotalVertices() > 0)).toBe(true);
+  engine.dispose();
+});
+
 test('stair total rise controls every shape and only opens the level it reaches', () => {
   const floorHeight = 10;
   expect(stairGeometry({ shape: 'straight', length: 12, total_rise_feet: 3 }, floorHeight).segments[0].rise_end).toBe(3);
@@ -211,6 +237,21 @@ test('stair total rise controls every shape and only opens the level it reaches'
 
   expect(stairOpeningsForLevel(building, building.levels[1])).toHaveLength(1);
   expect(stairOpeningsForLevel(building, building.levels[2])).toHaveLength(0);
+});
+
+test('landing flight shares normalize, redistribute equally, and drive run and rise', () => {
+  expect(normalizeFlightShares(null, 3)).toEqual([33.4, 33.3, 33.3]);
+  expect(redistributeFlightShares([25, 25, 50], 2, 51)).toEqual([24.5, 24.5, 51]);
+  expect(resizeFlightShares([50, 50], 3, 1)).toEqual([50, 25, 25]);
+
+  const geometry = stairGeometry({
+    shape: 'landing', length: 20, landing_count: 1, landing_depth: 4,
+    total_rise_feet: 10, direction: 0, turn_degrees: 90, flight_shares: [25, 75],
+  }, 10);
+  const flights = geometry.segments.filter(segment => segment.kind === 'flight');
+  expect(flights.map(segment => segment.run)).toEqual([5, 15]);
+  expect(flights[0].rise_end).toBe(2.5);
+  expect(flights[1].rise_end).toBe(10);
 });
 
 test('exterior stair finishes use distinct rendered materials', () => {
@@ -317,6 +358,21 @@ test('level finishes and individual wall overrides survive persistence and rende
   expect(meshes.find(mesh => mesh.name === 'floor-ground').material.name).toContain('finish-wood');
   expect(meshes.find(mesh => mesh.name === 'wall-ground-0-0').material.name).toContain('finish-brick');
   expect(meshes.find(mesh => mesh.name === 'wall-ground-1-0').material.name).toContain('finish-stone');
+  root.dispose(false, true); scene.dispose(); engine.dispose();
+});
+
+test('interior wall and room floor finishes render independently', () => {
+  const building = house();
+  building.levels[0].interior_material = 'plaster';
+  building.levels[0].walls = [{ id: 'divider', type: 'line', start: { x: 20, y: 0 }, end: { x: 20, y: 30 }, thickness: 0.5, material: 'brick' }];
+  building.levels[0].rooms = [{
+    id: 'kitchen', name: 'Kitchen', floor_material: 'stone',
+    region: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 30 }, { x: 0, y: 30 }],
+  }];
+  const engine = new NullEngine(), scene = new Scene(engine);
+  const root = createBlueprintMesh(scene, building);
+  expect(root.getChildMeshes().find(mesh => mesh.name === 'wall-ground-4-0').material.name).toContain('finish-brick');
+  expect(root.getChildMeshes().find(mesh => mesh.name === 'room-floor-ground-kitchen').material.name).toContain('finish-stone');
   root.dispose(false, true); scene.dispose(); engine.dispose();
 });
 
