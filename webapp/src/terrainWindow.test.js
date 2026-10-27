@@ -39,3 +39,19 @@ test('a sculpted sample updates only its own vertex and windows release their me
   scene.dispose();
   engine.dispose();
 });
+
+test('a hidden replacement window computes normals when its sampled heights are ready', () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  const mapData = new Float32Array([
+    0, 0, 0, 1, 0, 0,
+    0, 0, 1, 1, 0, 1,
+  ]);
+  const terrain = createTerrainWindow(scene, mapData, 2, 2, { deferNormals: true });
+  expect(Array.from(terrain.mesh.getVerticesData(VertexBuffer.NormalKind))).toEqual(Array(12).fill(0));
+  terrain.update();
+  expect(terrain.mesh.getVerticesData(VertexBuffer.NormalKind)[1]).toBeCloseTo(1);
+  terrain.dispose();
+  scene.dispose();
+  engine.dispose();
+});

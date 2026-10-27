@@ -5,6 +5,16 @@ I would highly recommend using [Docker Desktop](https://www.docker.com/products/
 Clone the repo, then run this command in the parent direcvtory: `docker-compose up --build -d`. It will take awhile the first time because Docker will have to download several images and then build the web app. Once the build is successful and all the containers are running, you'll be able to access the web app at `localhost` in your web browser. Sometimes, when building the Docker containers for the first time, the Flask container will fail to start. Here is where having Docker Desktop installed makes things easier because it is very straight forward to check the status of the container and to restart it if necessary. It's usually some "Table already exists error". Doesn't matter. Just restart the container and everything will be fine. I'll fix this problem if I feel the need to track down the cause. Presumably it's an issue with the Docker configuration or setup.
 
 ## Getting Started
+Backend development uses Python 3.13.5, recorded in `.python-version`. Run `BACKEND_PYTHON=/path/to/python3.13 bash scripts/backend-tests.sh --setup` to preserve any previous `.venv`, install the complete backend requirements, verify gevent, and run the tests. Subsequent runs use `bash scripts/backend-tests.sh`. Bytecode generation is disabled for these commands.
+
+Publish the development Pi with `./publish.sh --hostname raspberrypii --tailscale-ip TAILSCALE_IP --all`. Its route checks normalize short hostnames to `.local` and explicitly skip Foundry, which is not installed on that Pi. Other hosts continue to check Foundry unless `--skip-foundry-check` is supplied.
+
+For production over Tailscale, refresh the publish helper once with `scripts/configure-publish-sudo.sh raspberrypi --tailscale-ip TAILSCALE_IP`, then apply only the proxy configuration with `./publish.sh --hostname raspberrypi --tailscale-ip TAILSCALE_IP --nginx --skip-tools-transfer`. The app virtual host is the default Nginx host, so raw LAN and Tailscale IP requests serve Kachhapa, including `/mtg/`, without changing host headers. Named subdomains continue to select their own sites.
+
+Every bare-metal publish checks the FFmpeg MP3 encoder and ffprobe with a short conversion before transferring app files. The scoped root helper installs missing `ffmpeg` and `file` packages; installation requires apt access. Fresh Pi setup installs these packages and runs the same conversion check. App publishes also verify installed Python requirements offline even when the requirements file is unchanged, install missing or changed requirements, and run `pip check` before migrations and service restarts.
+
+`./publish.sh --hostname NAME --socket-fix` repairs both apps' Socket.IO services without building frontends or running database migrations. It installs the current MTG systemd unit with one gevent WebSocket worker and an explicit `SOCKETIO_ASYNC_MODE=gevent`, checking/installing its gevent dependencies first. Ordinary `--mtg` publishes also install that unit before restarting. Refresh each Pi's helper with `scripts/configure-publish-sudo.sh NAME` once to enable the scoped `mtg-service` operation; the installer rolls back the unit if its restart fails.
+
 The first thing you should do is register for an account. After you do that, you'll need to select the "Create A New Campaign" option from the Account Profile page. Once those two steps are complete, you can begin to explore the various capabilities of web app. A good first step would be to click the "Add Items" button on the Inventory page and upload the included CSV called "Items" which will provide a variety of starter items to work with. You'll need to have other users registered to join your campaign in order to issue items to them. If you need to have separate tabs open for the DM and the Player users, use a priavte session or Incognito Mode so the tokens don't clash.
 
 ## Alternatively
@@ -65,7 +75,7 @@ Features:
 ## TODOs
 - switch to a system-agnostic way of storing character (both player and non-player) attributes.
 - Move "Atmospheric Settings" to the Atlas-level, rather than individual settlements.
-- Implement "Add buidling" workflow:
+- [*] Implement "Add buidling" workflow:
     - [Developing Build a House from Plans](https://doc.babylonjs.com/guidedLearning/workshop/House/)
     - [Using Build a House from Plans](https://doc.babylonjs.com/guidedLearning/workshop/House_Use/)
     - [Adding a Roof to a House Built from Plans](https://doc.babylonjs.com/guidedLearning/workshop/roof/)

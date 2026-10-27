@@ -1,3 +1,5 @@
+import useNpcMapTokens from './useNpcMapTokens';
+import NpcTokenPanel from './NpcTokenPanel';
 import RestActivityPanel from './RestActivityPanel';
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
@@ -48,6 +50,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';  // Icon for Econom
 import CloudIcon from '@mui/icons-material/Cloud';            // Icon for Atmosphere tool
 import ThunderstormIcon from '@mui/icons-material/Thunderstorm';  // Icon for Weather tool
 import ScheduleIcon from '@mui/icons-material/Schedule';          // Icon for Time of Day
+import PersonPinCircleIcon from '@mui/icons-material/PersonPinCircle';
 
 // Time of Day Control Panel icons
 import FastRewindIcon from '@mui/icons-material/FastRewind';  // For large negative jumps
@@ -66,6 +69,7 @@ import BedtimeIcon from '@mui/icons-material/Bedtime';
 import AddIcon from '@mui/icons-material/Add';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import OpenWithIcon from '@mui/icons-material/OpenWith';
+import UndoIcon from '@mui/icons-material/Undo';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
@@ -83,7 +87,6 @@ import { mergeReferenceSave } from './referencePlacement';
 import {
   calibrateReferenceLayer,
   FALLBACK_ASSET_CATALOG,
-  FEET_PER_SCENE_UNIT,
   closeBlueprintFootprint,
 } from './settlementEditor';
 import {
@@ -93,9 +96,10 @@ import {
   setStoreDefaults,
   bakeStrokesIntoTiles,
   serializeTerrainTile,
-  TILE_FEET,
   tileKey,
 } from './settlementTiles';
+import { planTerrainTileBatches, streamTerrainTileBatches, terrainTileStreamKey } from './terrainTileStream';
+import { createSceneLoadMetrics } from './sceneLoadMetrics';
 
 import {
   searchSettlementLocations,
@@ -104,13 +108,15 @@ import {
 import { buildingViewLegend } from './settlementInspection';
 import { cleanWallJunctions, reconcileWallJunctions } from './wallJunctions';
 import { addStructureToProperty, createProperty, deletePropertyKeepingBuildings, normalizePropertyCatalog, removeStructureFromProperties } from './settlementProperties';
-import { createBoundary, createOutdoorArea, OUTDOOR_AREA_TYPES, validateBoundaryOpening } from './propertyGeometry';
+import { createBoundary, createOutdoorArea, moveBoundaryOpening, OUTDOOR_AREA_TYPES, validateBoundaryOpening } from './propertyGeometry';
+import useSessionManagement from './useSessionManagement';
 
 import './SettlementManager.css';
 import './SettlementToolPanels.css';
 
 const loadSettlementMapEditor = () => import('./SettlementMapEditor');
 const SettlementMapEditor = lazy(loadSettlementMapEditor);
+const SpatialConnectionsEditor = lazy(() => import('./SpatialConnectionsEditor'));
 // The MapEditor file provides the actual tool implementation. This file (SettlementManager) just provides the UI
 
 async function readReferenceImageDimensions(file) {
@@ -160,6 +166,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [speed, setSpeed] = useState(1);
   const requestedTool = new URLSearchParams(window.location.search).get('tool');
   const requestedSettlementId = Number(new URLSearchParams(window.location.search).get('settlement_id')) || null;
+  const requestedNpcId = Number(new URLSearchParams(window.location.search).get('place_npc')) || null;
   const [assetKey, setAssetKey] = useState(null);
   const [buildings, setBuildings] = useState([])
   const [properties, setProperties] = useState([]);
@@ -169,6 +176,8 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [editingPropertyBoundaryId, setEditingPropertyBoundaryId] = useState(null);
   const [outdoorTypeDraft, setOutdoorTypeDraft] = useState('yard');
   const [selectedBoundarySegment, setSelectedBoundarySegment] = useState(0);
+  const [selectedBoundaryOpeningId, setSelectedBoundaryOpeningId] = useState(null);
+  const [movingBoundaryOpening, setMovingBoundaryOpening] = useState(false);
   const [propertyEditError, setPropertyEditError] = useState('');
   const [manageCatalog, setManageCatalog] = useState('buildings');
   const buildToolsRef = useRef(null);
@@ -181,6 +190,25 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   }, [buildMode]);
 
   const [selected, setSelected] = useState(null)
+  const buildingMoveHistoryRef = useRef([]);
+  const [buildingMoveUndoCount, setBuildingMoveUndoCount] = useState(0);
+  const recordBuildingMove = useCallback(building => {
+    if (!building?.id) return;
+    buildingMoveHistoryRef.current.push({ id: building.id, x: building.x, y: building.y });
+    if (buildingMoveHistoryRef.current.length > 30) buildingMoveHistoryRef.current.shift();
+    setBuildingMoveUndoCount(buildingMoveHistoryRef.current.length);
+  }, []);
+  const undoBuildingMove = useCallback(() => {
+    const previous = buildingMoveHistoryRef.current.pop();
+    if (!previous) return;
+    const current = buildings.find(building => String(building.id) === String(previous.id));
+    setBuildings(values => values.map(building => String(building.id) === String(previous.id)
+      ? { ...building, x: previous.x, y: previous.y }
+      : building));
+    if (current) setSelected({ ...current, x: previous.x, y: previous.y });
+    setBuildingMoveUndoCount(buildingMoveHistoryRef.current.length);
+    setBuildMode('select-placed');
+  }, [buildings]);
   const [inspectSelection, setInspectSelection] = useState(null);
   const [activeTool, setActiveTool] = useState(requestedTool === 'atlas' ? 'atlas' : initialTool);
   const [roads, setRoads] = useState([])
@@ -218,7 +246,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [fitRequest, setFitRequest] = useState(0);
   const [designLoaded, setDesignLoaded] = useState(false)
   const [mapLoading, setMapLoading] = useState(false)
-  const mapLoadStartedAtRef = useRef(0);
+  const loadMetricsRef = useRef(null);
+  if (loadMetricsRef.current === null) loadMetricsRef.current = createSceneLoadMetrics();
+  const [loadDebug, setLoadDebug] = useState(null);
+  const terrainCommitSeenRef = useRef(false);
+  const pendingTerrainHydrationRef = useRef(false);
   const [saveStatus, setSaveStatus] = useState('Choose a settlement');
 
   const [activeCalendar, setActiveCalendar] = useState(null);
@@ -242,6 +274,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const terrainTileCoverageRef = useRef(new Map());
   const terrainTileFetchTimerRef = useRef(null);
   const terrainTileFetchControllerRef = useRef(null);
+  const terrainTileStreamKeyRef = useRef(null);
 
   // Every PUT (chunk flush or debounced full save) runs through this queue so
   // two requests can never interleave and race on the server-side tile merge.
@@ -284,6 +317,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const [destination, setDestination] = useState(null)
   const [travelPlan, setTravelPlan] = useState(null);
   const [partySize, setPartySize] = useState(4);
+  const [selectedTravelGroupId, setSelectedTravelGroupId] = useState('');
+  const [selectedTravelMode, setSelectedTravelMode] = useState('walking');
+  const [travelDestinationSearch, setTravelDestinationSearch] = useState('');
   const [economy, setEconomy] = useState({ day_index: 0, markets: [], businesses: [], history: {} });
   const [selectedBusinessId, setSelectedBusinessId] = useState(null);
   const [commodityQuantity, setCommodityQuantity] = useState(25);
@@ -314,6 +350,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
   const [buildingViewMode, setBuildingViewMode] = useState('satellite');
   const [buildingEditDraft, setBuildingEditDraft] = useState(null);
+  const [blueprintOpenRequest, setBlueprintOpenRequest] = useState(null);
+  const [blueprintEditorOpen, setBlueprintEditorOpen] = useState(false);
+  const [accessPointBuildingId, setAccessPointBuildingId] = useState(null);
   const [buildingEvents, setBuildingEvents] = useState(null);
   const [buildingDeleteTarget, setBuildingDeleteTarget] = useState(null);
   const [skipBuildingDeleteConfirmation, setSkipBuildingDeleteConfirmation] = useState(false);
@@ -335,6 +374,35 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const settlementMapRequestsRef = useRef(new Map());
 
   const campaignId = String(headers?.campaignID || headers?.CampaignID || '');
+  const npcMap = useNpcMapTokens({headers,campaignId,settlementId:activeSettlementId});
+  const npcTokens = npcMap.tokens;
+  const [selectedNpcTokenId, setSelectedNpcTokenId] = useState(requestedNpcId);
+  const [placingNpcId, setPlacingNpcId] = useState(requestedNpcId);
+  const [npcPlacementError, setNpcPlacementError] = useState('');
+
+  useEffect(() => {
+    if (!requestedNpcId || !activeSettlementId || Number(activeSettlementId) !== Number(requestedSettlementId)) return;
+    setSelectedNpcTokenId(requestedNpcId); setPlacingNpcId(requestedNpcId); setActiveTool('npcs');
+  }, [activeSettlementId, requestedNpcId, requestedSettlementId]);
+
+  const placeNpcToken = useCallback(async point => {
+    if (!placingNpcId || !activeSettlementId) return;
+    setNpcPlacementError('');
+    const placement = npcMap.placements.find(item => Number(item.npc_id) === Number(placingNpcId));
+    try {
+      await axios.put(`/api/npcs/${placingNpcId}/map-placement`, {
+        settlement_id: Number(activeSettlementId), x: Number(point.x), y: Number(point.y),
+        elevation: Number(point.elevation) || 0, visible: true,
+        ...(placement ? { expected_revision: placement.revision } : {}),
+      }, { headers });
+      setPlacingNpcId(null); await npcMap.refresh();
+      window.dispatchEvent(new Event('npc-map-placements-changed'));
+    } catch (requestError) {
+      setNpcPlacementError(requestError.response?.data?.message || 'Could not place this NPC token.');
+    }
+  }, [activeSettlementId, headers, npcMap, placingNpcId]);
+
+  const sessionApi = useSessionManagement(headers, socket);
 
   // The server rejects payloads above 2 MB, and most reverse proxies reject
   // even less. Long sculpt sessions dirty far more tiles than that, so dirty
@@ -439,13 +507,20 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     store.clear();
     dirtyTileKeysRef.current.clear();
     terrainTileCoverageRef.current.clear();
+    if (terrainTileFetchTimerRef.current !== null) {
+      window.clearTimeout(terrainTileFetchTimerRef.current);
+      terrainTileFetchTimerRef.current = null;
+    }
     terrainTileFetchControllerRef.current?.abort();
+    terrainTileStreamKeyRef.current = null;
     setStoreDefaults(store, { seaLevelFeet: Number(map.environment?.sea_level_feet) || 0 });
     if (mapHeightMap) seedStoreFromHeightMap(store, mapHeightMap);
     hydrateTiles(store, map.reference_layers || []);
     setTileStoreVersion(v => v + 1);
 
     setBuildings(map.buildings || []);
+    buildingMoveHistoryRef.current = [];
+    setBuildingMoveUndoCount(0);
     setProperties(normalizePropertyCatalog(map.buildings || [], map.properties || []));
     setSelectedPropertyId(null);
     setNewStructurePropertyId(null);
@@ -527,8 +602,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   const openSettlement = useCallback(async (settlementId, options = {}) => {
     if (!campaignId || !settlementId) return;
     const location = atlas.locations.find(item => item.id === Number(settlementId));
-    const startedAt = performance.now();
-    mapLoadStartedAtRef.current = startedAt;
+    setLoadDebug(loadMetricsRef.current.start());
+    terrainCommitSeenRef.current = false;
+    pendingTerrainHydrationRef.current = false;
     const fromAtlasZoom = options.fromAtlasZoom === true;
     const beginSceneLoad = () => {
       setActiveTool('inspect'); setActiveSettlementId(Number(settlementId)); setDesignLoaded(false); setMapLoading(true); setSaveStatus('Loading map…'); setSelected(null); setInspectSelection(null);
@@ -541,6 +617,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     if (location?.name) setSettlementName(location.name);
     try {
       const map = await fetchSettlementMap(settlementId);
+      setLoadDebug(loadMetricsRef.current.mark('mapResponse'));
       settlementMapCacheRef.current.delete(Number(settlementId));
       applyMap(map);
     } catch (error) {
@@ -558,9 +635,26 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   }, [activeSettlementId, atlas.locations, openSettlement, requestedSettlementId]);
 
   const handleSceneReady = useCallback(() => {
-    const completedMs = Math.max(0, performance.now() - mapLoadStartedAtRef.current);
-    setSaveStatus(`Map loaded in ${(completedMs / 1000).toFixed(1)}s`);
+    setLoadDebug(loadMetricsRef.current.mark('sceneInitialized'));
+    setSaveStatus('Scene initialized; loading terrain…');
   }, []);
+
+  const handleFirstFrame = useCallback(() => {
+    setLoadDebug(loadMetricsRef.current.mark('firstFrame'));
+  }, []);
+
+  const handleTerrainReady = useCallback(() => {
+    terrainCommitSeenRef.current = true;
+    pendingTerrainHydrationRef.current = false;
+    const camera = referenceCameraRef.current;
+    if (!camera || !designLoaded || !activeSettlementId) return;
+    const cellFeet = activeTool === 'terrain' ? 16 : Math.max(1, Number(camera.window?.cellFeet) || 16);
+    if (planTerrainTileBatches(camera, terrainTileCoverageRef.current, cellFeet).length) return;
+    if (loadMetricsRef.current.snapshot().milestones.visibleTerrain !== undefined) return;
+    const result = loadMetricsRef.current.mark('visibleTerrain');
+    setLoadDebug(result);
+    setSaveStatus(`Map ready in ${(result.milestones.visibleTerrain / 1000).toFixed(1)}s`);
+  }, [activeSettlementId, activeTool, designLoaded]);
 
   const applySimulation = useCallback((state) => { setSimulation(state); if (state?.time?.day) setDay(state.time.day); }, []);
 
@@ -621,7 +715,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
       started = true; axios.post(`/api/settlement-simulation/${campaignId}/bootstrap`, {}, { headers }).then(async ({ data }) => {
         if (active) applySimulation(data);
         const [contextResult, economyResult] = await Promise.allSettled([
-          axios.get(`/api/travel/${campaignId}/context`, { headers }),
+          axios.get(`/api/travel/${campaignId}/context`, { headers, params: { settlement_id: activeSettlementId } }),
           axios.get(`/api/economy/${campaignId}`, { headers }),
         ]);
         if (!active) return;
@@ -640,6 +734,23 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     const timeoutId = idleId == null ? window.setTimeout(bootstrap, 500) : null;
     return () => { active = false; if (!started) bootstrappedCampaign.current = null; if (idleId != null) window.cancelIdleCallback?.(idleId); if (timeoutId != null) window.clearTimeout(timeoutId); };
   }, [campaignId, activeSettlementId, headers, applySimulation]);
+
+  useEffect(() => {
+    if (!campaignId || !activeSettlementId) return;
+    axios.get(`/api/travel/${campaignId}/context`, { headers, params: { settlement_id: activeSettlementId } })
+      .then(response => {
+        setTravelContext(response.data);
+        const groups = (response.data.groups || []).filter(group => group.members?.length);
+        setSelectedTravelGroupId(value => groups.some(group => group.id === value) ? value : (groups[0]?.id || ''));
+      })
+      .catch(error => console.error('Unable to load settlement destinations:', error));
+  }, [campaignId, activeSettlementId, headers]);
+
+  useEffect(() => {
+    if (selectedTravelGroupId) return;
+    const group = sessionApi.snapshot?.document?.groups?.find(item => item.members?.length);
+    if (group) setSelectedTravelGroupId(group.id);
+  }, [selectedTravelGroupId, sessionApi.snapshot]);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -760,14 +871,17 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
   }, [campaignId, activeTool, simulation.time, headers]);
 
 
-  const route = simulation.routes?.[0];
   const lamps = useMemo(() => settlementLamps(simulation, activeSettlementId), [simulation, activeSettlementId]);
 
   const calculateTravel = async (nextDestination = destination) => {
     if (!campaignId || !nextDestination) return;
-    const payload = nextDestination.id ? { poi_id: nextDestination.id, party_size: partySize } : { destination: nextDestination, party_size: partySize };
+    const payload = nextDestination.key
+      ? { settlement_id: activeSettlementId, destination_key: nextDestination.key, group_id: selectedTravelGroupId || undefined, party_size: partySize }
+      : { settlement_id: activeSettlementId, destination: nextDestination, group_id: selectedTravelGroupId || undefined, party_size: partySize };
     const response = await axios.post(`/api/travel/${campaignId}/calculate`, payload, { headers });
     setTravelPlan(response.data);
+    const first = response.data.options?.find(option => option.available);
+    if (first) setSelectedTravelMode(first.mode);
   };
 
   const chooseDestination = useCallback((next) => {
@@ -777,9 +891,31 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
   const setPartyHere = async () => {
     if (!destination) return;
+    const group = sessionApi.snapshot?.document?.groups?.find(item => item.id === selectedTravelGroupId);
+    if (group) {
+      const ok = await sessionApi.command('group', { id:group.id, name:group.name, members:group.members,
+        location:destination, relocate:true });
+      if (ok) { setDestination(null); setTravelPlan(null); }
+      return;
+    }
     const response = await axios.patch(`/api/travel/${campaignId}/party-position`, destination, { headers });
     setTravelContext((value) => ({ ...value, party_position: response.data }));
     setDestination(null); setTravelPlan(null);
+  };
+
+  const startPlannedJourney = async () => {
+    const option = travelPlan?.options?.find(item => item.mode === selectedTravelMode && item.available);
+    if (!option || !selectedTravelGroupId || !destination) return;
+    const ok = await sessionApi.command('journey', { group_id: selectedTravelGroupId, route_request: {
+      settlement_id: travelPlan.settlement_id, destination_key: destination.key,
+      destination: destination.key ? undefined : destination, mode: selectedTravelMode,
+      map_revision: travelPlan.map_revision, party_size: partySize
+    } });
+    if (ok) {
+      setTravelPlan(null); setDestination(null);
+      const response = await axios.get(`/api/travel/${campaignId}/context`, { headers, params: { settlement_id: activeSettlementId } });
+      setTravelContext(response.data);
+    }
   };
 
   const selectedReference = referenceLayers.find(layer => layer.id === selectedReferenceId) || referenceLayers[0];
@@ -790,8 +926,26 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     setCalibrationPoints(values => [...(values.length >= 2 ? [] : values), { x: Math.round(point.x), y: Math.round(point.y) }]);
   }, []);
 
+  const moveTravelAccess = useCallback((point) => {
+    if (!accessPointBuildingId) return;
+    setBuildings(values => values.map(building => building.id === accessPointBuildingId ? {
+      ...building, travel_access_points: [{ id:`travel-access-${building.id}`, label:'Primary entrance',
+        x:Math.round(point.x), y:Math.round(point.y), elevation:Number(point.elevation) || 0 }]
+    } : building));
+  }, [accessPointBuildingId]);
+
+  const finishTravelAccess = useCallback(() => {
+    setAccessPointBuildingId(null);
+    setActiveTool('build');
+  }, []);
+
   // 2. Wrap the onWaypoint inline function
   const handleWaypoint = useCallback((point) => {
+    if (accessPointBuildingId) {
+      moveTravelAccess(point);
+      finishTravelAccess();
+      return;
+    }
     chooseDestination({
       ...point,
       map_key: atlas.locations.find(location => location.id === activeSettlementId)?.map_key || 'settlement',
@@ -799,73 +953,81 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
       road_access: true,
       water_access: point.x > 500
     });
-  }, [chooseDestination, atlas.locations, activeSettlementId]);
+  }, [accessPointBuildingId, moveTravelAccess, finishTravelAccess, chooseDestination, atlas.locations, activeSettlementId]);
 
   const scheduleTerrainTileFetch = useCallback((camera) => {
     const bounds = camera?.terrainBounds;
     if (!designLoaded || !campaignId || !activeSettlementId || !bounds) return;
+    const renderCellFeet = Math.max(1, Number(camera.window?.cellFeet) || 16);
+    const requestedCellFeet = activeTool === 'terrain' ? 16 : renderCellFeet;
+    const key = terrainTileStreamKey(camera, requestedCellFeet, activeSettlementId);
+    if (key === terrainTileStreamKeyRef.current) return;
+    terrainTileStreamKeyRef.current = key;
     if (terrainTileFetchTimerRef.current !== null) window.clearTimeout(terrainTileFetchTimerRef.current);
+    terrainTileFetchControllerRef.current?.abort();
     terrainTileFetchTimerRef.current = window.setTimeout(async () => {
       terrainTileFetchTimerRef.current = null;
-      let minX = Math.floor(bounds.minX / TILE_FEET);
-      let maxX = Math.floor(bounds.maxX / TILE_FEET);
-      let minZ = Math.floor(bounds.minY / TILE_FEET);
-      let maxZ = Math.floor(bounds.maxY / TILE_FEET);
-      // Keep one request bounded even when the camera is looking at the horizon.
-      if ((maxX - minX + 1) * (maxZ - minZ + 1) > 1024) {
-        const centerX = Math.floor(((camera.target?.[0] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
-        const centerZ = Math.floor(((camera.target?.[2] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
-        minX = centerX - 15; maxX = centerX + 16;
-        minZ = centerZ - 15; maxZ = centerZ + 16;
-      }
-      const renderCellFeet = Math.max(1, Number(camera.window?.cellFeet) || 16);
-      // Editing always requests the native 16-ft samples before a brush can
-      // overwrite the tile. Overview modes may use compact LOD responses.
-      const requestedCellFeet = activeTool === 'terrain' ? 16 : renderCellFeet;
-      const requestedGrid = Math.min(257, Math.max(2, Math.ceil(TILE_FEET / requestedCellFeet) + 1));
-      let needsFetch = false;
-      for (let z = minZ; z <= maxZ && !needsFetch; z += 1) {
-        for (let x = minX; x <= maxX; x += 1) {
-          if ((terrainTileCoverageRef.current.get(tileKey(x, z)) || 0) < requestedGrid) {
-            needsFetch = true;
-            break;
-          }
-        }
-      }
-      if (!needsFetch) return;
-
-      terrainTileFetchControllerRef.current?.abort();
+      const batches = planTerrainTileBatches(camera, terrainTileCoverageRef.current, requestedCellFeet);
+      if (!batches.length) { terrainTileStreamKeyRef.current = null; return; }
+      const trackInitialLoad = loadMetricsRef.current.snapshot().milestones.visibleTerrain === undefined;
       const controller = new AbortController();
       terrainTileFetchControllerRef.current = controller;
+      let completedBatches = 0;
       try {
-        const response = await axios.get(`/api/settlement-map/${campaignId}/terrain-tiles`, {
-          headers,
-          signal: controller.signal,
-          params: { settlement_id: activeSettlementId, min_x: minX, max_x: maxX,
-            min_z: minZ, max_z: maxZ, cell_feet: requestedCellFeet },
-        });
-        if (controller.signal.aborted) return;
-        for (let z = minZ; z <= maxZ; z += 1) {
-          for (let x = minX; x <= maxX; x += 1) {
-            terrainTileCoverageRef.current.set(tileKey(x, z), requestedGrid);
+        await streamTerrainTileBatches(batches, terrainTileCoverageRef.current, controller.signal,
+          async (batch, signal) => {
+            const requestedAt = performance.now();
+            const response = await axios.get(`/api/settlement-map/${campaignId}/terrain-tiles`, {
+              headers, signal, params: { settlement_id: activeSettlementId,
+                min_x: batch.min_x, max_x: batch.max_x, min_z: batch.min_z,
+                max_z: batch.max_z, cell_feet: batch.cell_feet },
+            });
+            if (trackInitialLoad) {
+              setLoadDebug(loadMetricsRef.current.recordTileRequest(performance.now() - requestedAt));
+            }
+            return response.data.tiles || [];
+          }, tiles => {
+            const safeTiles = tiles.filter(
+              tile => !dirtyTileKeysRef.current.has(tileKey(Number(tile.tile_x), Number(tile.tile_z)))
+            );
+            if (safeTiles.length) {
+              pendingTerrainHydrationRef.current = true;
+              hydrateTiles(tileStoreRef.current, safeTiles);
+              setTileStoreVersion(value => value + 1);
+            }
+            completedBatches += 1;
+            if (trackInitialLoad) {
+              if (completedBatches === 1) setLoadDebug(loadMetricsRef.current.mark('nearbyTerrain'));
+              setSaveStatus(`Terrain ${completedBatches}/${batches.length} batches…`);
+            }
           }
-        }
-        const safeTiles = (response.data.tiles || []).filter(
-          tile => !dirtyTileKeysRef.current.has(tileKey(Number(tile.tile_x), Number(tile.tile_z)))
         );
-        if (safeTiles.length) {
-          hydrateTiles(tileStoreRef.current, safeTiles);
-          setTileStoreVersion(value => value + 1);
+        if (!controller.signal.aborted) {
+          if (trackInitialLoad) {
+            setLoadDebug(loadMetricsRef.current.mark('terrainData'));
+            setSaveStatus('Finishing terrain…');
+            if (terrainCommitSeenRef.current && !pendingTerrainHydrationRef.current) handleTerrainReady();
+          }
         }
       } catch (error) {
         if (!controller.signal.aborted) console.error('Unable to stream terrain tiles:', error);
+      } finally {
+        if (terrainTileFetchControllerRef.current === controller) {
+          terrainTileFetchControllerRef.current = null;
+          terrainTileStreamKeyRef.current = null;
+        }
       }
     }, 120);
-  }, [activeSettlementId, activeTool, campaignId, designLoaded, headers]);
+  }, [activeSettlementId, activeTool, campaignId, designLoaded, handleTerrainReady, headers]);
+
+  useEffect(() => {
+    if (referenceCameraRef.current) scheduleTerrainTileFetch(referenceCameraRef.current);
+  }, [scheduleTerrainTileFetch]);
 
   useEffect(() => () => {
     if (terrainTileFetchTimerRef.current !== null) window.clearTimeout(terrainTileFetchTimerRef.current);
     terrainTileFetchControllerRef.current?.abort();
+    terrainTileStreamKeyRef.current = null;
   }, []);
 
   // 3. Wrap the conditional onCameraChange inline function
@@ -1042,6 +1204,43 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
     setPropertyEditError('');
     updateBoundarySegment(segment => ({ ...segment, openings: (segment.openings || []).map(item =>
       item.id === opening.id ? next : item) }));
+  };
+  const selectPropertyBoundaryElement = ({ propertyId, segmentId, openingId, point }) => {
+    const property = effectiveProperties.find(item => item.id === propertyId);
+    if (!property?.boundary) return;
+    const segmentIndex = property.boundary.segments.findIndex(segment => segment.id === segmentId);
+    if (segmentIndex < 0) return;
+    setSelected(null);
+    setSelectedPropertyId(propertyId);
+    setSelectedBoundarySegment(segmentIndex);
+    setSelectedBoundaryOpeningId(openingId || (movingBoundaryOpening ? selectedBoundaryOpeningId : null));
+    setBuildMode('select-placed');
+    if (movingBoundaryOpening && selectedBoundaryOpeningId && point) {
+      const moved = moveBoundaryOpening(property.boundary, selectedBoundaryOpeningId, point);
+      if (moved.error) setPropertyEditError(moved.error);
+      else {
+        setProperties(values => normalizePropertyCatalog(buildings, values).map(item => item.id === propertyId
+          ? { ...item, boundary: moved.boundary }
+          : item));
+        setSelectedBoundarySegment(moved.segmentIndex);
+        setPropertyEditError('');
+        setMovingBoundaryOpening(false);
+      }
+    }
+  };
+  const moveSelectedBoundaryOpening = (point, context = {}) => {
+    const property = effectiveProperties.find(item => item.id === context.propertyId) || selectedProperty;
+    const openingId = context.openingId || selectedBoundaryOpeningId;
+    if (!property?.boundary || !openingId) return;
+    const moved = moveBoundaryOpening(property.boundary, openingId, point);
+    if (moved.error) { setPropertyEditError(moved.error); return; }
+    setProperties(values => normalizePropertyCatalog(buildings, values).map(item => item.id === property.id
+      ? { ...item, boundary: moved.boundary }
+      : item));
+    setSelectedPropertyId(property.id);
+    setSelectedBoundaryOpeningId(openingId);
+    setSelectedBoundarySegment(moved.segmentIndex);
+    setPropertyEditError('');
   };
   const finishPropertyPolygon = () => {
     if (!selectedProperty || propertyDraft.length < 3) return;
@@ -1345,7 +1544,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
               <Typography variant="caption" sx={{ color: "var(--text-subtle)", fontSize: '9px', fontWeight: 700, letterSpacing: '0.04em' }}>
-                SETTLEMENT SIMULATION
+                SETTLEMENT SIMULATOR
               </Typography>
               <TextField
                 variant="standard"
@@ -1463,6 +1662,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               { tool: 'water', icon: <WaterIcon />, title: 'Water', checkLoaded: true },
               { tool: 'region', icon: <PolylineIcon />, title: 'Regions', checkLoaded: true },
               { tool: 'build', icon: <AddBusinessIcon />, title: 'Build', checkLoaded: true },
+              { tool: 'npcs', icon: <PersonPinCircleIcon />, title: 'NPC Tokens', checkLoaded: true },
               { tool: 'terrain', icon: <TerrainIcon />, title: 'Terrain', checkLoaded: true },
               { tool: 'travel', icon: <NavigationIcon />, title: 'Travel', checkLoaded: true },
               { tool: 'economy', icon: <TrendingUpIcon />, title: 'Economy', checkLoaded: true },
@@ -1498,6 +1698,12 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
         <main className="settlement-map" style={{ flex: 1, position: 'relative' }} onClick={() => setMapContext(null)}>
           {activeTool !== 'atlas' && designLoaded && !mapLoading && <Suspense fallback={null}>
             <SettlementMapEditor
+              npcTokens={npcTokens}
+              placementNpcId={placingNpcId}
+              selectedNpcTokenId={selectedNpcTokenId}
+              onNpcPlacementPoint={placeNpcToken}
+              onNpcSelect={npcId => { setSelectedNpcTokenId(Number(npcId)); setPlacingNpcId(null); }}
+              pauseScene={blueprintEditorOpen}
               tileStore={tileStoreRef.current}
               onTilesDirtied={handleTilesDirtied}
               tileStoreVersion={tileStoreVersion}
@@ -1511,6 +1717,11 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               editingPropertyBoundaryId={editingPropertyBoundaryId}
               onPropertyBoundaryVertexMove={(index, point) => setPropertyDraft(values => values.map((vertex, vertexIndex) => vertexIndex === index ? { x: point.x, y: point.y } : vertex))}
               onPropertyPolygonPoint={point => setPropertyDraft(values => [...values, { x: point.x, y: point.y }])}
+              onPropertyBoundarySelect={selectPropertyBoundaryElement}
+              onPropertyBoundaryOpeningMove={moveSelectedBoundaryOpening}
+              selectedBoundaryOpeningId={selectedBoundaryOpeningId}
+              selectedBoundarySegmentId={selectedProperty?.boundary?.segments?.[selectedBoundarySegment]?.id || null}
+              movingBoundaryOpening={movingBoundaryOpening}
               blueprintHoverPoint={blueprintHoverPoint}
               footprintTool={footprintTool}
               footprintPoints={footprintPoints}
@@ -1524,6 +1735,7 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               assets={assets}
               buildings={buildings}
               setBuildings={setBuildings}
+              recordBuildingMove={recordBuildingMove}
               simulation={simulation}
 
               selected={selectedBuilding}
@@ -1553,7 +1765,15 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               setFortifications={setFortifications}
               lamps={lamps}
               partyPosition={travelContext.party_position}
-              destination={destination}
+              destination={accessPointBuildingId
+                ? (buildings.find(building => building.id === accessPointBuildingId)?.travel_access_points?.[0]
+                  || (travelContext.destinations || []).find(item => item.key === `${activeSettlementId}:structure:${accessPointBuildingId}`))
+                : destination}
+              plannedRoute={travelPlan?.options?.find(option => option.mode === selectedTravelMode && option.available)?.route || null}
+              journeyPositions={(sessionApi.snapshot?.document?.journeys || []).filter(journey => journey.status === 'travelling' && journey.current_position)}
+              accessPointBuildingId={accessPointBuildingId}
+              onTravelAccessMove={moveTravelAccess}
+              onTravelAccessEnd={finishTravelAccess}
               referenceLayers={displayedReferenceLayers}
               referencePlacement={activeTool === 'reference' ? referenceDraft : null}
               referenceCalibrationMode={referenceCalibrationMode}
@@ -1568,6 +1788,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               campaignName={headers?.campaignName || headers?.CampaignName || ''}
               onMapContext={setMapContext}
               onSceneReady={handleSceneReady}
+              onFirstFrame={handleFirstFrame}
+              onTerrainReady={handleTerrainReady}
+              loadDebug={loadDebug}
             />
           </Suspense>
           }
@@ -1644,9 +1867,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
               {activeTool === 'fortification' && 'Click a wall or list entry, then choose Add Points or Edit Points'}
               {activeTool === 'water' && 'Click a path for a river or a shoreline for lakes and oceans'}
               {activeTool === 'region' && 'Select a region or begin drawing a new boundary'}
+              {activeTool === 'npcs' && (placingNpcId ? 'Click terrain to place the selected NPC token' : 'Choose an NPC in the token panel, or select a token on the map')}
               {activeTool === 'inspect' && firstPerson && 'WASD walk · Left Shift sprint · Mouse aim · Esc or M releases cursor'}
               {activeTool === 'inspect' && !firstPerson && 'WASD pan · Q/E orbit · R/F pitch · Left Shift/Ctrl elevation · Wheel/pinch zoom'}
-              {activeTool !== 'travel' && activeTool !== 'build' && activeTool !== 'terrain' && activeTool !== 'road' && activeTool !== 'fortification' && activeTool !== 'water' && activeTool !== 'region' && activeTool !== 'inspect' && 'WASD pan · Q/E orbit · R/F pitch · Wheel/pinch zoom'}
+              {activeTool !== 'travel' && activeTool !== 'build' && activeTool !== 'npcs' && activeTool !== 'terrain' && activeTool !== 'road' && activeTool !== 'fortification' && activeTool !== 'water' && activeTool !== 'region' && activeTool !== 'inspect' && 'WASD pan · Q/E orbit · R/F pitch · Wheel/pinch zoom'}
             </Box>
           )}
 
@@ -2056,7 +2280,17 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                 fullWidth
                 size="small"
                 aria-label="Manage catalog"
-                onChange={(_, value) => { if (value) setManageCatalog(value); }}
+                onChange={(_, value) => {
+                  if (!value) return;
+                  if (value === 'properties') {
+                    if (selectedProperty) setSelectedPropertyId(selectedProperty.id);
+                    setSelected(null);
+                    setSelectedBoundarySegment(0);
+                    setSelectedBoundaryOpeningId(null);
+                    setMovingBoundaryOpening(false);
+                  }
+                  setManageCatalog(value);
+                }}
                 sx={{ mb: 1, '& .MuiToggleButton-root': { color: "var(--text-muted)", borderColor: "var(--border-main)", textTransform: 'none', fontWeight: 700, '&.Mui-selected': { color: "var(--text-main)", backgroundColor: "var(--bg-surface-2)", borderColor: "var(--primary-border)" } } }}
               >
                 <ToggleButton value="buildings">Buildings</ToggleButton>
@@ -2110,7 +2344,13 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         setPropertyEditError('');
                         updateBoundarySegment(segment => ({ ...segment, openings: [...(segment.openings || []), opening] }));
                       }}>Add Gate / Opening</Button>}
-                      {(selectedProperty.boundary.segments[selectedBoundarySegment].openings || []).map(opening => <Box key={opening.id} sx={{ border: "1px solid var(--border-main)", p: 1 }}>
+                      {(selectedProperty.boundary.segments[selectedBoundarySegment].openings || []).map(opening => <Box key={opening.id} sx={{ border: selectedBoundaryOpeningId === opening.id ? "2px solid var(--primary-border)" : "1px solid var(--border-main)", p: 1 }}>
+                        <Button size="small" variant={selectedBoundaryOpeningId === opening.id ? 'contained' : 'outlined'}
+                          onClick={() => setSelectedBoundaryOpeningId(opening.id)}>Select on map</Button>
+                        <Button size="small" variant={movingBoundaryOpening && selectedBoundaryOpeningId === opening.id ? 'contained' : 'outlined'}
+                          onClick={() => { setSelectedBoundaryOpeningId(opening.id); setMovingBoundaryOpening(value => !(value && selectedBoundaryOpeningId === opening.id)); }}>
+                          {movingBoundaryOpening && selectedBoundaryOpeningId === opening.id ? 'Cancel move' : 'Move gate / opening'}
+                        </Button>
                         <ValidatedNumberField size="small" fullWidth label="Offset along segment (ft)" value={Number(opening.offsetAlongSegment) || 0} min={0} max={1000000} onCommit={value => updateBoundaryOpening(opening, { offsetAlongSegment: value })} />
                         <ValidatedNumberField size="small" fullWidth label="Opening width (ft)" value={Number(opening.width) || 1} min={0.1} max={1000000} onCommit={value => updateBoundaryOpening(opening, { width: value })} />
                         <ValidatedNumberField size="small" fullWidth label="Opening height (ft)" value={Number(opening.height) || 7} min={1} max={100} onCommit={value => updateBoundaryOpening(opening, { height: value })} />
@@ -2202,10 +2442,10 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                   <Typography variant="caption" sx={{ color: "var(--text-muted)", lineHeight: 1.35 }}>
                     {buildMode === 'move-selected'
                       ? 'Drag the selected structure on the map, then choose Done Moving.'
-                      : 'Select a building to edit it or move it on the map.'}
+                      : 'Select a building to edit it. Turn on Move Building before dragging it on the map.'}
                   </Typography>
 
-                  {selectedBuilding && (
+                  {manageCatalog === 'buildings' && selectedBuilding && (
                     <Box className="building-inspector">
                       <section className="building-inspector-section building-inspector-identity">
                         <Typography className="building-inspector-eyebrow">Selected building</Typography>
@@ -2232,7 +2472,15 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           startIcon={<OpenWithIcon />}
                           onClick={() => setBuildMode(buildMode === 'move-selected' ? 'select-placed' : 'move-selected')}
                         >
-                          {buildMode === 'move-selected' ? 'Done Moving' : 'Move Structure'}
+                          {buildMode === 'move-selected' ? 'Done Moving' : 'Move Building'}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          startIcon={<UndoIcon />}
+                          disabled={!buildingMoveUndoCount}
+                          onClick={undoBuildingMove}
+                        >
+                          Undo Building Move
                         </Button>
 
                         <Box className="building-dimension-grid">
@@ -2296,8 +2544,56 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                           onCommit={value => updateSelectedBuilding(building => ({ ...building, elevation: value }))} />
                       </section>
 
-                      {selectedBuilding.is_blueprint && <BlueprintLevels key={selectedBuilding.id} building={selectedBuilding}
+                      <section className="building-inspector-section" aria-label="Travel access">
+                        <Typography variant="subtitle2">Travel access</Typography>
+                        {(() => {
+                          const access = selectedBuilding.travel_access_points?.[0];
+                          const routed = (travelContext.destinations || []).find(item => item.key === `${activeSettlementId}:structure:${selectedBuilding.id}`);
+                          return <>
+                            <Typography variant="caption" sx={{ color: routed?.access_status === 'disconnected' ? 'var(--danger)' : 'var(--text-muted)' }}>
+                              {access ? 'Manual primary entrance' : routed?.access_source === 'opening' ? 'Automatic exterior door or gate' : 'Automatic nearest-road entrance'}{routed?.access_distance_feet != null ? ` · ${routed.access_distance_feet} ft from road` : ''}
+                            </Typography>
+                            {access && <Box sx={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:1, mt:1 }}>
+                              <ValidatedNumberField label="Access X" size="small" value={Number(access.x) || 0} onCommit={value => updateSelectedBuilding(building => ({...building,travel_access_points:[{...building.travel_access_points[0],x:value}]}))} />
+                              <ValidatedNumberField label="Access Y" size="small" value={Number(access.y) || 0} onCommit={value => updateSelectedBuilding(building => ({...building,travel_access_points:[{...building.travel_access_points[0],y:value}]}))} />
+                            </Box>}
+                            <Box sx={{ display:'flex', gap:1, mt:1 }}>
+                              <Button size="small" variant="outlined" onClick={() => { setAccessPointBuildingId(selectedBuilding.id); setActiveTool('travel'); }}>Place on Map</Button>
+                              {access && <Button size="small" variant="outlined" onClick={() => updateSelectedBuilding(building => { const next={...building}; delete next.travel_access_points; return next; })}>Use Automatic</Button>}
+                            </Box>
+                            {accessPointBuildingId === selectedBuilding.id && <Typography variant="caption">Click the map to place this entrance.</Typography>}
+                          </>;
+                        })()}
+                      </section>
+
+                      <Suspense fallback={<Typography variant="caption">Loading spatial graph tools…</Typography>}>
+                        <SpatialConnectionsEditor
+                          campaignId={campaignId}
+                          settlementId={activeSettlementId}
+                          building={selectedBuilding}
+                          headers={headers}
+                          onOpenCanonicalBlueprint={(space, reference) => {
+                            const target = buildings.find(item => String(item.id) === String(space.building_id));
+                            if (!target?.is_blueprint) return false;
+                            if (target.id !== selectedBuilding.id) setSelected(target);
+                            setBlueprintOpenRequest({ token: Date.now(), reference, buildingId: target.id });
+                            return true;
+                          }}
+                        />
+                      </Suspense>
+
+                      {selectedBuilding.is_blueprint && <BlueprintLevels key={`${selectedBuilding.id}:${blueprintOpenRequest?.token || 'default'}`} building={selectedBuilding}
+                        initialOpen={blueprintOpenRequest?.buildingId === selectedBuilding.id}
+                        onEditorOpenChange={setBlueprintEditorOpen}
+                        initialSelection={blueprintOpenRequest?.reference ? { ...blueprintOpenRequest.reference, element_kind: 'opening' } : null}
+                        onEditorClose={() => setBlueprintOpenRequest(null)}
                         onChange={next => setBuildings(values => values.map(b => b.id === next.id ? next : b))}
+                        onDeleteLevelReferences={levelId => {
+                          const filtered = referenceLayersRef.current.filter(layer =>
+                            !(layer.linked_building_id === selectedBuilding.id && layer.floor_level_id === levelId));
+                          referenceLayersRef.current = filtered;
+                          setReferenceLayers(filtered);
+                        }}
                         uploadImage={uploadFloorImage} />}
 
                       <section className="building-inspector-danger">
@@ -2343,6 +2639,13 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
             </aside>
           )}
 
+          {activeTool === 'npcs' && designLoaded && (
+            <NpcTokenPanel settlementId={activeSettlementId} headers={headers} mapState={npcMap}
+              selectedNpcId={selectedNpcTokenId} onSelect={npcId => { setSelectedNpcTokenId(npcId); setNpcPlacementError(''); }}
+              placing={!!placingNpcId} onBeginPlace={npcId => { setSelectedNpcTokenId(npcId); setPlacingNpcId(npcId); setNpcPlacementError(''); }}
+              placementError={npcPlacementError} />
+          )}
+
           {activeTool === 'travel' && (
             <aside className="editor-menu travel-manager-panel">
               <Typography variant="subtitle2" sx={{ color: "var(--text-muted)", fontWeight: 800, mb: 1.5, letterSpacing: '.13em' }}>
@@ -2351,14 +2654,22 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
 
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {/* Destination Selector */}
+                {((travelContext.groups?.length ? travelContext.groups : sessionApi.snapshot?.document?.groups) || []).filter(group => group.members?.length).length > 0 && <Box>
+                  <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5, fontWeight: 'bold' }}>Travel group</Typography>
+                  <Select size="small" fullWidth value={selectedTravelGroupId} onChange={event => { setSelectedTravelGroupId(event.target.value); setTravelPlan(null); }}>
+                    {((travelContext.groups?.length ? travelContext.groups : sessionApi.snapshot?.document?.groups) || []).filter(group => group.members?.length).map(group => <MenuItem value={group.id} key={group.id}>{group.name}</MenuItem>)}
+                  </Select>
+                </Box>}
                 <Box>
                   <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mb: 0.5, fontWeight: 'bold' }}>
                     Destination
                   </Typography>
+                  <TextField size="small" fullWidth type="search" label="Search destinations" value={travelDestinationSearch}
+                    onChange={event => setTravelDestinationSearch(event.target.value)} sx={{ mb:1 }} />
                   <FormControl size="small" fullWidth>
                     <Select
-                      value={destination?.id || ''}
-                      onChange={e => chooseDestination(travelContext.points_of_interest.find(point => point.id === Number(e.target.value)) || null)}
+                      value={destination?.key || ''}
+                      onChange={e => chooseDestination((travelContext.destinations || []).find(point => point.key === e.target.value) || null)}
                       sx={{
                         backgroundColor: "var(--bg-surface-2)",
                         color: "var(--text-main)",
@@ -2366,9 +2677,9 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                         '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: "var(--border-main)" }
                       }}
                     >
-                      <MenuItem value="">Select a point of interest</MenuItem>
-                      {travelContext.points_of_interest.map(point => (
-                        <MenuItem key={point.id} value={point.id}>{point.name}</MenuItem>
+                      <MenuItem value="">Select a building, property, or point</MenuItem>
+                      {(travelContext.destinations || []).filter(point => !travelDestinationSearch || point.label?.toLowerCase().includes(travelDestinationSearch.toLowerCase())).map(point => (
+                        <MenuItem key={point.key} value={point.key} disabled={point.access_status !== 'connected'}>{point.label}{point.access_status !== 'connected' ? ' · disconnected' : ''}</MenuItem>
                       ))}
                     </Select>
                   </FormControl>
@@ -2412,13 +2723,16 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       {travelPlan.options.map(option => (
                         <Box
                           key={option.mode}
+                          role="button"
+                          tabIndex={option.available ? 0 : -1}
+                          onClick={() => option.available && setSelectedTravelMode(option.mode)}
                           sx={{
                             display: 'flex',
                             flexDirection: 'column',
                             padding: '8px',
                             borderRadius: '4px',
                             backgroundColor: "var(--bg-surface)",
-                            border: "1px solid var(--border-main)",
+                            border: `1px solid ${selectedTravelMode === option.mode ? 'var(--accent)' : 'var(--border-main)'}`,
                             opacity: option.available ? 1 : 0.4
                           }}
                         >
@@ -2444,11 +2758,14 @@ export default function SettlementManager({ headers, socket, mainEnvironmentUrl 
                       color="success"
                       fullWidth
                       startIcon={<NavigationIcon />}
-                      onClick={setPartyHere}
+                      disabled={!selectedTravelGroupId || !travelPlan.options.some(option => option.mode === selectedTravelMode && option.available) || !sessionApi.snapshot?.document?.sessions?.some(session => session.status === 'active')}
+                      onClick={startPlannedJourney}
                       sx={{ textTransform: 'none', fontWeight: 'bold' }}
                     >
-                      Move Party to Destination
+                      Start Tracked Journey
                     </Button>
+                    <Button variant="outlined" fullWidth onClick={setPartyHere}>Place Party Here Without Advancing Time</Button>
+                    {sessionApi.error && <Typography variant="caption" sx={{ color: "var(--danger)" }}>{sessionApi.error}</Typography>}
                   </Box>
                 )}
               </Box>

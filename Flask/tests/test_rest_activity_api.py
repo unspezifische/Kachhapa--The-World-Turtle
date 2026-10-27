@@ -23,6 +23,7 @@ class RestActivityApiTests(unittest.TestCase):
             id = db.Column(db.Integer, primary_key=True)
             campaign_id = db.Column(db.Integer)
             name = db.Column(db.String)
+            profile_metadata = db.Column(db.JSON, nullable=False, default=dict, server_default='{}')
         class WorldAtlasLocation(db.Model):
             id = db.Column(db.Integer, primary_key=True)
             campaign_id = db.Column(db.Integer)
@@ -85,6 +86,20 @@ class RestActivityApiTests(unittest.TestCase):
         result = self.client.patch(f"{self.base}/{reserved['id']}", json={'action': 'confirm_arrival'}, headers=self.headers)
         self.assertEqual(result.status_code, 409)
         self.assertEqual(self.db.session.get(self.Activity, reserved['id']).state, 'awaiting_arrival')
+
+    def test_disabled_npc_is_hidden_and_cannot_reserve_until_enabled(self):
+        npc_class = self.db.Model.registry._class_registry['NPC']
+        npc = self.db.session.get(npc_class, 1)
+        npc.profile_metadata = {'disabled': True}
+        self.db.session.commit()
+        context = self.client.get(self.base + '?settlement_id=3', headers=self.headers)
+        self.assertEqual([record['id'] for record in context.json['npcs']], [2])
+        self.assertEqual(self.choose().status_code, 400)
+        self.assertEqual(self.Activity.query.count(), 0)
+        npc.profile_metadata = {}
+        self.db.session.commit()
+        self.assertEqual(self.choose().json['status'], 'route_request')
+        self.assertEqual(self.choose(reserve=True).status_code, 201)
 
     def test_permission_campaign_scope_and_bad_data(self):
         self.assertEqual(self.client.get(self.base + '?settlement_id=3').status_code, 403)

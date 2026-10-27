@@ -1,6 +1,6 @@
 import unittest
 from copy import deepcopy
-from session_management import initial_state, apply_command, SessionError
+from session_management import initial_state, apply_command, SessionError, journey_position
 
 
 class SessionManagementTests(unittest.TestCase):
@@ -49,6 +49,21 @@ class SessionManagementTests(unittest.TestCase):
         self.run_command('next_event')
         self.assertEqual(self.now,900)
 
+    def test_routed_journey_tracks_position_and_stop_keeps_snapshot(self):
+        self.start()
+        self.state['groups'][0]['location'] = {'label':'West gate','map_key':'town','x':0,'y':0}
+        route = {'map_key':'town','mode':'walking','elapsed_seconds':600,
+                 'path':[{'x':0,'y':0,'cumulative_seconds':0},
+                         {'x':100,'y':0,'cumulative_seconds':600}]}
+        self.run_command('journey',dict(group_id='party',seconds=600,
+            destination={'label':'Inn','map_key':'town','x':100,'y':0},route_snapshot=route))
+        journey=self.state['journeys'][0]
+        self.assertEqual(journey_position(journey,300)['current_position']['x'],50)
+        self.now=300
+        self.run_command('stop_journey',{'id':journey['id']})
+        self.assertEqual(self.state['groups'][0]['location']['x'],50)
+        self.assertEqual(journey['route_snapshot'],route)
+
     def test_simultaneous_arrivals_and_nonstopping_events(self):
         self.start()
         self.run_command('group',dict(name='Split',members=['2']))
@@ -85,6 +100,23 @@ class SessionManagementTests(unittest.TestCase):
             self.run_command('initiative',dict(id=e['id'],combatant_id=c['id'],initiative=20-i))
         self.run_command('begin_encounter',{'id':e['id']})
         return e['id']
+
+    def test_grouped_and_automatic_creature_initiative(self):
+        self.start()
+        self.run_command('template', dict(name='Mixed group', participants=[
+            {'name':'Goblin','quantity':2,'dexterity':14,'disposition':'Hostile','initiative_group':'same'},
+            {'name':'Guard','quantity':1,'dexterity':12,'disposition':'Friendly','initiative_group':'A'},
+        ]))
+        template_id = self.state['templates'][0]['id']
+        self.run_command('start_encounter', {'template_id':template_id,'characters':['1'],'initiative':'automatic'})
+        encounter = self.state['encounters'][0]
+        goblins = [combatant for combatant in encounter['combatants'] if combatant['name'] == 'Goblin']
+        self.assertEqual(goblins[0]['initiative'], goblins[1]['initiative'])
+        self.assertEqual(goblins[0]['initiative_group'], goblins[1]['initiative_group'])
+        self.assertEqual(next(c for c in encounter['combatants'] if c['name'] == 'Guard')['disposition'], 'Friendly')
+        self.assertIsNone(next(c for c in encounter['combatants'] if c['kind'] == 'player')['initiative'])
+        self.run_command('roll_all_npc_initiative', {'id':encounter['id']})
+        self.assertEqual(goblins[0]['initiative'], goblins[1]['initiative'])
 
     def test_round_advances_six_seconds_once_and_event_retains_remainder(self):
         eid = self.prepare_combat()

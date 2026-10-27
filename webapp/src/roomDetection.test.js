@@ -45,6 +45,39 @@ test('locked room corrections keep their geometry and report topology disagreeme
   expect(room.detection_warning).toMatch(/differs/);
 });
 
+test('a wall-linked room follows its selected walls when the floor plan changes', () => {
+  const linked = { ...floor, rooms: [{
+    id: 'room-linked', name: 'West Room', purpose: 'Bedroom',
+    region: [point(0, 0), point(10, 0), point(10, 10), point(0, 10)],
+    boundary_wall_ids: ['south', 'north', 'west', 'divider'],
+    boundary_source: 'walls', boundary_locked: true,
+  }] };
+  const moved = { ...linked, walls: [line('divider', 12, 0, 12, 10)] };
+  const result = reconcileDetectedRooms({ id: 'house' }, moved, detectRooms({ id: 'house' }, moved).candidates);
+  const room = result.rooms.find(item => item.id === 'room-linked');
+  expect(Math.max(...room.region.map(vertex => vertex.x))).toBe(12);
+  expect(room.boundary_wall_ids).toEqual(['south', 'north', 'west', 'divider']);
+});
+
+test('switching a wall-linked room to automatic detection uses its live wall geometry', () => {
+  const linked = { ...floor, rooms: [{
+    id: 'room-linked', name: 'West Room', purpose: 'Bedroom',
+    // This cached polygon is deliberately stale. The wall links are the source
+    // of truth during the transition to automatic detection.
+    region: [point(0, 0), point(4, 0), point(4, 4), point(0, 4)],
+    boundary_wall_ids: ['south', 'north', 'west', 'divider'],
+    boundary_source: 'auto', boundary_locked: false,
+  }] };
+  const result = reconcileDetectedRooms({ id: 'house' }, linked, detectRooms({ id: 'house' }, linked).candidates);
+  const room = result.rooms.find(item => item.id === 'room-linked');
+
+  expect(result.warnings).not.toEqual(expect.arrayContaining([expect.stringMatching(/no longer matches/)]));
+  expect(room.boundary_source).toBe('auto');
+  expect(room.boundary_locked).toBe(false);
+  expect(room.boundary_wall_ids).toBeUndefined();
+  expect(Math.max(...room.region.map(vertex => vertex.x))).toBe(10);
+});
+
 test('L-shaped footprint and corridor faces are found under straight-wall topology', () => {
   const concave = {
     id: 'ground', corners: [point(0, 0), point(20, 0), point(20, 8), point(8, 8), point(8, 20), point(0, 20)],

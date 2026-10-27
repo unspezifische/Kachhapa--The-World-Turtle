@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useMemo,
   useState,
@@ -463,21 +464,46 @@ export function ToolWorkflow({
           const first = selectedRoad.segments?.[indexes[0]] || {};
           const width = Number(first.width_feet ?? selectedRoad.width_feet) || 30;
           const surface = first.surface_type || selectedRoad.surface_type || 'dirt';
+          const defaultModes = ['trail', 'alley'].includes(selectedRoad.road_class)
+            ? ['walking', 'riding'] : ['walking', 'riding', 'carriage'];
+          const modes = first.allowed_modes || defaultModes;
+          const patchSegments = changes => {
+            state.recordSplineUndo('road', selectedRoad);
+            state.setRoads(values => values.map(road => road.id === selectedRoad.id
+              ? updateRoadSegments(road, indexes, changes) : road));
+          };
           return <Box sx={{ mb: 1.5, p: 1.25, border: "1px solid var(--border-main)", borderRadius: 1, backgroundColor: "var(--bg-surface)" }}>
             <Typography variant="caption" sx={{ color: "var(--text-main)", display: 'block', fontWeight: 700, mb: .75 }}>
               {indexes.length === 1 ? `Selected span ${indexes[0] + 1}` : `${indexes.length} selected spans`} · Shift-click to add or remove
             </Typography>
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
               <ValidatedNumberField label="Span width (ft)" size="small" value={width} onCommit={value => {
-                state.recordSplineUndo('road', selectedRoad);
-                state.setRoads(values => values.map(road => road.id === selectedRoad.id ? updateRoadSegments(road, indexes, { width_feet: value }) : road));
+                patchSegments({ width_feet: value });
               }} />
               <Select size="small" value={surface} onChange={event => {
-                state.recordSplineUndo('road', selectedRoad);
-                state.setRoads(values => values.map(road => road.id === selectedRoad.id ? updateRoadSegments(road, indexes, { surface_type: event.target.value }) : road));
+                patchSegments({ surface_type: event.target.value });
               }} sx={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-main)" }}>
                 {ROAD_SURFACE_OPTIONS.map(value => <MenuItem key={value} value={value}>{value.charAt(0).toUpperCase() + value.slice(1)}</MenuItem>)}
               </Select>
+            </Box>
+            <Typography variant="caption" sx={{ color: "var(--text-muted)", display: 'block', mt: 1 }}>Allowed travel</Typography>
+            <ToggleButtonGroup size="small" value={modes} onChange={(event, value) => value.length && patchSegments({ allowed_modes: value })}>
+              <ToggleButton value="walking" sx={{ color: "var(--text-main)", textTransform: 'none' }}>Walk</ToggleButton>
+              <ToggleButton value="riding" sx={{ color: "var(--text-main)", textTransform: 'none' }}>Ride</ToggleButton>
+              <ToggleButton value="carriage" sx={{ color: "var(--text-main)", textTransform: 'none' }}>Carriage</ToggleButton>
+            </ToggleButtonGroup>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mt: 1 }}>
+              <Select size="small" aria-label="Travel direction" value={first.direction || 'both'} onChange={event => patchSegments({ direction: event.target.value })}>
+                <MenuItem value="both">Two-way</MenuItem><MenuItem value="forward">Forward only</MenuItem><MenuItem value="reverse">Reverse only</MenuItem>
+              </Select>
+              <Select size="small" aria-label="Road status" value={first.status || 'open'} onChange={event => patchSegments({ status: event.target.value })}>
+                <MenuItem value="open">Open</MenuItem><MenuItem value="closed">Closed</MenuItem>
+              </Select>
+              <Select size="small" aria-label="Crossing behavior" value={first.crossing || 'connect'} onChange={event => patchSegments({ crossing: event.target.value })}>
+                <MenuItem value="connect">Crossings connect</MenuItem><MenuItem value="grade_separated">Bridge / no connection</MenuItem>
+              </Select>
+              <ValidatedNumberField label="Speed multiplier" size="small" min={0.1} max={5} inputProps={{ step: .1 }}
+                value={Number(first.speed_multiplier) || 1} onCommit={value => patchSegments({ speed_multiplier: value })} />
             </Box>
           </Box>;
         })()}
@@ -2250,8 +2276,14 @@ function NavigationControlPanel({ viewCommand, setMapEnvironment }) {
 }
 
 // This function is the main component for editing the settlement map, handling various tools and interactions.
-export default function SettlementMapEditor({
+function SettlementMapEditor({
+  pauseScene = false,
   simulation,
+  npcTokens = [],
+  placementNpcId = null,
+  selectedNpcTokenId = null,
+  onNpcPlacementPoint = () => {},
+  onNpcSelect = () => {},
   activeTool,
   buildMode = 'place-asset',
   setBuildMode = () => { },
@@ -2269,11 +2301,17 @@ export default function SettlementMapEditor({
   assets = [],
   buildings = [],
   setBuildings = () => { },
+  recordBuildingMove = () => { },
   properties = [],
   propertyDraft = [],
   editingPropertyBoundaryId = null,
   onPropertyBoundaryVertexMove = () => { },
   onPropertyPolygonPoint = () => { },
+  onPropertyBoundarySelect = () => { },
+  onPropertyBoundaryOpeningMove = () => { },
+  selectedBoundaryOpeningId = null,
+  selectedBoundarySegmentId = null,
+  movingBoundaryOpening = false,
 
   tileStore,
   onTilesDirtied = () => { },
@@ -2308,6 +2346,11 @@ export default function SettlementMapEditor({
   lamps = [],
   partyPosition,
   destination,
+  plannedRoute,
+  journeyPositions = [],
+  accessPointBuildingId,
+  onTravelAccessMove = () => {},
+  onTravelAccessEnd = () => {},
   onWaypoint = () => { },
   referenceLayers = [],
   referencePlacement = null,
@@ -2324,7 +2367,10 @@ export default function SettlementMapEditor({
   labelState = { ids: [], showAll: false },
   pointsOfInterest = [],
   campaignName = '',
-  onSceneReady = () => { }
+  onSceneReady = () => { },
+  onFirstFrame = () => { },
+  onTerrainReady = () => { },
+  loadDebug = null
 }) {
   const [assetKey, setAssetKey] = useState(assets[0]?.key || '');
 
@@ -2418,6 +2464,7 @@ export default function SettlementMapEditor({
     [scaleIndicator.feet]
   );
   const [cameraDebug, setCameraDebug] = useState(null);
+  const [performanceDebug, setPerformanceDebug] = useState(null);
   const onCameraChangeRef = useRef(onCameraChange);
   const latestCameraPayloadRef = useRef(null);
   const cameraUpdateTimerRef = useRef(null);
@@ -3023,6 +3070,11 @@ export default function SettlementMapEditor({
   }, [activeTool, undoSplineEdit]);
 
   const state = {
+    npcTokens,
+    placementNpcId,
+    selectedNpcTokenId,
+    onNpcPlacementPoint,
+    onNpcSelect,
     activeTool,
     time: simulation?.time || viewCommand?.time || { hour: 12, minute: 0 },
     celestial: simulation?.celestial || { moons: [] },
@@ -3041,7 +3093,13 @@ export default function SettlementMapEditor({
     editingPropertyBoundaryId,
     onPropertyBoundaryVertexMove,
     onPropertyPolygonPoint,
+    onPropertyBoundarySelect,
+    onPropertyBoundaryOpeningMove,
+    selectedBoundaryOpeningId,
+    selectedBoundarySegmentId,
+    movingBoundaryOpening,
     setBuildings,
+    recordBuildingMove,
     blueprintDraft,
     setBlueprintDraft,
     blueprintHoverPoint,
@@ -3156,6 +3214,11 @@ export default function SettlementMapEditor({
     lamps,
     partyPosition,
     destination,
+    plannedRoute,
+    journeyPositions,
+    accessPointBuildingId,
+    onTravelAccessMove,
+    onTravelAccessEnd,
     pointsOfInterest,
     fitRequest,
     campaignName,
@@ -3175,16 +3238,24 @@ export default function SettlementMapEditor({
     terrainMaterial: state.terrainMaterial,
     assets: state.assets,
     pointsOfInterest: state.pointsOfInterest,
+    partyPosition: state.partyPosition,
+    destination: state.destination,
+    accessPointBuildingId: state.accessPointBuildingId,
+    plannedRoute: state.plannedRoute,
+    journeyPositions: state.journeyPositions,
+    npcTokens: state.npcTokens,
     animateWater: state.animateWater,
   }), [
     state.buildings, state.properties, state.roads, state.fortifications, state.wallJunctions, state.regions,
     state.waterBodies, state.referenceLayers,
-    state.terrainMaterial, state.assets, state.pointsOfInterest, state.animateWater
+    state.terrainMaterial, state.assets, state.pointsOfInterest, state.partyPosition, state.destination, state.accessPointBuildingId,
+    state.plannedRoute, state.journeyPositions, state.npcTokens, state.animateWater
   ]);
 
   return (
     <>
       <BabylonSettlementHost
+        paused={pauseScene}
         tileStore={tileStore}
         tileStoreVersion={tileStoreVersion}
         state={state}
@@ -3196,6 +3267,9 @@ export default function SettlementMapEditor({
         onScaleChange={setScaleIndicator}
         onBoundsExpansion={handleBoundsExpansion}
         onSceneReady={onSceneReady}
+        onPerformanceSample={setPerformanceDebug}
+        onFirstFrame={onFirstFrame}
+        onTerrainReady={onTerrainReady}
       />
 
       <div className="map-scale-indicator" aria-label={`Map scale ${scaleIndicator.feet} feet`}>
@@ -3426,6 +3500,36 @@ export default function SettlementMapEditor({
               : '—'}
           </div>
 
+          {performanceDebug && (
+            <div>
+              frame: {performanceDebug.medianMs.toFixed(1)} ms median
+              {' '}· {performanceDebug.p95Ms.toFixed(1)} ms p95
+              <br />
+              draw calls: {performanceDebug.drawCalls}
+              {' '}· meshes: {performanceDebug.activeMeshes}/{performanceDebug.totalMeshes}
+              {performanceDebug.categories && (
+                <>
+                  <br />
+                  {Object.entries(performanceDebug.categories)
+                    .sort((a, b) => b[1].meshes - a[1].meshes)
+                    .slice(0, 6)
+                    .map(([kind, count]) => `${kind}: ${count.meshes}${count.instances ? ` (${count.instances} instances)` : ''}`)
+                    .join(' · ')}
+                </>
+              )}
+            </div>
+          )}
+
+          {loadDebug && (
+            <div>
+              load: {Object.entries(loadDebug.milestones)
+                .map(([stage, ms]) => `${stage} ${(ms / 1000).toFixed(1)}s`)
+                .join(' · ')}
+              {loadDebug.tileRequests > 0 &&
+                ` · tile requests ${loadDebug.tileRequests} / ${(loadDebug.tileRequestMs / 1000).toFixed(1)}s total`}
+            </div>
+          )}
+
           {cameraDebug.bounds && (
             <div>
               bounds: x[
@@ -3484,3 +3588,9 @@ export default function SettlementMapEditor({
     </>
   );
 }
+
+// The floor plan dialog owns input while it is open. Hold the map's last frame
+// and avoid rebuilding its derived scene state for every blueprint text edit.
+export default memo(SettlementMapEditor, (previous, next) =>
+  previous.pauseScene && next.pauseScene
+);

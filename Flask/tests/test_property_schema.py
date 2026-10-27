@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from property_schema import validate_properties
@@ -96,6 +97,29 @@ class PropertySchemaTests(unittest.TestCase):
         level['stairs'][0]['flight_shares'] = [25, 25, 51]
         with self.assertRaisesRegex(ValueError, 'total 100'):
             validate_properties([{'id': 'home', 'structure_ids': ['house']}], buildings)
+
+    def test_level_numbers_are_additive_unique_integers(self):
+        buildings = [{'id': 'tower', 'levels': [
+            {'id': 'one', 'level_number': 1},
+            {'id': 'three', 'level_number': 3},
+            {'id': 'legacy-without-number'},
+        ]}]
+        validate_properties([{'id': 'home', 'structure_ids': ['tower']}], buildings)
+        buildings[0]['levels'][2]['level_number'] = 3
+        with self.assertRaisesRegex(ValueError, 'unique integers'):
+            validate_properties([{'id': 'home', 'structure_ids': ['tower']}], buildings)
+        buildings[0]['levels'][2]['level_number'] = 2.5
+        with self.assertRaisesRegex(ValueError, 'unique integers'):
+            validate_properties([{'id': 'home', 'structure_ids': ['tower']}], buildings)
+
+    def test_level_number_gaps_round_trip_through_building_json(self):
+        buildings = [{'id': 'tower', 'levels': [
+            {'id': 'one', 'name': 'Great Hall', 'level_number': 1, 'elevation_feet': 10},
+            {'id': 'three', 'name': 'Observatory', 'level_number': 3, 'elevation_feet': 30},
+        ]}]
+        restored = json.loads(json.dumps(buildings))
+        validate_properties([], restored)
+        self.assertEqual(restored, buildings)
 
 
 if __name__ == '__main__':

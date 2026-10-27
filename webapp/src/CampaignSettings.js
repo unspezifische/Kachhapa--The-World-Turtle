@@ -20,6 +20,10 @@ const adventureText = (value, output = []) => {
 
 export default function CampaignSettings({ campaignID, headers, embedded = false }) {
   const [settings,setSettings] = useState(null)
+  const [members,setMembers] = useState({active:[],pending:[],friends:[]})
+  const [wikiProposals,setWikiProposals] = useState([])
+  const [wikiSaving,setWikiSaving] = useState('')
+  const [selectedFriendIds,setSelectedFriendIds] = useState([])
   const [loading,setLoading]=useState(true)
   const [error,setError]=useState('');
   const [showAdd,setShowAdd] = useState(false)
@@ -56,7 +60,19 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
 
   const loadSettings=useCallback(async()=>{
     setLoading(true);setError('');
-    try{const response=await axios.get(`/api/campaigns/${campaignID}/modules`,{headers});setSettings(response.data);}
+    try{
+      const [settingsResponse,membersResponse,proposalsResponse]=await Promise.all([
+        axios.get(`/api/campaigns/${campaignID}/modules`,{headers}),
+        axios.get(`/api/campaigns/${campaignID}/members`,{headers}),
+        axios.get(`/api/campaigns/${campaignID}/wiki-proposals`,{headers}),
+      ]);
+      setSettings(settingsResponse.data);
+      setMembers({
+        active:membersResponse.data?.active||[], pending:membersResponse.data?.pending||[],
+        friends:membersResponse.data?.friends||[], wiki_permission:membersResponse.data?.wiki_permission||'everyone',
+      });
+      setWikiProposals(Array.isArray(proposalsResponse.data)?proposalsResponse.data:[]);
+    }
     catch(requestError){setError(requestError.response?.data?.message||'Unable to load campaign settings');}
     finally{setLoading(false);}
   },[campaignID,headers]);
@@ -64,6 +80,55 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
   useEffect(()=>{loadSettings();},[loadSettings]);
   useEffect(()=>{setCampaignName(settings?.campaign?.name||'');},[settings?.campaign?.name]);
   const installable=useMemo(()=>settings?.available_modules?.filter(module=>!module.installed)||[],[settings]);
+  const unavailableFriendIds=useMemo(()=>new Set([...(members.active||[]),...(members.pending||[])].map(item=>item.id)),[members]);
+  const eligibleFriends=useMemo(()=>(members.friends||[]).filter(friend=>!unavailableFriendIds.has(friend.id)),[members.friends,unavailableFriendIds]);
+
+  const inviteFriends=async()=>{
+    if(!selectedFriendIds.length)return;
+    setError('');setNotice('');
+    try{
+      await axios.post(`/api/campaigns/${campaignID}/invitations`,{user_ids:selectedFriendIds},{headers});
+      setSelectedFriendIds([]);setNotice('Campaign invitation sent.');await loadSettings();
+    }catch(requestError){setError(requestError.response?.data?.message||'Unable to invite those friends.');}
+  };
+
+  const revokeInvitation=async(invitation)=>{
+    setError('');setNotice('');
+    try{
+      await axios.delete(`/api/campaigns/${campaignID}/invitations/${invitation.invitation_id}`,{headers});
+      setNotice(`Invitation for @${invitation.username} revoked.`);await loadSettings();
+    }catch(requestError){setError(requestError.response?.data?.message||'Unable to revoke that invitation.');}
+  };
+
+  const saveWikiPermission=async(mode)=>{
+    setWikiSaving('permission');setError('');setNotice('');
+    try{
+      await axios.patch(`/api/campaigns/${campaignID}/wiki-permissions`,{mode},{headers});
+      setMembers(current=>({...current,wiki_permission:mode}));
+      setNotice('Campaign wiki permissions updated.');
+    }catch(requestError){setError(requestError.response?.data?.message||'Unable to update wiki permissions.');}
+    finally{setWikiSaving('');}
+  };
+
+  const saveWikiRole=async(member,role)=>{
+    setWikiSaving(`member-${member.id}`);setError('');setNotice('');
+    try{
+      await axios.patch(`/api/campaigns/${campaignID}/members/${member.id}/wiki-role`,{role},{headers});
+      setMembers(current=>({...current,active:current.active.map(item=>item.id===member.id?{...item,wiki_role:role}:item)}));
+      setNotice(`Wiki role updated for @${member.username}.`);
+    }catch(requestError){setError(requestError.response?.data?.message||'Unable to update that wiki role.');}
+    finally{setWikiSaving('');}
+  };
+
+  const reviewWikiProposal=async(proposal,action)=>{
+    setWikiSaving(`proposal-${proposal.id}`);setError('');setNotice('');
+    try{
+      await axios.patch(`/api/campaigns/${campaignID}/wiki-proposals/${proposal.id}`,{action},{headers});
+      setWikiProposals(current=>current.filter(item=>item.id!==proposal.id));
+      setNotice(`Wiki change ${action==='approve'?'approved':'rejected'}.`);
+    }catch(requestError){setError(requestError.response?.data?.message||'Unable to review that wiki change.');}
+    finally{setWikiSaving('');}
+  };
 
   const previewModule=useCallback(async(moduleKey)=>{
     setSelectedKey(moduleKey);setPreview(null);setError('');
@@ -247,16 +312,66 @@ export default function CampaignSettings({ campaignID, headers, embedded = false
         />
       </Card.Body></Card>
 
-      <Card className="settings-card"><Card.Body>
-        <span>GAME RULES</span><h2>D&amp;D ruleset</h2>
-        <p className="settings-card-description">Choose the edition used for character options, rules content, tables, and equipment presets.</p>
-        <Form.Group controlId="campaignRulesetSetting"><Form.Label>Edition</Form.Label><Form.Select value={settings?.campaign?.ruleset||'5e'} onChange={event=>chooseRuleset(event.target.value)} disabled={rulesetSaving}>
-          <option value="3.5e">3.5e</option>
-          <option value="4e">4e</option>
-          <option value="5e">5e</option>
-          <option value="5e (2024)">5e (2024)</option>
-        </Form.Select><Form.Text>System: D&amp;D{rulesetSaving?' · Saving…':''}</Form.Text></Form.Group>
-      </Card.Body></Card>
+      <div className="campaign-settings-access-layout">
+        <div className="campaign-settings-access-stack">
+          <Card className="settings-card campaign-rules-card"><Card.Body>
+            <span>GAME RULES</span><h2>D&amp;D ruleset</h2>
+            <p className="settings-card-description">Choose the edition used for character options, rules content, tables, and equipment presets.</p>
+            <Form.Group controlId="campaignRulesetSetting"><Form.Label>Edition</Form.Label><Form.Select value={settings?.campaign?.ruleset||'5e'} onChange={event=>chooseRuleset(event.target.value)} disabled={rulesetSaving}>
+              <option value="3.5e">3.5e</option>
+              <option value="4e">4e</option>
+              <option value="5e">5e</option>
+              <option value="5e (2024)">5e (2024)</option>
+            </Form.Select><Form.Text>System: D&amp;D{rulesetSaving?' · Saving…':''}</Form.Text></Form.Group>
+          </Card.Body></Card>
+
+          <Card className="settings-card campaign-wiki-card"><Card.Body>
+            <div className="settings-card-title"><div><span>WIKI ACCESS</span><h2>Writing permissions</h2></div><Badge bg="secondary">DM always writes</Badge></div>
+            <Form.Group controlId="campaignWikiPermission"><Form.Label>Who can write to the campaign wiki?</Form.Label>
+              <Form.Select value={members.wiki_permission||'everyone'} onChange={event=>saveWikiPermission(event.target.value)} disabled={wikiSaving==='permission'}>
+                <option value="everyone">Everyone can write</option>
+                <option value="scribes_only">Scribes Only</option>
+                <option value="dm_only">DM only</option>
+              </Form.Select>
+              <Form.Text>{members.wiki_permission==='scribes_only'
+                ? 'The DM always has write permission. Scribes can publish directly; Scribes with Approval send changes to the DM for review.'
+                : members.wiki_permission==='dm_only'
+                  ? 'Only the DM can change wiki pages. Player roles are retained if you change this setting later.'
+                  : 'Every active campaign member can publish wiki changes directly.'}</Form.Text>
+            </Form.Group>
+            <h3 className="campaign-profile-subheading">Player wiki roles</h3>
+            <div className="campaign-wiki-roles">
+              {(members.active||[]).map(member=><div key={`wiki-role-${member.id}`}>
+                <div><strong>@{member.username}</strong><small>{member.is_dm?'Campaign DM':'Active player'}</small></div>
+                {member.is_dm?<Badge bg="primary">DM · Full access</Badge>:<Form.Select aria-label={`Wiki role for @${member.username}`} value={member.wiki_role||'read_only'} onChange={event=>saveWikiRole(member,event.target.value)} disabled={wikiSaving===`member-${member.id}`}>
+                  <option value="scribe">Scribe</option>
+                  <option value="scribe_approval">Scribe with Approval</option>
+                  <option value="read_only">Read Only</option>
+                </Form.Select>}
+              </div>)}
+              {(members.pending||[]).map(member=><div key={`wiki-pending-${member.id}`} className="is-pending"><div><strong>@{member.username}</strong><small>Invitation pending</small></div><Badge bg="light" text="dark">Role available after acceptance</Badge></div>)}
+            </div>
+            <h3 className="campaign-profile-subheading">Approval queue</h3>
+            {wikiProposals.length?<div className="wiki-proposal-list">{wikiProposals.map(proposal=><article key={proposal.id}>
+              <div><strong>{proposal.page_title}</strong><small>Submitted by @{proposal.submitted_by?.username||'player'}</small><p>{proposal.content?.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,180)||'Blank page content'}</p></div>
+              <span><Button size="sm" onClick={()=>reviewWikiProposal(proposal,'approve')} disabled={wikiSaving===`proposal-${proposal.id}`}>Approve</Button><Button size="sm" variant="outline-secondary" onClick={()=>reviewWikiProposal(proposal,'reject')} disabled={wikiSaving===`proposal-${proposal.id}`}>Reject</Button></span>
+            </article>)}</div>:<p className="settings-empty">No wiki changes are waiting for review.</p>}
+          </Card.Body></Card>
+        </div>
+
+        <Card className="settings-card campaign-members-card"><Card.Body>
+          <div className="settings-card-title"><div><span>TABLE</span><h2>Campaign members</h2></div><Badge bg="secondary">{(members.active||[]).length} active</Badge></div>
+          <div className="campaign-member-list">
+            {(members.active||[]).map(member=><div key={`active-${member.id}`}><strong>@{member.username}</strong><Badge bg="success">Active</Badge></div>)}
+            {(members.pending||[]).map(member=><div key={`pending-${member.id}`}><strong>@{member.username}</strong><span><Badge bg="warning" text="dark">Pending</Badge><Button variant="outline-secondary" size="sm" onClick={()=>revokeInvitation(member)}>Revoke</Button></span></div>)}
+            {!(members.active||[]).length&&!(members.pending||[]).length&&<p className="settings-empty">No campaign members are listed yet.</p>}
+          </div>
+          <hr/>
+          <div className="settings-card-title"><div><span>FRIENDS</span><h2>Invite players</h2></div>{eligibleFriends.length>0&&<Button variant="link" size="sm" onClick={()=>setSelectedFriendIds(selectedFriendIds.length===eligibleFriends.length?[]:eligibleFriends.map(friend=>friend.id))}>{selectedFriendIds.length===eligibleFriends.length?'Clear':'Select all'}</Button>}</div>
+          {eligibleFriends.length?<div className="campaign-friend-picker">{eligibleFriends.map(friend=><Form.Check key={friend.id} id={`campaign-friend-${friend.id}`} label={`@${friend.username}`} checked={selectedFriendIds.includes(friend.id)} onChange={event=>setSelectedFriendIds(current=>event.target.checked?[...current,friend.id]:current.filter(id=>id!==friend.id))}/>)}</div>:<p className="settings-empty">All eligible friends are already members or have pending invitations.</p>}
+          <Button onClick={inviteFriends} disabled={!selectedFriendIds.length}>Invite selected</Button>
+        </Card.Body></Card>
+      </div>
 
       <Card className="settings-card"><Card.Body>
         <div className="settings-card-title"><div><span>MODULES</span><h2>Installed adventures</h2></div><Button onClick={openAddModule} disabled={!installable.length}>Add module</Button></div>

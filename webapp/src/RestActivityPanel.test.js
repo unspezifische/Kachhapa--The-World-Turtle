@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import axios from 'axios';
 import RestActivityPanel from './RestActivityPanel';
+jest.mock('./NpcIdentity', () => () => null);
 jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), patch: jest.fn(), delete: jest.fn() }));
 const destination = { id: 'bed', name: 'Bedroom', point: { x: 1, y: 2 } };
 const route = { status: 'route_request', destination, destination_key: 'key', steps: [{ kind: 'stairs', from_floor_id: 'ground', to_floor_id: 'upper' }, { kind: 'room' }] };

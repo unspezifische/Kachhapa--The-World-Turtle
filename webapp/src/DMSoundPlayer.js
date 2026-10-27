@@ -29,6 +29,14 @@ import './DMSoundPlayer.css';
 const SoundPlayerContext = createContext(null);
 const SOUND_PLAYER_POSITION_KEY = 'kachhapa-sound-player-position';
 const SOUND_PLAYER_EDGE_GAP = 12;
+const SOUND_UPLOAD_CONCURRENCY = 2;
+const SOUND_UPLOAD_MAX_ATTEMPTS = 3;
+const SOUND_UPLOAD_POLL_MS = 2000;
+
+function uploadIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `sound-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function clientUploadError(file) {
   if (!file?.name) return 'The selected file has no filename.';
@@ -40,24 +48,41 @@ function clientUploadError(file) {
   return '';
 }
 
-function SoundUploadQueue({ items, onClear }) {
+function SoundUploadQueue({ items, onClear, onRetry }) {
   if (!items.length) return null;
+  const complete = items.filter((item) => item.status === 'complete').length;
+  const duplicates = items.filter((item) => item.status === 'duplicate').length;
+  const failed = items.filter((item) => item.status === 'error').length;
+  const statusLabel = (item) => ({
+    waiting: 'Waiting',
+    retrying: 'Retrying',
+    uploading: `${item.progress}%`,
+    receiving: 'Staging',
+    queued: 'Queued',
+    processing: 'Processing',
+    complete: 'Ready',
+    duplicate: item.duplicateReason || 'Already in library',
+    checking: 'Checking library',
+    error: 'Failed',
+  }[item.status] || item.status);
   return (
     <aside className="sound-upload-queue" aria-label="Sound uploads">
       <header>
-        <div><span className="sound-eyebrow">Uploads</span><strong>{items.length} file{items.length === 1 ? '' : 's'}</strong></div>
-        <button type="button" onClick={onClear} aria-label="Clear upload list"><Clear fontSize="small" /></button>
+        <div><span className="sound-eyebrow">Import queue</span><strong>{complete}/{items.length} ready{duplicates ? ` · ${duplicates} skipped` : ''}{failed ? ` · ${failed} failed` : ''}</strong></div>
+        <button type="button" onClick={onClear} aria-label="Clear finished uploads"><Clear fontSize="small" /></button>
       </header>
       <div className="sound-upload-queue-list">
         {items.map((item) => (
           <div className={`sound-upload-queue-item is-${item.status}`} key={item.id}>
-            <span className="sound-upload-filename" title={item.filename}>{item.filename}</span>
+            <span className="sound-upload-copy"><span className="sound-upload-filename" title={item.filename}>{item.filename}</span><small>{statusLabel(item)}</small></span>
             {item.status === 'error' ? (
-              <span className="sound-upload-error-indicator" role="img" aria-label={`Upload failed for ${item.filename}: ${item.error}`} title={item.error} data-error={item.error}><ErrorOutline /></span>
-            ) : item.status === 'complete' ? (
-              <span className="sound-upload-complete" role="img" aria-label={`Uploaded ${item.filename}`}><CheckCircleOutline /></span>
-            ) : (
+              <button className="sound-upload-error-indicator" type="button" onClick={() => onRetry(item.id)} aria-label={`Retry ${item.filename}: ${item.error}`} title={item.error} data-error={item.error}><ErrorOutline /></button>
+            ) : ['complete', 'duplicate'].includes(item.status) ? (
+              <span className="sound-upload-complete" role="img" aria-label={item.status === 'duplicate' ? `Skipped duplicate ${item.filename}` : `Uploaded ${item.filename}`}><CheckCircleOutline /></span>
+            ) : item.status === 'uploading' ? (
               <span className="sound-upload-progress" role="progressbar" aria-label={`Uploading ${item.filename}: ${item.progress}%`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item.progress} style={{ '--sound-upload-progress': `${item.progress}%` }}><span>{item.progress}</span></span>
+            ) : (
+              <span className="sound-upload-state" aria-label={`${item.filename}: ${statusLabel(item)}`}>{item.status === 'processing' ? <GraphicEq /> : <QueueMusic />}</span>
             )}
           </div>
         ))}
@@ -126,6 +151,9 @@ export function DMSoundPlayerProvider({ headers, socket, enabled = true, childre
   const [backgroundHistoryLength, setBackgroundHistoryLength] = useState(0);
   const [quickEffects, setQuickEffects] = useState(Array.from({ length: 6 }, (_unused, index) => ({ slot: index + 1, sound: null })));
   const [uploadQueue, setUploadQueue] = useState([]);
+  const uploadQueueRef = useRef([]);
+  const activeUploadsRef = useRef(0);
+  const pumpUploadQueueRef = useRef(null);
   const uploadSequence = useRef(0);
 
   const replaceQueue = useCallback((tracks) => {
@@ -379,19 +407,100 @@ export function DMSoundPlayerProvider({ headers, socket, enabled = true, childre
     setEffectPlaying(false);
   }, []);
 
-  const uploadSound = useCallback(async ({ file, name, category, onUploadProgress }) => {
+  const mergeCompletedSound = useCallback((sound) => {
+    if (!sound) return;
+    setSounds((current) => [...current.filter((candidate) => candidate.id !== sound.id), sound]
+      .sort((a, b) => a.name.localeCompare(b.name)));
+  }, []);
+
+  const stageSoundUpload = useCallback(async ({ file, name, category, idempotencyKey, onUploadProgress }) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('name', name);
     formData.append('category', category);
-    const response = await axios.post('/api/sounds', formData, { headers, onUploadProgress });
-    setSounds((current) => [...current, response.data.sound].sort((a, b) => a.name.localeCompare(b.name)));
-    return response.data.sound;
+    const response = await axios.post('/api/sounds', formData, {
+      headers: { ...headers, 'Idempotency-Key': idempotencyKey },
+      onUploadProgress,
+    });
+    return response.data.job;
   }, [headers]);
 
-  const updateUploadQueueItem = useCallback((id, changes) => {
-    setUploadQueue((current) => current.map((item) => item.id === id ? { ...item, ...changes } : item));
+  const commitUploadQueue = useCallback((updater) => {
+    const next = typeof updater === 'function' ? updater(uploadQueueRef.current) : updater;
+    uploadQueueRef.current = next;
+    setUploadQueue(next);
   }, []);
+
+  const updateUploadQueueItem = useCallback((id, changes) => {
+    commitUploadQueue((current) => current.map((item) => item.id === id ? { ...item, ...changes } : item));
+  }, [commitUploadQueue]);
+
+  const applyServerJobs = useCallback((jobs) => {
+    const byId = new Map((jobs || []).map((job) => [job.id, job]));
+    (jobs || []).forEach((job) => mergeCompletedSound(job.sound));
+    commitUploadQueue((current) => current.map((item) => {
+      const job = item.jobId ? byId.get(item.jobId) : null;
+      if (!job) return item;
+      return {
+        ...item,
+        status: job.status === 'failed' ? 'error' : job.status,
+        progress: ['complete', 'duplicate'].includes(job.status) ? 100 : item.progress,
+        error: job.error?.message || '',
+        duplicateReason: job.status === 'duplicate' ? 'Already in library' : item.duplicateReason,
+        serverRetryAvailable: job.status === 'failed',
+      };
+    }));
+  }, [commitUploadQueue, mergeCompletedSound]);
+
+  const runUploadItem = useCallback(async (item) => {
+    let lastError;
+    for (let attempt = 1; attempt <= SOUND_UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        updateUploadQueueItem(item.id, { status: 'uploading', attempt, error: '' });
+        const job = await stageSoundUpload({
+          ...item,
+          onUploadProgress: (progressEvent) => {
+            if (!progressEvent.total) return;
+            const progress = Math.min(99, Math.round((progressEvent.loaded / progressEvent.total) * 100));
+            updateUploadQueueItem(item.id, { progress });
+          },
+        });
+        updateUploadQueueItem(item.id, {
+          jobId: job.id,
+          progress: 100,
+          status: job.status === 'failed' ? 'error' : job.status,
+          error: job.error?.message || '',
+          duplicateReason: job.status === 'duplicate' ? 'Already in library' : '',
+          serverRetryAvailable: job.status === 'failed',
+        });
+        if (job.sound) mergeCompletedSound(job.sound);
+        return;
+      } catch (requestError) {
+        lastError = requestError;
+        const status = requestError.response?.status;
+        const transient = !status || [502, 503, 504].includes(status);
+        if (!transient || attempt === SOUND_UPLOAD_MAX_ATTEMPTS) break;
+        updateUploadQueueItem(item.id, { status: 'retrying', error: `Connection interrupted; retrying (${attempt}/${SOUND_UPLOAD_MAX_ATTEMPTS})…` });
+        await new Promise((resolve) => window.setTimeout(resolve, attempt * 750));
+      }
+    }
+    const message = lastError?.response?.data?.message || lastError?.message || 'The upload could not be completed.';
+    updateUploadQueueItem(item.id, { status: 'error', error: message, serverRetryAvailable: false });
+  }, [mergeCompletedSound, stageSoundUpload, updateUploadQueueItem]);
+
+  const pumpUploadQueue = useCallback(() => {
+    while (activeUploadsRef.current < SOUND_UPLOAD_CONCURRENCY) {
+      const next = uploadQueueRef.current.find((item) => item.status === 'waiting' && item.file);
+      if (!next) break;
+      activeUploadsRef.current += 1;
+      updateUploadQueueItem(next.id, { status: 'uploading' });
+      runUploadItem(next).finally(() => {
+        activeUploadsRef.current -= 1;
+        pumpUploadQueueRef.current?.();
+      });
+    }
+  }, [runUploadItem, updateUploadQueueItem]);
+  pumpUploadQueueRef.current = pumpUploadQueue;
 
   const uploadFiles = useCallback(async (entries) => {
     const queued = entries.map((entry) => {
@@ -400,41 +509,120 @@ export function DMSoundPlayerProvider({ headers, socket, enabled = true, childre
       return {
         ...entry,
         id: `sound-upload-${Date.now()}-${uploadSequence.current}`,
+        idempotencyKey: uploadIdempotencyKey(),
         filename: entry.file?.name || 'Unnamed file',
         progress: 0,
-        status: uploadError ? 'error' : 'uploading',
+        status: uploadError ? 'error' : 'checking',
         error: uploadError,
       };
     });
-    setUploadQueue((current) => [...current, ...queued]);
-    const uploadable = queued.filter((item) => item.status === 'uploading');
-    if (!uploadable.length) return false;
-
-    const results = await Promise.all(uploadable.map(async (item) => {
+    commitUploadQueue((current) => [...current, ...queued]);
+    const valid = queued.filter((item) => item.status === 'checking');
+    let checks = [];
+    if (valid.length) {
       try {
-        await uploadSound({
-          file: item.file,
-          name: item.name,
-          category: item.category,
-          onUploadProgress: (progressEvent) => {
-            if (!progressEvent.total) return;
-            const progress = Math.min(99, Math.round((progressEvent.loaded / progressEvent.total) * 100));
-            updateUploadQueueItem(item.id, { progress });
-          },
-        });
-        updateUploadQueueItem(item.id, { progress: 100, status: 'complete' });
-        return true;
-      } catch (requestError) {
-        const message = requestError.response?.data?.message || requestError.message || 'The upload could not be completed.';
-        updateUploadQueueItem(item.id, { status: 'error', error: message });
-        return false;
+        const response = await axios.post('/api/sound-upload-checks', {
+          files: valid.map((item) => ({
+            clientId: item.id,
+            name: item.name,
+            originalFilename: item.filename,
+            byteSize: item.file.size,
+          })),
+        }, { headers });
+        checks = response.data.checks || [];
+      } catch (_error) {
+        // This check saves bandwidth. The upload endpoint's content fingerprint
+        // remains the authoritative duplicate safeguard when preflight is unavailable.
       }
+    }
+    const checkById = new Map(checks.map((check) => [check.clientId, check]));
+    checks.forEach((check) => mergeCompletedSound(check.sound));
+    const validIds = new Set(valid.map((item) => item.id));
+    commitUploadQueue((current) => current.map((item) => {
+      if (!validIds.has(item.id)) return item;
+      const check = checkById.get(item.id);
+      if (!check || check.status === 'upload') return { ...item, status: 'waiting' };
+      const duplicateReason = check.status === 'queued'
+        ? 'Already queued'
+        : check.status === 'selection' ? 'Duplicate in selection' : 'Already in library';
+      return { ...item, status: 'duplicate', progress: 100, duplicateReason, file: null };
     }));
-    return results.every(Boolean) && queued.every((item) => item.status !== 'error');
-  }, [updateUploadQueueItem, uploadSound]);
+    window.setTimeout(() => pumpUploadQueueRef.current?.(), 0);
+    return queued.some((item) => item.status !== 'error');
+  }, [commitUploadQueue, headers, mergeCompletedSound]);
+
+  const retryUpload = useCallback(async (id) => {
+    const item = uploadQueueRef.current.find((candidate) => candidate.id === id);
+    if (!item) return;
+    if (item.jobId && item.serverRetryAvailable) {
+      try {
+        const response = await axios.post(`/api/sound-upload-jobs/${item.jobId}/retry`, {}, { headers });
+        updateUploadQueueItem(id, { status: response.data.job.status, error: '', serverRetryAvailable: false });
+      } catch (requestError) {
+        updateUploadQueueItem(id, { status: 'error', error: requestError.response?.data?.message || 'Unable to retry this upload.' });
+      }
+      return;
+    }
+    if (item.file) {
+      updateUploadQueueItem(id, { status: 'waiting', error: '', progress: 0 });
+      window.setTimeout(() => pumpUploadQueueRef.current?.(), 0);
+    }
+  }, [headers, updateUploadQueueItem]);
+
+  const clearUploadQueue = useCallback(() => {
+    commitUploadQueue((current) => current.filter((item) => !['complete', 'duplicate', 'error'].includes(item.status)));
+  }, [commitUploadQueue]);
 
   useEffect(() => {
-    if (!uploadQueue.some((item) => item.status === 'uploading')) return undefined;
+    if (!enabled) return undefined;
+    let cancelled = false;
+    axios.get('/api/sound-upload-jobs', { headers, params: { active: 'true' } }).then((response) => {
+      if (cancelled) return;
+      const restored = (response.data.jobs || []).map((job) => ({
+        id: `sound-job-${job.id}`,
+        jobId: job.id,
+        idempotencyKey: job.idempotencyKey,
+        filename: job.originalFilename,
+        name: job.name,
+        category: job.category,
+        progress: ['complete', 'duplicate'].includes(job.status) ? 100 : 99,
+        status: job.status === 'failed' ? 'error' : job.status,
+        error: job.error?.message || '',
+        duplicateReason: job.status === 'duplicate' ? 'Already in library' : '',
+        serverRetryAvailable: job.status === 'failed',
+      }));
+      if (restored.length) commitUploadQueue((current) => {
+        const knownJobs = new Set(current.map((item) => item.jobId).filter(Boolean));
+        return [...current, ...restored.filter((item) => !knownJobs.has(item.jobId))];
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [commitUploadQueue, enabled, headers]);
+
+  const activeUploadJobIds = useMemo(() => uploadQueue
+    .filter((item) => item.jobId && ['receiving', 'queued', 'processing'].includes(item.status))
+    .map((item) => item.jobId)
+    .sort()
+    .join(','), [uploadQueue]);
+
+  useEffect(() => {
+    if (!enabled || !activeUploadJobIds) return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await axios.get('/api/sound-upload-jobs', { headers, params: { ids: activeUploadJobIds } });
+        if (!cancelled) applyServerJobs(response.data.jobs || []);
+      } catch (_error) {
+        // The durable jobs continue on the server; the next poll reconciles state.
+      }
+    };
+    const timer = window.setInterval(poll, SOUND_UPLOAD_POLL_MS);
+    poll();
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [activeUploadJobIds, applyServerJobs, enabled, headers]);
+
+  useEffect(() => {
+    if (!uploadQueue.some((item) => ['checking', 'waiting', 'retrying', 'uploading'].includes(item.status))) return undefined;
     const warnBeforeLeaving = (event) => {
       event.preventDefault();
       event.returnValue = '';
@@ -507,9 +695,9 @@ export function DMSoundPlayerProvider({ headers, socket, enabled = true, childre
     playEffect,
     stopEffect,
     setEffectVolume,
-    uploadSound,
     uploadFiles,
-    clearUploadQueue: () => setUploadQueue([]),
+    retryUpload,
+    clearUploadQueue,
     enqueueTrack,
     removeQueuedTrack,
     clearQueue,
@@ -544,7 +732,7 @@ export function DMSoundPlayerProvider({ headers, socket, enabled = true, childre
         />
       ))}
       <audio ref={effectsAudio} onEnded={() => setEffectPlaying(false)} />
-      {enabled && <SoundUploadQueue items={uploadQueue} onClear={() => setUploadQueue([])} />}
+      {enabled && <SoundUploadQueue items={uploadQueue} onClear={clearUploadQueue} onRetry={retryUpload} />}
     </SoundPlayerContext.Provider>
   );
 }
@@ -570,23 +758,36 @@ function VolumeControl({ label, value, onChange }) {
 function QuickEffects({ configurable = false }) {
   const player = useSoundPlayer();
   const [configurationError, setConfigurationError] = useState('');
+  const [selectingSlot, setSelectingSlot] = useState(null);
+
+  const configure = async (slot, sound) => {
+    try {
+      await player.configureQuickEffect(slot, sound);
+      setConfigurationError('');
+      setSelectingSlot(null);
+    } catch (requestError) {
+      setConfigurationError(requestError.response?.data?.message || 'Unable to configure that Quick FX slot.');
+    }
+  };
 
   const assignDroppedEffect = async (event, slot) => {
     event.preventDefault();
     event.stopPropagation();
-    const soundId = Number(event.dataTransfer.getData('application/x-kachhapa-sound-id'));
+    const soundId = Number(
+      event.dataTransfer.getData('application/x-kachhapa-sound-id') ||
+      event.dataTransfer.getData('text/plain')
+    );
     const sound = player.sounds.find((candidate) => candidate.id === soundId);
     if (!sound || sound.category !== 'sfx') {
       setConfigurationError('Drag a Sound FX library item onto a Quick FX button.');
       return;
     }
-    try {
-      await player.configureQuickEffect(slot, sound);
-      setConfigurationError('');
-    } catch (requestError) {
-      setConfigurationError(requestError.response?.data?.message || 'Unable to configure that Quick FX slot.');
-    }
+    await configure(slot, sound);
   };
+
+  const selectableEffects = player.sounds
+    .filter((sound) => sound.category === 'sfx')
+    .sort((left, right) => left.name.localeCompare(right.name));
 
   return (
     <div className={`sound-quick-effects${configurable ? ' is-configurable' : ''}`}>
@@ -600,10 +801,10 @@ function QuickEffects({ configurable = false }) {
             type="button"
             key={slot}
             className={sound ? 'is-assigned' : ''}
-            onClick={() => sound && player.playEffect(sound)}
-            onDragOver={configurable ? (event) => event.preventDefault() : undefined}
+            onClick={() => sound ? player.playEffect(sound) : configurable && setSelectingSlot(slot)}
+            onDragOver={configurable ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } : undefined}
             onDrop={configurable ? (event) => assignDroppedEffect(event, slot) : undefined}
-            title={sound ? `Play ${sound.name}` : configurable ? `Drop a sound effect into slot ${slot}` : `Quick FX slot ${slot} is empty`}
+            title={sound ? `Play ${sound.name}` : configurable ? `Choose or drop a sound effect into slot ${slot}` : `Quick FX slot ${slot} is empty`}
           >
             <span>{slot}</span>
             <GraphicEq fontSize="small" />
@@ -611,6 +812,14 @@ function QuickEffects({ configurable = false }) {
           </button>
         ))}
       </div>
+      {configurable && selectingSlot !== null && (
+        <div className="sound-quick-effect-picker" role="dialog" aria-modal="false" aria-label={`Choose a sound effect for Quick FX slot ${selectingSlot}`}>
+          <div><strong>Choose Quick FX {selectingSlot}</strong><button type="button" onClick={() => setSelectingSlot(null)} aria-label="Close Quick FX chooser"><Clear fontSize="small" /></button></div>
+          {selectableEffects.length ? selectableEffects.map((sound) => (
+            <button type="button" key={sound.id} onClick={() => configure(selectingSlot, sound)}><GraphicEq fontSize="small" /><span>{sound.name}</span></button>
+          )) : <small>No Sound FX tracks are in the library yet.</small>}
+        </div>
+      )}
       {configurationError && <small className="sound-quick-effects-error">{configurationError}</small>}
     </div>
   );
@@ -628,7 +837,6 @@ export function DMSoundPlayerWorkspace() {
   const [playlistSelections, setPlaylistSelections] = useState({});
   const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const uploading = player.uploadQueue.some((item) => item.status === 'uploading');
   const visibleSounds = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     const playlistTrackIds = new Set(
@@ -785,8 +993,8 @@ export function DMSoundPlayerWorkspace() {
               <label>Files<input type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.flac" multiple required onChange={(event) => setUpload((current) => ({ ...current, files: [...event.target.files] }))} /></label>
               <label>Name<input type="text" maxLength="120" disabled={upload.files.length > 1} placeholder={upload.files.length === 1 ? upload.files[0].name.replace(/\.[^.]+$/, '') : 'Uses each filename'} value={upload.files.length > 1 ? '' : upload.name} onChange={(event) => setUpload((current) => ({ ...current, name: event.target.value }))} /></label>
               <label>Type<select value={upload.category} onChange={(event) => setUpload((current) => ({ ...current, category: event.target.value }))}><option value="music">Background music</option><option value="environment">Environment</option><option value="sfx">Sound effect</option></select></label>
-              <button type="submit" className="sound-upload-button" disabled={!upload.files.length || uploading}><Add fontSize="small" /> {uploading ? 'Uploading…' : 'Add to library'}</button>
-              <small>Up to 1 GB each; WAV and FLAC are compressed after upload.</small>
+              <button type="submit" className="sound-upload-button" disabled={!upload.files.length}><Add fontSize="small" /> Queue for import</button>
+              <small>Queue any number of files, up to 1 GB each. Two upload at a time; WAV and FLAC are compressed by the background worker.</small>
             </form>
           )}
           <QuickEffects configurable />
@@ -823,6 +1031,7 @@ export function DMSoundPlayerWorkspace() {
                 draggable={sound.category === 'sfx'}
                 onDragStart={(event) => {
                   event.dataTransfer.setData('application/x-kachhapa-sound-id', String(sound.id));
+                  event.dataTransfer.setData('text/plain', String(sound.id));
                   event.dataTransfer.effectAllowed = 'copy';
                 }}
               >

@@ -1,11 +1,13 @@
 """Real HTTP/SQL transaction tests using a minimal SQLite campaign fixture."""
 import unittest
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 from flask import Flask
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from flask_sqlalchemy import SQLAlchemy
 from session_api import register_session_api
+from settlement_routing import settlement_exterior_destinations
 
 
 def fixture():
@@ -28,6 +30,20 @@ def fixture():
         y = db.Column(db.Float, default=0)
         map_key = db.Column(db.String, default='test')
         def to_dict(self): return dict(x=self.x,y=self.y,map_key=self.map_key)
+    class MapPointOfInterest(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        campaign_id = db.Column(db.Integer)
+        map_key = db.Column(db.String)
+        name = db.Column(db.String)
+        def to_dict(self): return dict(id=self.id,map_key=self.map_key,name=self.name)
+    class WorldAtlasLocation(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        campaign_id = db.Column(db.Integer)
+        map_key = db.Column(db.String)
+        name = db.Column(db.String)
+        properties = db.Column(db.JSON, default=list)
+        buildings = db.Column(db.JSON, default=list)
+        roads = db.Column(db.JSON, default=list)
     class CampaignSessionState(db.Model):
         campaign_id = db.Column(db.Integer, primary_key=True)
         revision = db.Column(db.Integer)
@@ -57,7 +73,13 @@ def fixture():
     campaign_members = db.Table('campaign_members', db.Column('campaignID', db.Integer), db.Column('characterID', db.Integer), db.Column('userID', db.Integer))
     def context(cid):
         return (SimpleNamespace(id=1),Campaign.query.get(cid),get_jwt_identity()=='dm',None) if cid==1 else (None,None,None,None)
+    def route_plan(cid, origin, request):
+        return {'map_key':'test','mode':request['mode'],'elapsed_seconds':60,
+                'path':[{'x':origin['x'],'y':origin['y'],'cumulative_seconds':0},
+                        {'x':20,'y':0,'cumulative_seconds':60}],
+                'destination':{'key':'1:building:inn','label':'Inn','map_key':'test','x':20,'y':0}}
     ns = dict(locals(), dashboard_campaign_context=context, socketio=Mock(), emit_calendar_updated=Mock(),emit_settlement_simulation_updated=Mock(),
+              authoritative_route_plan=route_plan,
               date_to_ordinal=lambda cal,y,m,d:(y-1)*360+m*30+d-1,
               ordinal_to_date=lambda cal,n:(n//360+1,(n%360)//30,n%30+1),get_months=lambda cal:[{}]*12,days_in_month=lambda cal,y,m:30)
     register_session_api(app,ns)
@@ -72,6 +94,7 @@ class SessionApiTests(unittest.TestCase):
         self.db.session.add(self.ns['Campaign'](id=1,name='Test'))
         self.db.session.add(self.ns['Character'](id=1,userID=2,campaignID=1,character_name='Player'))
         self.db.session.add(self.ns['Calendar'](campaign_id=1))
+        self.db.session.add(self.ns['WorldAtlasLocation'](id=1,campaign_id=1,map_key='test',name='Test Town',properties=[],buildings=[]))
         self.db.session.add(self.ns['QuickNote'](id=1,campaign_id=1,user_id=99,content='Other DM private note'))
         self.db.session.commit()
         self.client=self.app.test_client()
@@ -80,6 +103,24 @@ class SessionApiTests(unittest.TestCase):
     def tearDown(self):
         self.db.session.remove(); self.db.drop_all(); self.ctx.pop()
     def get(self): return self.client.get('/api/campaigns/1/sessions',headers=self.headers)
+
+    def test_waterdeep_scale_session_snapshot_finishes_within_worker_budget(self):
+        roads = [{'id': f'road-{index}', 'points': [{'x': index * 2000, 'y': y * 100}
+                 for y in range(8)]} for index in range(168)]
+        buildings = [{'id': f'building-{index}', 'x': index * 10, 'y': 100,
+                      'width_feet': 40, 'depth_feet': 30} for index in range(6)]
+        place = self.ns['WorldAtlasLocation'].query.get(1)
+        place.roads = roads
+        place.buildings = buildings
+        self.db.session.commit()
+        self.ns['settlement_exterior_destinations'] = settlement_exterior_destinations
+        started = time.monotonic()
+        response = self.get()
+        elapsed = time.monotonic() - started
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len([location for location in response.json['locations']
+                              if location['kind'] == 'structure']), 6)
+        self.assertLess(elapsed, 10, 'Session loading is approaching the 30-second Gunicorn worker timeout')
     def post(self,action,data=None,revision=None,key=None):
         self.seq+=1
         payload=dict(action=action,data=data or {},revision=self.get().json['revision'] if revision is None else revision,request_id=key or str(self.seq))
@@ -156,6 +197,28 @@ class SessionApiTests(unittest.TestCase):
         from session_management import SessionError
         with self.assertRaises(SessionError): self.ns['shared_session_legacy_position'](1,{'x':20,'y':30})
         self.db.session.rollback()
+
+    def test_route_request_is_replanned_and_persisted_as_snapshot(self):
+        self.db.session.add(self.ns['PartyMapPosition'](campaign_id=1,x=0,y=0,map_key='test'))
+        self.db.session.commit()
+        self.start()
+        result=self.post('journey',{'group_id':'party','route_request':{
+            'settlement_id':1,'destination_key':'1:building:inn','mode':'walking','map_revision':'r1'}})
+        self.assertEqual(result.status_code,200)
+        journey=result.json['document']['journeys'][0]
+        self.assertEqual(journey['arrival'],60)
+        self.assertEqual(journey['route_snapshot']['destination']['label'],'Inn')
+        self.assertEqual(journey['current_position']['x'],0)
+
+    def test_coordinate_group_location_is_scoped_and_normalized(self):
+        result = self.post('group', {'id':'party','name':'Party','members':['1'],'relocate':True,
+                           'location':{'kind':'waypoint','label':'Road bend','map_key':'test','x':12.5,'y':-4}})
+        self.assertEqual(result.status_code,200)
+        location = result.json['document']['groups'][0]['location']
+        self.assertEqual((location['settlement_id'],location['x'],location['y']),(1,12.5,-4))
+        rejected = self.post('group', {'id':'party','name':'Party','members':['1'],'relocate':True,
+                             'location':{'label':'Foreign','map_key':'other','x':1,'y':2}})
+        self.assertEqual(rejected.status_code,400)
 
 
 if __name__=='__main__': unittest.main()

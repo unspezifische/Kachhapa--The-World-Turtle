@@ -1,5 +1,7 @@
 :where(html[data-kachhapa-ui="core"]) .dashboard-page,
-:where(html[data-kachhapa-ui="core"]) .user-profile-page { --desk-paper: var(--bg-app); --desk-ink: var(--text-main); --desk-muted: var(--text-subtle); --desk-line: var(--border-main); --desk-panel: var(--bg-surface); --desk-accent: var(--accent-2); height: 100dvh; min-height: 0; overflow: hidden; padding: clamp(12px,1.8vw,26px); background: var(--bg-surface-2); color: var(--desk-ink); font-family: 'Avenir Next', 'Trebuchet MS', sans-serif; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-page { --desk-paper: var(--bg-app); --desk-ink: var(--text-main); --desk-muted: var(--text-subtle); --desk-line: var(--border-main); --desk-panel: var(--bg-surface); --desk-accent: var(--accent-2); padding: clamp(12px,1.8vw,26px); background: var(--bg-surface-2); color: var(--desk-ink); font-family: 'Avenir Next', 'Trebuchet MS', sans-serif; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-page { height: 100%; min-height: 100%; overflow-x: hidden; overflow-y: auto; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-page { height: 100dvh; min-height: 0; overflow: hidden; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-page button,
 :where(html[data-kachhapa-ui="core"]) .user-profile-page button { cursor: pointer; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-hero { position: relative; display: flex; justify-content: space-between; gap: 24px; overflow: hidden; border: 1px solid var(--border-main); border-radius: 18px; color: var(--text-main); background: var(--bg-surface-2); box-shadow: 0 20px 48px rgba(24,49,40,.2); }
@@ -30,9 +32,15 @@
 :where(html[data-kachhapa-ui="core"]) .dashboard-context-bar h2 { margin: 5px 0 0; font: 400 clamp(27px,2.4vw,35px)/1.1 'Iowan Old Style','Palatino Linotype',Georgia,serif; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-text-action { padding: 6px 0; border: 0; background: transparent; color: var(--text-main); font-size: 13px; font-weight: 800; text-decoration: underline; text-underline-offset: 4px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,320px),1fr)); }
-:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-card { position: relative; min-height: 254px; overflow: hidden; border: 1px solid var(--desk-line); border-radius: 14px; background: var(--bg-surface); color: var(--text-main); box-shadow: 0 9px 24px rgba(39,52,39,.13); transition: transform .2s ease, box-shadow .2s ease; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-card { position: relative; min-height: 254px; overflow: hidden; border: 1px solid var(--desk-line); border-radius: 14px; background: var(--bg-surface); color: var(--text-main); box-shadow: 0 9px 24px rgba(39,52,39,.13); cursor: pointer; transition: transform .2s ease, box-shadow .2s ease; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-selector { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-content { pointer-events: none; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-card-actions,
+:where(html[data-kachhapa-ui="core"]) .dashboard-card-links,
+:where(html[data-kachhapa-ui="core"]) .dashboard-landing-label { position: relative; z-index: 2; pointer-events: auto; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-card:hover { transform: translateY(-3px); box-shadow: 0 17px 32px rgba(39,52,39,.2); }
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-card.is-selected { outline: 2px solid var(--desk-accent); outline-offset: 2px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-selector:focus-visible { outline: 3px solid var(--focus); outline-offset: -3px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-image { position: absolute; inset: 0; background-size: cover; background-position: center; filter: saturate(.72); opacity: .56; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-content { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 254px; background:linear-gradient(0deg,var(--bg-surface) 15%,color-mix(in srgb,var(--bg-surface) 88%,transparent)); }
 :where(html[data-kachhapa-ui="core"]) .dashboard-card-topline { display: flex; justify-content: space-between; gap: 8px; color: var(--text-main); font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .13em; }
@@ -55,6 +63,7 @@
 :where(html[data-kachhapa-ui="core"]) .dashboard-calendar { grid-column: span 5; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-prompt { grid-column: span 5; background: var(--bg-surface); color: var(--text-main); }
 :where(html[data-kachhapa-ui="core"]) .dashboard-characters { grid-column: span 7; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friends { grid-column: span 12; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-widget-head,
 :where(html[data-kachhapa-ui="core"]) .dashboard-widget-head > div { display: flex; align-items: center; gap: 10px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-widget-head { justify-content: space-between; }
@@ -93,6 +102,25 @@
 :where(html[data-kachhapa-ui="core"]) .dashboard-character-list small { color: var(--desk-muted); }
 :where(html[data-kachhapa-ui="core"]) .dashboard-character-avatar { display: grid; place-items: center; width: 47px; height: 47px; overflow: hidden; border-radius: 50%; background: var(--bg-surface); color: var(--text-main); font: 800 15px 'Iowan Old Style',Georgia,serif; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-character-avatar img { width: 100%; height: 100%; object-fit: cover; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-form { display: grid; gap: 5px; margin-bottom: 14px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-form label { color: var(--desk-muted); font-size: 12px; font-weight: 800; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-form > div { display: flex; gap: 8px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-form input { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid var(--border-main); border-radius: 7px; background: var(--bg-surface); color: var(--desk-ink); }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-list,
+:where(html[data-kachhapa-ui="core"]) .dashboard-request-group { display: grid; gap: 6px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-request-group { margin-bottom: 12px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-row { display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 5px 0; border-bottom: 1px solid var(--border-main); }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-row > strong { flex: 1; font-size: 13px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-row > small { color: var(--desk-muted); }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-row > div { display: flex; align-items: center; gap: 6px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-row button { padding: 4px 7px; border: 1px solid var(--border-main); border-radius: 5px; background: var(--bg-surface); color: var(--desk-ink); font-size: 11px; font-weight: 800; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friend-avatar { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 50%; background: color-mix(in srgb,var(--accent) 28%,var(--bg-surface)); color: var(--desk-ink); font: 800 11px 'Iowan Old Style',Georgia,serif; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-pending-label { color: var(--desk-muted); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-invitation { border-style: dashed; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-invitation-from { margin: -2px 0 9px; color: var(--text-subtle); font-size: 12px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-invitation-characters { display: grid; gap: 8px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-invitation-characters button { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--border-main); border-radius: 8px; background: var(--bg-surface); color: var(--text-main); text-align: left; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-invitation-characters small { color: var(--text-subtle); }
 :where(html[data-kachhapa-ui="core"]) .dashboard-empty-inline { padding: 18px; border: 1px dashed var(--border-main); border-radius: 8px; color: var(--text-main); font-size: 13px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-empty-inline button { border: 0; background: none; color: var(--text-main); font-weight: 800; text-decoration: underline; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-date-inputs { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
@@ -100,6 +128,7 @@
 :where(html[data-kachhapa-ui="core"]) .dashboard-advanced-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-advanced-links { display: grid; gap: 12px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-advanced-links p { margin: 0 0 4px; color: var(--text-main); }
+:where(html[data-kachhapa-ui="core"]) .dashboard-friends-panel { min-height: 240px; }
 @media(max-width:900px) { :where(html[data-kachhapa-ui="core"]) .dashboard-notes,
 :where(html[data-kachhapa-ui="core"]) .dashboard-calendar,
 :where(html[data-kachhapa-ui="core"]) .dashboard-prompt,
@@ -123,7 +152,7 @@
 :where(html[data-kachhapa-ui="core"]) .dashboard-section-heading { margin-bottom: 8px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-section h2,
 :where(html[data-kachhapa-ui="core"]) .dashboard-context-bar h2 { font-size: clamp(23px,2vw,30px); }
-:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-grid { min-height: 0; max-height: clamp(166px,21vh,198px); overflow-y: auto; overscroll-behavior: contain; padding: 2px; gap: 12px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-campaign-grid { min-height: 0; max-height: none; overflow: visible; padding: 2px; gap: 12px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-card,
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-content { min-height: 160px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-content { padding: 13px 15px; }
@@ -132,8 +161,8 @@
 :where(html[data-kachhapa-ui="core"]) .dashboard-landing-label { margin-top: 5px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-context-bar { margin: 0; padding-bottom: 7px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-scroll-cue { display: none; color: var(--text-main); font-size: 11px; font-weight: 800; letter-spacing: .04em; }
-:where(html[data-kachhapa-ui="core"]) .dashboard-widget-grid { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; grid-template-rows: repeat(2,minmax(190px,1fr)); gap: 12px; }
-:where(html[data-kachhapa-ui="core"]) .dashboard-widget { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 15px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-widget-grid { flex: none; min-height: 0; overflow: visible; grid-template-rows: none; grid-auto-rows: minmax(190px,auto); gap: 12px; }
+:where(html[data-kachhapa-ui="core"]) .dashboard-widget { min-height: 0; overflow: visible; padding: 15px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-widget-head { margin-bottom: 9px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-widget-head h3 { font-size: 21px; }
 :where(html[data-kachhapa-ui="core"]) .dashboard-widget-intro { margin-bottom: 7px; }
@@ -177,6 +206,96 @@
   :where(html[data-kachhapa-ui="core"]) .dashboard-notes textarea { height: 72px; }
   :where(html[data-kachhapa-ui="core"]) .dashboard-recent-notes { border-left: 0; border-top: 1px solid var(--desk-line); padding: 8px 0 0; }
   :where(html[data-kachhapa-ui="core"]) .dashboard-footer { display: none; }
+}
+
+/* Short desktops and phones should scroll as one document instead of squeezing widgets. */
+@media(max-height:900px), (max-width:700px) {
+  :where(html[data-kachhapa-ui="core"]) .dashboard-page {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-grid {
+    max-height: none;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-widget-grid {
+    flex: none;
+    grid-template-rows: none;
+    grid-auto-rows: minmax(190px, auto);
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-widget {
+    overflow: visible;
+  }
+}
+
+@media(max-width:700px) {
+  :where(html[data-kachhapa-ui="core"]) .dashboard-page {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-page > *,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-section,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-grid,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-widget-grid,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-widget {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-section {
+    display: block;
+    min-height: auto;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-campaign-grid {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: none;
+    min-height: auto;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-widget-grid {
+    display: grid;
+    flex: none;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-flow: row;
+    grid-auto-rows: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-widget {
+    grid-column: 1;
+    max-height: none;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-hero-actions,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-card-actions,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-note-actions,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-advanced-actions {
+    flex-wrap: wrap;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-button,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-enter,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-text-action {
+    min-height: 44px;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-context-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-context-bar label {
+    max-width: 100%;
+  }
+  :where(html[data-kachhapa-ui="core"]) .dashboard-context-bar select,
+  :where(html[data-kachhapa-ui="core"]) .dashboard-landing-label select {
+    width: 100%;
+    max-width: 100%;
+  }
 }
 @media(max-height:700px) {
   :where(html[data-kachhapa-ui="core"]) .dashboard-hero { height: 110px; }

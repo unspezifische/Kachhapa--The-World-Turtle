@@ -176,3 +176,25 @@
   --bs-table-hover-bg: rgba(255, 255, 255, 0.04);
   --bs-table-border-color: var(--border-main);
 }
+
+@media (max-width: 700px) {
+  :where(html[data-kachhapa-ui="core"]) .journal-page {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+    padding: 12px 10px 20px;
+  }
+  :where(html[data-kachhapa-ui="core"]) .journal-editor-wrap,
+  :where(html[data-kachhapa-ui="core"]) .journal-table-wrap {
+    flex: none;
+    max-height: none;
+  }
+  :where(html[data-kachhapa-ui="core"]) .journal-table-wrap .table {
+    min-width: 680px;
+  }
+  :where(html[data-kachhapa-ui="core"]) .journal-page .btn,
+  :where(html[data-kachhapa-ui="core"]) .journal-page .form-control,
+  :where(html[data-kachhapa-ui="core"]) .journal-page .form-select {
+    min-height: 44px;
+  }
+}

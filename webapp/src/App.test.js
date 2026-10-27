@@ -108,7 +108,7 @@ test('the signed-in root opens the dashboard', async () => {
   expect(window.location.pathname).toBe('/accountProfile');
 });
 
-test('the campaign picker never renders inside the campaign sidebar', async () => {
+test('the campaign picker keeps only the mobile navigation slot from the campaign shell', async () => {
   storeCampaignSession();
   window.history.replaceState({}, '', '/accountProfile');
   axios.post.mockResolvedValue({
@@ -118,7 +118,7 @@ test('the campaign picker never renders inside the campaign sidebar', async () =
   render(<App />);
 
   expect(await screen.findByText('Campaign picker')).toBeInTheDocument();
-  expect(screen.queryByTestId('campaign-menu')).not.toBeInTheDocument();
+  expect(screen.getByTestId('campaign-menu').closest('.menu-column-mobile-only')).toBeInTheDocument();
 });
 
 test('an expired token clears stale campaign state before showing login', async () => {

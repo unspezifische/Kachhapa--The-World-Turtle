@@ -1,3 +1,4 @@
+import NpcAudioWorkspace from './NpcAudioWorkspace';
 import ThemeEditor from './ThemeEditor';
 import { AppearanceProvider } from './AppearanceContext';
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
@@ -17,9 +18,11 @@ import SettlementPlayerView from './SettlementPlayerView';
 import WorldAtlas from './WorldAtlas';
 import CharacterSheet from './CharacterSheet';
 import InventoryView from './InventoryView';
+import Spellbook from './Spellbook';
 import Journal from './Journal';
 import Library from './Library';
 import Calendar from './Calendar';
+import Timeline from './Timeline';
 import AccountProfile from './AccountProfile';
 import UserProfile from './UserProfile';
 import Chat from './Chat';
@@ -29,6 +32,7 @@ import { DMSoundPlayerBar, DMSoundPlayerProvider } from './DMSoundPlayer';
 import './App.css';
 import CoreTheme from './CoreTheme';
 import { IconButton, Badge } from '@mui/material';
+import ModalInteractionGuard from './ModalInteractionGuard';
 
 const EMPTY_CAMPAIGN = { id: null, name: null, dmId: null, ownerId: null };
 
@@ -60,8 +64,8 @@ function CampaignLayout({ menuProps, children }) {
 
   return (
     <div className={`app-layout${isMapPage ? ' map-page-layout' : ''}`}>
-      {!hideMenu && (
-        <aside className="menu-column">
+      {!isMapPage && (
+        <aside className={`menu-column${hideMenu ? ' menu-column-mobile-only' : ''}`}>
           <Menu {...menuProps} />
         </aside>
       )}
@@ -461,6 +465,7 @@ function App() {
     <UserContext.Provider value={{ characterName, accountType, headers, setIsLoggedIn, socket: socketRef.current }}>
       <Router>
         <AppearanceProvider><CoreTheme mode={theme}>
+        <ModalInteractionGuard />
         {isLoading && (
           <div className="app-spinner-wrap">
             <Spinner animation="border" role="status" />
@@ -502,6 +507,7 @@ function App() {
                     </div>
                   )}
 
+                  <NpcAudioWorkspace headers={headers} enabled={accountType === 'DM'} socket={socketRef.current} />
                   <Routes>
                     <Route path="/" element={<Navigate to="/accountProfile" replace />} />
                     <Route path="/characterSheet" element={<CharacterSheet headers={headers} characterName={characterName} setCharacterName={setCharacterName} />} />
@@ -517,9 +523,11 @@ function App() {
                     <Route path="/maps/player" element={<SettlementPlayerView headers={headers} socket={socketRef.current} />} />
                     <Route path="/worldAtlas" element={accountType === 'DM' ? <WorldAtlas headers={headers} socket={socketRef.current} mainEnvironmentUrl={`${primaryOrigin}/dmTools`} /> : <Navigate to="/characterSheet" replace />} />
                     <Route path="/inventoryView" element={<InventoryView username={username} characterName={characterName} accountType={accountType} headers={headers} socket={socketRef.current} campaignID={selectedCampaign.id} isLoading={isLoading} setIsLoading={setIsLoading} />} />
+                    <Route path="/spellbook" element={<Spellbook headers={headers} />} />
                     <Route path="/journal" element={<Journal characterName={characterName} headers={headers} isLoading={isLoading} campaignID={selectedCampaign.id} theme={theme} />} />
                     <Route path="/library" element={<Library headers={headers} socket={socketRef.current} />} />
                     <Route path="/calendar" element={<Calendar headers={headers} socket={socketRef.current} characterName={characterName} username={username} accountType={accountType} campaignID={selectedCampaign.id} />} />
+                    <Route path="/timeline" element={<Timeline headers={headers} socket={socketRef.current} username={username} accountType={accountType} campaignID={selectedCampaign.id} />} />
                     <Route path="/campaignSettings" element={<Navigate to={accountType === 'DM' ? '/dmTools' : '/characterSheet'} replace />} />
                     <Route path="/accountProfile" element={<AccountProfile headers={headers} setAccountType={setAccountType} setCharacterName={setCharacterName} setSelectedCampaign={setSelectedCampaign} dmLandingPath={dmLandingPath} primaryOrigin={primaryOrigin} />} />
                     <Route path="/themes/new" element={<ThemeEditor headers={headers} />} />
@@ -572,6 +580,7 @@ function App() {
                 <Modal.Body className="chat-modal-body">
                   {!socketLoading && (
                     <Chat
+                      isDm={accountType === 'DM'}
                       headers={headers}
                       socket={socketRef.current}
                       characterName={characterName}

@@ -1,11 +1,17 @@
 export const ABILITIES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
-export const NPC_FIELDS = ['name', 'gender', 'creature_subtype', 'occupation', 'size', 'creature_type', 'alignment', ...ABILITIES, 'ac', 'hp', 'speed', 'saving_throws', 'skills', 'immunities', 'resistance', 'senses', 'languages', 'challenge', 'traits', 'actions', 'description'];
-export const newNpcDraft = () => Object.fromEntries(NPC_FIELDS.map(key => [key, '']));
+export const NPC_FIELDS = ['name', 'gender', 'creature_subtype', 'occupation', 'character_class', 'size', 'creature_type', 'alignment', ...ABILITIES, 'ac', 'hp', 'speed', 'saving_throws', 'skills', 'immunities', 'resistance', 'senses', 'languages', 'challenge', 'traits', 'actions', 'description'];
+export const NPC_BIRTH_FIELDS = ['birth_year', 'birth_season', 'birth_month_index', 'birth_day'];
+export const newNpcDraft = () => ({ ...Object.fromEntries(NPC_FIELDS.map(key => [key, ''])), birth_year: '', birth_season: '', birth_month_index: '', birth_day: '' });
+export const occupationUsesClass = occupation => ['adventurer', 'retired adventurer', 'adventurer retired']
+  .includes(String(occupation || '').trim().toLocaleLowerCase().replace(/[,_-]+/g, ' ').replace(/\s+/g, ' '));
 export const newSchedule = (npc = {}) => ({ schema_version: 1, schedule_key: npc?.id ? `npc-${npc.id}.routine` : `homebrew-${Date.now()}.routine`, module_key: npc?.module_key || null, npc_key: npc?.source_key || null, revision: 1, enabled: false, visibility: 'dm_only', clock: 'campaign_calendar', provenance: { basis: 'dm_invention', confidence: 'proposed', source_reference: null }, bindings: {}, rules: [], exceptions: [], default_behavior: 'idle_at_current_location' });
 export function routineForOccupation(schedule, occupation, kept = []) {
+  const occupationKey = String(occupation || '').trim().toLowerCase().replace(/[,_ -]+/g, '_');
+  const workActivity = ({ scholar: 'study', researcher: 'study', clergy: 'worship', guard: 'guard',
+    merchant: 'trade', shopkeeper: 'trade', retired_adventurer: 'rest', adventurer_retired: 'rest' })[occupationKey] || 'work';
   const activities = [
     ['sleep', '22:00', 480, 'sleep'], ['breakfast', '06:00', 60, 'eat'],
-    ['work', '07:00', 480, occupation === 'scholar' ? 'study' : occupation === 'guard' ? 'guard' : occupation === 'merchant' ? 'trade' : 'work'],
+    ['work', '07:00', 480, workActivity],
     ['leisure', '15:00', 420, 'rest'],
   ];
   const original = schedule || newSchedule();

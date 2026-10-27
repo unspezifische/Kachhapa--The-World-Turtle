@@ -1,7 +1,16 @@
 import { NullEngine, Scene } from '@babylonjs/core';
 import { createBlueprintBuilding, addBlueprintCorner, closeBlueprintFootprint } from './settlementEditor';
-import { addBuildingLevel, arcFromThreePoints, automaticRoofFootprints, exposedRoofFootprints, foundationPerimeter, isRoofVisible, normalizeBlueprint, levelConnectionGuides, normalizeFlightShares, redistributeFlightShares, resizeBlueprintFootprint, resizeFlightShares, snapOpening, snapPointToLevelBelow, snapPointToRightAngle, stairGeometry, stairOpeningsForLevel, wallPanels } from './buildingBlueprint';
+import { addBuildingLevel, arcFromThreePoints, automaticRoofFootprints, defaultLevelName, deleteBuildingLevel, exposedRoofFootprints, foundationPerimeter, inferLevelNumbers, insertMissingBuildingLevel, isRoofVisible, levelDeletionImpact, missingLevelNumbers, normalizeBlueprint, levelConnectionGuides, normalizeFlightShares, redistributeFlightShares, resizeBlueprintFootprint, resizeFlightShares, roofBaseElevation, roofFootprintOverlapRatio, snapOpening, snapPointToLevelBelow, snapPointToRightAngle, stairGeometry, stairOpeningsForLevel, wallPanels } from './buildingBlueprint';
 import { createBlueprintMesh } from './blueprintMesh';
+import { createBlueprintRoofMesh } from './roofMesh';
+
+test('roof footprint overlap only compares roofs on the same support level', () => {
+  const roof = (id, support, x = 0) => ({ id, support_level_id: support,
+    footprint: [{ x, y: 0 }, { x: x + 10, y: 0 }, { x: x + 10, y: 10 }, { x, y: 10 }] });
+  expect(roofFootprintOverlapRatio(roof('one', 'ground'), roof('two', 'ground'))).toBeCloseTo(1);
+  expect(roofFootprintOverlapRatio(roof('one', 'ground'), roof('partial', 'ground', 5))).toBeCloseTo(0.5);
+  expect(roofFootprintOverlapRatio(roof('one', 'ground'), roof('upper', 'upper'))).toBe(0);
+});
 
 const house = () => {
   let b = createBlueprintBuilding({ x: 1000, y: -500 });
@@ -9,8 +18,162 @@ const house = () => {
   return normalizeBlueprint(closeBlueprintFootprint(b));
 };
 
+test('default level names use one-based floor labels without changing structural slots', () => {
+  expect([-1, 0, 1].map(defaultLevelName)).toEqual(['Basement 1', 'Level 1', 'Level 2']);
+  const building = normalizeBlueprint({
+    id: 'legacy-names', coordinate_space: 'local', x: 0, y: 0,
+    levels: [
+      { id: 'ground', name: 'Ground floor', level_number: 0, elevation_feet: 0 },
+      { id: 'upper', name: 'Level 1', level_number: 1, elevation_feet: 10 },
+      { id: 'tower', name: 'Observatory', level_number: 2, elevation_feet: 20 },
+    ],
+  });
+  expect(building.levels.map(level => [level.level_number, level.name])).toEqual([
+    [0, 'Level 1'], [1, 'Level 2'], [2, 'Observatory'],
+  ]);
+});
+
+test('legacy world-space plans are aligned to the building grid before Babylon reapplies orientation', () => {
+  const source = {
+    id: 'rotated-legacy', x: 100, y: 200, rotation: Math.PI / 2,
+    levels: [{
+      id: 'ground', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 100, y: 200 }, { x: 100, y: 220 }, { x: 90, y: 220 }, { x: 90, y: 200 }],
+      rooms: [{ id: 'room', region: [{ x: 100, y: 200 }, { x: 100, y: 220 }, { x: 90, y: 220 }, { x: 90, y: 200 }] }],
+    }],
+  };
+  const before = JSON.stringify(source);
+  const normalized = normalizeBlueprint(source);
+  const rounded = points => points.map(point => ({ x: Math.round(point.x), y: Math.round(point.y) }));
+
+  expect(normalized.coordinate_space).toBe('local');
+  expect(rounded(normalized.levels[0].corners)).toEqual([
+    { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 0, y: 10 },
+  ]);
+  expect(rounded(normalized.levels[0].rooms[0].region)).toEqual(rounded(normalized.levels[0].corners));
+
+  const engine = new NullEngine(); const scene = new Scene(engine);
+  const root = createBlueprintMesh(scene, source);
+  expect(root.rotation.y).toBeCloseTo(-Math.PI / 2);
+  expect(JSON.stringify(source)).toBe(before);
+  root.dispose(false, true); scene.dispose(); engine.dispose();
+});
+
+test('legacy levels infer stable numbered slots while preserving intentional name gaps', () => {
+  const levels = inferLevelNumbers([
+    { id: 'ground', name: 'Ground floor', elevation_feet: 0 },
+    { id: 'one', name: 'Level 1', elevation_feet: 10 },
+    { id: 'three', name: 'Level 3', elevation_feet: 30 },
+  ]);
+  expect(levels.map(level => level.level_number)).toEqual([0, 1, 3]);
+});
+
+test('ground and basement gaps are discoverable without changing custom names', () => {
+  const building = normalizeBlueprint({
+    id: 'split-level', coordinate_space: 'local', x: 0, y: 0,
+    levels: [
+      { id: 'basement-two', name: 'Wine Cellar', level_number: -2, elevation_feet: -20, floor_height: 10 },
+      { id: 'one', name: 'Great Hall', level_number: 1, elevation_feet: 10, floor_height: 10 },
+      { id: 'three', name: 'Observatory', level_number: 3, elevation_feet: 30, floor_height: 10 },
+    ],
+  });
+  expect(missingLevelNumbers(building)).toEqual([-1, 0, 2]);
+  const withGround = insertMissingBuildingLevel(building, 0);
+  const groundId = withGround.levels.find(level => level.level_number === 0).id;
+  const withoutGround = deleteBuildingLevel(withGround, groundId);
+  expect(withoutGround.levels.map(level => level.name)).toEqual(['Wine Cellar', 'Great Hall', 'Observatory']);
+  expect(withoutGround.levels.map(level => level.level_number)).toEqual([-2, 1, 3]);
+});
+
+test('middle level deletion preserves survivors, cleans dependencies, and can restore the missing slot', () => {
+  const building = normalizeBlueprint({
+    id: 'tower', visible_level_id: 'two', coordinate_space: 'local', x: 0, y: 0,
+    levels: [
+      { id: 'one', name: 'Level 1', level_number: 1, elevation_feet: 10, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }],
+        stairs: [{ id: 'to-two', total_rise_feet: 10 }], fireplaces: [{ id: 'fire', chimney_id: 'chimney' }] },
+      { id: 'two', name: 'Level 2', level_number: 2, elevation_feet: 20, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }],
+        walls: [{ id: 'divider', start: { x: 0, y: 10 }, end: { x: 20, y: 10 } }],
+        rooms: [{ id: 'room', region: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 0, y: 5 }] }],
+        floor_map: { image_url: '/two.png' } },
+      { id: 'three', name: 'Level 3', level_number: 3, elevation_feet: 30, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }] },
+    ],
+    roofs: [
+      { id: 'remove-roof', support_level_id: 'two', visibility_level_id: 'two', footprint: [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 2 }] },
+      { id: 'keep-roof', support_level_id: 'one', visibility_level_id: 'two', footprint: [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 2 }] },
+    ],
+    chimneys: [{ id: 'chimney', base_level_id: 'two', top_level_id: 'three' }],
+  });
+  expect(levelDeletionImpact(building, 'two')).toMatchObject({ rooms: 1, floor_images: 1, roofs: 2, chimneys: 1 });
+  const deleted = deleteBuildingLevel(building, 'two');
+  expect(deleted.levels.map(level => [level.id, level.level_number, level.elevation_feet])).toEqual([
+    ['one', 1, 10], ['three', 3, 30],
+  ]);
+  expect(deleted.visible_level_id).toBe('one');
+  expect(deleted.levels[0].stairs).toEqual([]);
+  expect(deleted.roofs.map(roof => roof.id)).toEqual(['keep-roof']);
+  expect(deleted.roofs[0].visibility_level_id).toBe('three');
+  expect(deleted.chimneys[0]).toMatchObject({ base_level_id: 'three', top_level_id: 'three' });
+  expect(missingLevelNumbers(deleted)).toEqual([2]);
+
+  const restored = insertMissingBuildingLevel(deleted, 2);
+  const replacement = restored.levels.find(level => level.level_number === 2);
+  expect(replacement).toMatchObject({ name: 'Level 3', elevation_feet: 20, floor_height: 10 });
+  expect(replacement.id).not.toBe('two');
+  expect(replacement.corners).toEqual(deleted.levels[0].corners);
+  expect(replacement.walls).toEqual([]);
+  expect(replacement.rooms).toEqual([]);
+  expect(replacement.floor_map).toBeUndefined();
+});
+
+test('middle level deletion can collapse upper floors without replacing survivor IDs', () => {
+  const building = normalizeBlueprint({
+    id: 'collapsed-tower', visible_level_id: 'two', coordinate_space: 'local', x: 0, y: 0,
+    levels: [
+      { id: 'one', name: 'Level 2', level_number: 1, elevation_feet: 10, floor_height: 10 },
+      { id: 'two', name: 'Level 3', level_number: 2, elevation_feet: 20, floor_height: 10 },
+      { id: 'three', name: 'Level 4', level_number: 3, elevation_feet: 30, floor_height: 10 },
+      { id: 'four', name: 'Observatory', level_number: 4, elevation_feet: 40, floor_height: 10 },
+    ],
+  });
+
+  expect(levelDeletionImpact(building, 'two')).toMatchObject({
+    upper_levels: 2, collapse_level_slots: 1, collapse_elevation_feet: 10,
+  });
+  const collapsed = deleteBuildingLevel(building, 'two', { collapseUpperLevels: true });
+
+  expect(collapsed.levels.map(level => [level.id, level.level_number, level.elevation_feet, level.name])).toEqual([
+    ['one', 1, 10, 'Level 2'],
+    ['three', 2, 20, 'Level 3'],
+    ['four', 3, 30, 'Observatory'],
+  ]);
+  expect(missingLevelNumbers(collapsed)).toEqual([]);
+});
+
+test('collapse recognizes an accidental upper level at the same elevation', () => {
+  const building = normalizeBlueprint({
+    id: 'duplicate-floor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [
+      { id: 'one', name: 'Level 1', level_number: 0, elevation_feet: 0 },
+      { id: 'duplicate', name: 'Level 2', level_number: 1, elevation_feet: 0 },
+      { id: 'upper', name: 'Level 3', level_number: 2, elevation_feet: 10 },
+    ],
+  });
+
+  expect(levelDeletionImpact(building, 'one')).toMatchObject({
+    upper_levels: 2, collapse_level_slots: 1, collapse_elevation_feet: 0,
+  });
+  const collapsed = deleteBuildingLevel(building, 'one', { collapseUpperLevels: true });
+  expect(collapsed.levels.map(level => [level.id, level.level_number, level.elevation_feet])).toEqual([
+    ['duplicate', 0, 0], ['upper', 1, 10],
+  ]);
+});
+
 test('blueprints store local coordinates and close without duplicate corners or mutation', () => {
   const initial = createBlueprintBuilding({ x: 1000, y: -500 });
+  expect(initial.levels[0].level_number).toBe(0);
   expect(initial.roofs).toEqual([]);
   expect(initial.show_roofs).toBe(true);
   const next = addBlueprintCorner(initial, { x: 1040, y: -500 });
@@ -135,6 +298,54 @@ test('an exposed lower extension gets a lean-to roof beside the upper roof', () 
   expect(roofs.find(roof => roof.support_level_id === 'ground').slope_direction).toBeCloseTo(0);
 });
 
+test('a roof attached below an upper level uses that upper level as its base elevation', () => {
+  const building = {
+    foundation_height_feet: 2,
+    levels: [
+      { id: 'ground', elevation_feet: 0, floor_height: 8 },
+      { id: 'upper', elevation_feet: 12, floor_height: 10 },
+    ],
+  };
+  expect(roofBaseElevation(building, {
+    support_level_id: 'ground', visibility_level_id: 'upper', elevation_offset: 1,
+  })).toBe(15);
+  expect(roofBaseElevation(building, {
+    support_level_id: 'upper', visibility_level_id: 'upper', elevation_offset: 1,
+  })).toBe(25);
+});
+
+test('an attached roof mesh starts at the upper level elevation', () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  const footprint = [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }];
+  const building = {
+    id: 'attached-roof', coordinate_space: 'local', show_roofs: true,
+    levels: [
+      { id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 8, corners: footprint },
+      { id: 'upper', name: 'Upper', elevation_feet: 12, floor_height: 10, corners: footprint },
+    ],
+    roofs: [{
+      id: 'lower-roof', type: 'flat', support_level_id: 'ground', visibility_level_id: 'upper',
+      footprint, pitch: 0, overhang: 0, thickness: 0.5, elevation_offset: 0, material: 'shingles',
+    }],
+  };
+  const root = createBlueprintMesh(scene, building, 0);
+  const roof = root.getChildMeshes().find(mesh => mesh.metadata?.roofId === 'lower-roof');
+  expect(roof.getBoundingInfo().boundingBox.minimum.y).toBeCloseTo(12 / 50);
+});
+
+test('automatic roof suppression is additive and survives normalization', () => {
+  const building = house();
+  const automatic = automaticRoofFootprints(building);
+  expect(automatic).toHaveLength(1);
+  const suppressed = normalizeBlueprint({
+    ...building,
+    suppressed_automatic_roof_ids: [automatic[0].id, automatic[0].id],
+  });
+  expect(suppressed.suppressed_automatic_roof_ids).toEqual([automatic[0].id]);
+  expect(automaticRoofFootprints(suppressed)).toEqual([]);
+});
+
 test('roofs normalize as building elements and follow their visibility level', () => {
   const b = house();
   b.levels.push({
@@ -208,6 +419,38 @@ test('roof mesh generation supports every initial type and visibility only hides
   engine.dispose();
 });
 
+test('roof orientation never rotates its footprint and changes the gable peak direction', () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  const footprint = [{ x: 3, y: 7 }, { x: 43, y: 7 }, { x: 43, y: 27 }, { x: 3, y: 27 }];
+  const planarBounds = mesh => {
+    const positions = Array.from(mesh.getVerticesData('position'));
+    const xs = positions.filter((_, index) => index % 3 === 0);
+    const zs = positions.filter((_, index) => index % 3 === 2);
+    return [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
+  };
+
+  for (const type of ['flat', 'shed', 'gable', 'hip', 'dome', 'cone', 'mansard']) {
+    const roof = {
+      id: `${type}-orientation`, type, footprint, holes: [], pitch: 30, overhang: 0,
+      thickness: 0.5, ridge_direction: 0, slope_direction: 0, mansard_break: 3,
+    };
+    const original = createBlueprintRoofMesh(scene, { ...roof, rotation: 0 }, 10, 'building');
+    const oriented = createBlueprintRoofMesh(scene, { ...roof, rotation: 90 }, 10, 'building');
+    expect(planarBounds(oriented)).toEqual(planarBounds(original));
+
+    if (type === 'gable') {
+      const originalHeights = Array.from(original.getVerticesData('position')).filter((_, index) => index % 3 === 1);
+      const orientedHeights = Array.from(oriented.getVerticesData('position')).filter((_, index) => index % 3 === 1);
+      expect(orientedHeights).not.toEqual(originalHeights);
+    }
+    original.dispose(false, true);
+    oriented.dispose(false, true);
+  }
+  scene.dispose();
+  engine.dispose();
+});
+
 test('thick exterior wall intersections receive closing geometry', () => {
   const engine = new NullEngine();
   const scene = new Scene(engine);
@@ -252,6 +495,31 @@ test('landing flight shares normalize, redistribute equally, and drive run and r
   expect(flights.map(segment => segment.run)).toEqual([5, 15]);
   expect(flights[0].rise_end).toBe(2.5);
   expect(flights[1].rise_end).toBe(10);
+});
+
+test('landing geometry fills the turn and joins both stair flights continuously', () => {
+  const geometry = stairGeometry({
+    shape: 'landing', length: 20, landing_count: 1, landing_depth: 4, width: 3,
+    total_rise_feet: 10, direction: 0, turn_degrees: 90, flight_shares: [25, 75],
+  }, 10);
+  const [firstFlight, landing, secondFlight] = geometry.segments;
+
+  expect(firstFlight.end).toEqual({ x: 5, y: 0 });
+  expect(landing).toMatchObject({
+    start: firstFlight.end,
+    center: { x: 7, y: 0 },
+    end: { x: 7, y: 1.5 },
+    depth: 4,
+    width: 3,
+    rise_start: 2.5,
+    rise_end: 2.5,
+  });
+  expect(landing.footprint).toEqual([
+    { x: 5, y: -1.5 }, { x: 9, y: -1.5 },
+    { x: 9, y: 1.5 }, { x: 5, y: 1.5 },
+  ]);
+  expect(secondFlight.start).toEqual(landing.end);
+  expect(secondFlight.rise_start).toBe(landing.rise_end);
 });
 
 test('exterior stair finishes use distinct rendered materials', () => {
@@ -401,6 +669,23 @@ test('arc control points remain available after blueprint normalization', () => 
   });
 
   expect(normalized.levels[0].outline[0].through).toEqual({ x: 5, y: 4 });
+});
+
+test('Babylon batches arc wall panels while retaining building selection metadata', () => {
+  const engine = new NullEngine(); const scene = new Scene(engine);
+  const arc = arcFromThreePoints({ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 15, y: 10 }, { id: 'arc-wall' });
+  const building = normalizeBlueprint({
+    id: 'arc-building', x: 100, y: 200, coordinate_space: 'local', show_roofs: false,
+    levels: [{ id: 'ground', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 30 }], outline: [arc] }],
+  });
+  const root = createBlueprintMesh(scene, building);
+  const batches = root.getChildMeshes().filter(mesh => mesh.name.startsWith('arc-walls-'));
+  expect(batches).toHaveLength(1);
+  expect(batches[0].thinInstanceCount).toBeGreaterThan(10);
+  expect(batches[0].thinInstanceEnablePicking).toBe(true);
+  expect(batches[0].metadata.item.id).toBe(building.id);
+  root.dispose(false, true); scene.dispose(); engine.dispose();
 });
 
 test('Babylon renders local floors, wall openings and hatches without mutating saved plans', () => {

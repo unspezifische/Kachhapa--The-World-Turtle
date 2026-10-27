@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Idempotently load bestiary and adventure JSON into the shared catalog.
+"""Idempotently load bestiary, adventure, and spell JSON into the shared catalog.
 
 Run `python import_5etools_catalog.py --preview` before `--commit`.
 Apply Flask migrations and back up PostgreSQL before committing.
@@ -7,7 +7,7 @@ Apply Flask migrations and back up PostgreSQL before committing.
 import argparse
 from pathlib import Path
 
-from fiveetools_catalog import catalog_rows
+from fiveetools_catalog import catalog_rows, spell_rows
 
 
 def upsert_rows(session, model, rows, key_columns, batch_size=100):
@@ -27,19 +27,25 @@ def main():
     operation.add_argument('--commit', action='store_true')
     args = parser.parse_args()
     creatures, adventures = catalog_rows(args.data_dir)
-    print(f'{len(creatures)} creatures ({sum(not row["is_adventure"] for row in creatures)} general), {len(adventures)} adventures')
+    spells = spell_rows(args.data_dir)
+    print(f'{len(creatures)} creatures ({sum(not row["is_adventure"] for row in creatures)} general), {len(adventures)} adventures, {len(spells)} spells')
     if args.preview:
         return
-    from app import app, db, CreatureCatalog, AdventureCatalog
+    from app import app, db, CreatureCatalog, AdventureCatalog, Spell
     with app.app_context():
         try:
             upsert_rows(db.session, AdventureCatalog, adventures, ['source'])
             upsert_rows(db.session, CreatureCatalog, creatures, ['source', 'name'])
+            upsert_rows(db.session, Spell, spells, ['source', 'name'])
             db.session.commit()
+            stored = (CreatureCatalog.query.count(), AdventureCatalog.query.count(), Spell.query.count())
+            expected = (len(creatures), len(adventures), len(spells))
+            if any(actual < minimum for actual, minimum in zip(stored, expected)):
+                raise RuntimeError(f'Catalog verification failed: stored {stored}, expected at least {expected}')
         except Exception:
             db.session.rollback()
             raise
-    print('Catalog committed.')
+    print(f'Catalog committed and verified: {stored[0]} creatures, {stored[1]} adventures, {stored[2]} spells.')
 
 
 if __name__ == '__main__':

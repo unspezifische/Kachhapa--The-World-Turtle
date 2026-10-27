@@ -66,6 +66,32 @@ def travelling(state, group_id):
     return next((j for j in state['journeys'] if j['group_id'] == group_id and j['status'] == 'travelling'), None)
 
 
+def journey_position(journey, now):
+    """Return clock-derived progress without mutating a persisted journey."""
+    route = journey.get('route_snapshot') or {}
+    path = route.get('path') or []
+    duration = max(1, int(journey.get('arrival', now) - journey.get('departure', now)))
+    elapsed = max(0, min(duration, int(now - journey.get('departure', now))))
+    progress = elapsed / duration
+    if len(path) < 2:
+        return {'progress': progress, 'current_position': deepcopy(journey.get('origin') or {})}
+    route_elapsed = progress * float(route.get('elapsed_seconds') or duration)
+    previous = path[0]
+    for point in path[1:]:
+        end = float(point.get('cumulative_seconds') or 0)
+        start = float(previous.get('cumulative_seconds') or 0)
+        if route_elapsed <= end:
+            amount = 0 if end <= start else (route_elapsed - start) / (end - start)
+            position = {'kind': 'route_position', 'label': f"En route to {journey['destination']['label']}",
+                        'map_key': route.get('map_key'),
+                        'x': previous['x'] + (point['x'] - previous['x']) * amount,
+                        'y': previous['y'] + (point['y'] - previous['y']) * amount,
+                        'route_journey_id': journey['id']}
+            return {'progress': progress, 'current_position': position}
+        previous = point
+    return {'progress': 1, 'current_position': deepcopy(journey.get('destination') or {})}
+
+
 def running(state):
     return next((e for e in state['encounters'] if e['status'] == 'running'), None)
 
@@ -184,7 +210,13 @@ def apply_command(document, action, data, now, roster, calendar_configured=True)
             p['quantity'] = number(p.get('quantity', 1), 1)
             if p['quantity'] > 100:
                 raise SessionError('Use at most 100 of each participant.')
-        template.update(name=label(data.get('name')), notes=str(data.get('notes', ''))[:100000], participants=participants)
+            if p.get('disposition', 'Hostile') not in ('Friendly', 'Neutral', 'Hostile'):
+                raise SessionError('Choose Friendly, Neutral, or Hostile for each participant.')
+            p['disposition'] = p.get('disposition', 'Hostile')
+            p['initiative_group'] = str(p.get('initiative_group') or 'individual')[:50]
+        template.update(name=label(data.get('name')), notes=str(data.get('notes', ''))[:100000], participants=participants,
+                        environment=str(data.get('environment', ''))[:100], source=str(data.get('source', 'Campaign'))[:100],
+                        is_preset=bool(data.get('is_preset', False)))
         if not data.get('id'):
             state['templates'].append(template)
     elif action == 'stage':
@@ -201,15 +233,28 @@ def apply_command(document, action, data, now, roster, calendar_configured=True)
         if not set(chars).issubset({str(c['id']) for c in roster}):
             raise SessionError('Choose campaign characters.')
         combatants = []
-        for p in template['participants']:
-            for _ in range(p['quantity']):
-                combatants.append(dict(id=uid(), source_id=p.get('source_id'), name=p['name'], initiative=None, hp=p.get('hp'), ac=p.get('ac'), dexterity=p.get('dexterity', 10), kind='npc'))
+        auto_roll = data.get('initiative') == 'automatic'
+        initiative_rolls = {}
+        from secrets import randbelow
+        for participant_index, p in enumerate(template['participants']):
+            grouping = p.get('initiative_group', 'individual')
+            for copy_index in range(p['quantity']):
+                group_id = None if grouping == 'individual' else (f'participant:{participant_index}' if grouping == 'same' else f'custom:{grouping}')
+                roll = None
+                if auto_roll:
+                    roll_key = group_id or f'individual:{participant_index}:{copy_index}'
+                    if roll_key not in initiative_rolls:
+                        initiative_rolls[roll_key] = randbelow(20) + 1 + (int(p.get('dexterity') or 10)-10)//2
+                    roll = initiative_rolls[roll_key]
+                combatants.append(dict(id=uid(), source_id=p.get('source_id'), source=p.get('source'), name=p['name'], initiative=roll,
+                                       initiative_group=group_id, disposition=p.get('disposition', 'Hostile'),
+                                       hp=p.get('hp'), ac=p.get('ac'), dexterity=p.get('dexterity', 10), kind='npc'))
         for cid in dict.fromkeys(chars):
             c = next(c for c in roster if str(c['id']) == cid)
             combatants.append(dict(id=uid(), source_id=c['id'], name=c['name'], initiative=None, kind='player'))
         state['encounters'].append(dict(id=uid(), template_id=template['id'], session_id=s['id'], name=template['name'], notes=template['notes'],
                                         status='running', combatants=combatants, turn=0, round=1, started=False))
-    elif action in ('encounter_status', 'initiative', 'roll_npc_initiative', 'begin_encounter', 'next_turn'):
+    elif action in ('encounter_status', 'initiative', 'roll_npc_initiative', 'roll_all_npc_initiative', 'begin_encounter', 'next_turn'):
         e = find(state['encounters'], data.get('id'))
         if action == 'encounter_status':
             status = data.get('status')
@@ -220,6 +265,18 @@ def apply_command(document, action, data, now, roster, calendar_configured=True)
                 if running(state) and running(state)['id'] != e['id']:
                     raise SessionError('Only one encounter can run at a time.')
             e['status'] = status
+        elif action == 'roll_all_npc_initiative':
+            if e['started']:
+                raise SessionError('Suspend combat before editing its initiative order.')
+            from secrets import randbelow
+            rolls = {}
+            for c in e['combatants']:
+                if c['kind'] != 'npc':
+                    continue
+                key = c.get('initiative_group') or c['id']
+                if key not in rolls:
+                    rolls[key] = randbelow(20) + 1 + (int(c.get('dexterity') or 10)-10)//2
+                c['initiative'] = rolls[key]
         elif action in ('initiative', 'roll_npc_initiative'):
             c = find(e['combatants'], data.get('combatant_id'))
             try:
@@ -227,9 +284,15 @@ def apply_command(document, action, data, now, roster, calendar_configured=True)
                     if c['kind'] != 'npc':
                         raise SessionError('Player initiative must be entered or rolled by its player.')
                     from secrets import randbelow
-                    c['initiative'] = randbelow(20) + 1 + (int(c.get('dexterity') or 10)-10)//2
+                    rolled = randbelow(20) + 1 + (int(c.get('dexterity') or 10)-10)//2
+                    for member in e['combatants']:
+                        if member['id'] == c['id'] or (c.get('initiative_group') and member.get('initiative_group') == c['initiative_group']):
+                            member['initiative'] = rolled
                 else:
-                    c['initiative'] = int(data['initiative'])
+                    entered = int(data['initiative'])
+                    for member in e['combatants']:
+                        if member['id'] == c['id'] or (c.get('initiative_group') and member.get('initiative_group') == c['initiative_group']):
+                            member['initiative'] = entered
             except (ValueError, TypeError, KeyError):
                 raise SessionError('Enter a whole initiative value.')
             if e['started']:
@@ -268,13 +331,18 @@ def apply_command(document, action, data, now, roster, calendar_configured=True)
         destination = deepcopy(data.get('destination') or {})
         destination['label'] = label(destination.get('label'))
         state['journeys'].append(dict(id=uid(), name=f"{group['name']} → {destination['label']}", group_id=group['id'], session_id=s['id'],
-                                       origin=deepcopy(group['location']), destination=destination, departure=now, arrival=now+duration, status='travelling'))
+                                       origin=deepcopy(group['location']), destination=destination, departure=now, arrival=now+duration,
+                                       status='travelling', **({'route_snapshot': deepcopy(data['route_snapshot'])}
+                                                               if data.get('route_snapshot') else {})))
     elif action == 'stop_journey':
         j = find(state['journeys'], data.get('id'))
         if j['status'] != 'travelling':
             raise SessionError('That journey is no longer running.')
         j['status'] = 'stopped'
-        find(state['groups'], j['group_id'])['location'] = {'label': label(data.get('location'))}
+        if j.get('route_snapshot'):
+            find(state['groups'], j['group_id'])['location'] = journey_position(j, now)['current_position']
+        else:
+            find(state['groups'], j['group_id'])['location'] = {'label': label(data.get('location'))}
     elif action == 'event':
         require_live(state)
         if not calendar_configured:

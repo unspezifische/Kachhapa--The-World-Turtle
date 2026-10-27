@@ -2,4 +2,148 @@
 
 :where(html[data-kachhapa-ui="core"]) .menu-shell {
   height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+:where(html[data-kachhapa-ui="core"]) .mobile-bottom-navigation,
+:where(html[data-kachhapa-ui="core"]) .mobile-more-drawer {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  :where(html[data-kachhapa-ui="core"]) .desktop-navigation-drawer {
+    display: none;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-bottom-navigation {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 2250;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    min-height: var(--mobile-nav-height, 68px);
+    padding: 5px max(7px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(7px, env(safe-area-inset-left));
+    border-top: 1px solid var(--menu-border);
+    background: color-mix(in srgb, var(--menu-bg) 94%, #111827);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.24);
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-bottom-navigation button {
+    display: flex;
+    min-width: 0;
+    min-height: 52px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 2px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-on-menu);
+    font: 700 10px/1.1 'Avenir Next', 'Trebuchet MS', sans-serif;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-bottom-navigation button svg {
+    font-size: 24px;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-bottom-navigation button.is-active {
+    background: var(--menu-bg-selected);
+    color: #fff;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-bottom-navigation button:focus-visible,
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-sheet button:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: -3px;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-drawer {
+    display: block;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-drawer .MuiDrawer-paper {
+    max-height: min(78dvh, 650px);
+    overflow: hidden;
+    border: 1px solid var(--border-main);
+    border-bottom: 0;
+    border-radius: 20px 20px 0 0;
+    background: var(--bg-surface);
+    color: var(--text-main);
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-sheet {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid var(--border-main);
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-heading > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-heading span {
+    color: var(--text-subtle);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-heading strong {
+    font: 400 24px/1.15 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-list {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 6px 8px;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-list .MuiListItemButton-root {
+    min-height: 48px;
+    border-radius: 10px;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-list .MuiListItemIcon-root {
+    min-width: 42px;
+    color: var(--text-main);
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-utilities {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px 12px 4px;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .mobile-more-utilities button {
+    display: flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid var(--border-main);
+    border-radius: 10px;
+    background: var(--bg-surface-2);
+    color: var(--text-main);
+    font-weight: 750;
+  }
 }

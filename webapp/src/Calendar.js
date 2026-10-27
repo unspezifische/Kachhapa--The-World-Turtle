@@ -1,13 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Container, Row, Col, Button, Modal, Form } from 'react-bootstrap';
 import axios from 'axios';
 import './Calendar.css';
 
 function Calendar({ headers, campaignID, accountType, socket }) {
   const [calendarMeta, setCalendarMeta] = useState(null);
-  const [monthView, setMonthView] = useState(null);
+  const [yearView, setYearView] = useState(null);
   const [viewYear, setViewYear] = useState(null);
-  const [viewMonthIndex, setViewMonthIndex] = useState(null);
   const [loading, setLoading] = useState(true);
   const [calendarMissing, setCalendarMissing] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -49,7 +48,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
       }
 
       let shouldRefreshMeta = false;
-      let shouldRefreshMonth = false;
+      let shouldRefreshYear = false;
 
       if (payload.kind === 'current_date') {
         shouldRefreshMeta = true;
@@ -57,33 +56,29 @@ function Calendar({ headers, campaignID, accountType, socket }) {
         const newDate = payload.current_date;
         if (
           newDate &&
-          newDate.year === viewYear &&
-          newDate.month_index === viewMonthIndex
+          newDate.year === viewYear
         ) {
-          shouldRefreshMonth = true;
+          shouldRefreshYear = true;
         }
       }
 
       if (payload.kind === 'event' || payload.kind === 'event_deleted') {
         if (
-          payload.year === viewYear &&
-          payload.month_index === viewMonthIndex
+          payload.year === viewYear
         ) {
-          shouldRefreshMonth = true;
+          shouldRefreshYear = true;
         }
       }
 
       if (payload.kind === 'event_updated') {
         const affectsOldView =
-          payload.old_year === viewYear &&
-          payload.old_month_index === viewMonthIndex;
+          payload.old_year === viewYear;
 
         const affectsNewView =
-          payload.year === viewYear &&
-          payload.month_index === viewMonthIndex;
+          payload.year === viewYear;
 
         if (affectsOldView || affectsNewView) {
-          shouldRefreshMonth = true;
+          shouldRefreshYear = true;
         }
       }
 
@@ -91,27 +86,14 @@ function Calendar({ headers, campaignID, accountType, socket }) {
         await fetchCalendarMeta();
       }
 
-      if (shouldRefreshMonth) {
-        await fetchMonthView(viewYear, viewMonthIndex);
+      if (shouldRefreshYear) {
+        const refreshed = await fetchYearView(viewYear);
 
         if (selectedDay) {
-          const selectedStillRelevant =
-            selectedDay.year === viewYear &&
-            selectedDay.month_index === viewMonthIndex;
+          const selectedStillRelevant = selectedDay.year === viewYear;
 
           if (selectedStillRelevant) {
-            const refreshed = await axios.get(
-              `/api/calendar/${campaignID}/month-view`,
-              {
-                headers,
-                params: {
-                  year: viewYear,
-                  month_index: viewMonthIndex
-                }
-              }
-            );
-
-            const updatedDay = refreshed.data.days.find(
+            const updatedDay = refreshed?.months?.flatMap(month => month.days).find(
               (d) =>
                 d.year === selectedDay.year &&
                 d.month_index === selectedDay.month_index &&
@@ -131,13 +113,13 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     return () => {
       socket.off('calendar_updated', handleCalendarUpdated);
     };
-  }, [socket, campaignID, viewYear, viewMonthIndex, selectedDay, headers]);
+  }, [socket, campaignID, viewYear, selectedDay, headers]);
 
   useEffect(() => {
-    if (viewYear !== null && viewMonthIndex !== null) {
-      fetchMonthView(viewYear, viewMonthIndex);
+    if (viewYear !== null) {
+      fetchYearView(viewYear);
     }
-  }, [viewYear, viewMonthIndex, campaignID]);
+  }, [viewYear, campaignID]);
 
   const fetchCalendarMeta = async () => {
     try {
@@ -148,7 +130,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
 
       if (data?.configured === false) {
         setCalendarMeta(null);
-        setMonthView(null);
+        setYearView(null);
         setCalendarMissing(true);
         if (accountType?.toLowerCase() === 'dm') {
           await fetchCalendarFormats();
@@ -161,12 +143,11 @@ function Calendar({ headers, campaignID, accountType, socket }) {
 
       if (data?.current_date) {
         setViewYear(data.current_date.year);
-        setViewMonthIndex(data.current_date.month_index);
       }
     } catch (error) {
       if (error.response?.status === 404) {
         setCalendarMeta(null);
-        setMonthView(null);
+        setYearView(null);
         setCalendarMissing(true);
         if (accountType?.toLowerCase() === 'dm') {
           await fetchCalendarFormats();
@@ -214,7 +195,6 @@ function Calendar({ headers, campaignID, accountType, socket }) {
       setCalendarMeta(data);
       setCalendarMissing(false);
       setViewYear(data.current_date.year);
-      setViewMonthIndex(data.current_date.month_index);
     } catch (error) {
       setSetupError(error.response?.data?.message || 'The calendar could not be created.');
     } finally {
@@ -222,51 +202,29 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     }
   };
 
-  const fetchMonthView = async (year, monthIndex) => {
+  const fetchYearView = async (year) => {
     try {
       const response = await axios.get(
-        `/api/calendar/${campaignID}/month-view`,
+        `/api/calendar/${campaignID}/year-view`,
         {
           headers,
-          params: {
-            year,
-            month_index: monthIndex
-          }
+          params: { year }
         }
       );
-      setMonthView(response.data);
+      setYearView(response.data);
       return response.data;
     } catch (error) {
-      console.error('Error fetching month view:', error);
+      console.error('Error fetching year view:', error);
     }
   };
 
-  const handlePreviousMonth = () => {
-    if (!calendarMeta?.months?.length) return;
+  const handlePreviousYear = () => setViewYear(previous => previous - 1);
 
-    if (viewMonthIndex === 0) {
-      setViewMonthIndex(calendarMeta.months.length - 1);
-      setViewYear(prev => prev - 1);
-    } else {
-      setViewMonthIndex(prev => prev - 1);
-    }
-  };
+  const handleNextYear = () => setViewYear(previous => previous + 1);
 
-  const handleNextMonth = () => {
-    if (!calendarMeta?.months?.length) return;
-
-    if (viewMonthIndex === calendarMeta.months.length - 1) {
-      setViewMonthIndex(0);
-      setViewYear(prev => prev + 1);
-    } else {
-      setViewMonthIndex(prev => prev + 1);
-    }
-  };
-
-  const handleSetTodayMonth = () => {
+  const handleSetTodayYear = () => {
     if (!calendarMeta?.current_date) return;
     setViewYear(calendarMeta.current_date.year);
-    setViewMonthIndex(calendarMeta.current_date.month_index);
   };
 
   const handleAdvanceDay = async () => {
@@ -280,7 +238,6 @@ function Calendar({ headers, campaignID, accountType, socket }) {
       setCalendarMeta(response.data);
       const updatedDate = response.data.current_date;
       setViewYear(updatedDate.year);
-      setViewMonthIndex(updatedDate.month_index);
     } catch (error) {
       console.error('Error advancing date:', error);
     }
@@ -317,7 +274,6 @@ function Calendar({ headers, campaignID, accountType, socket }) {
       );
       setCalendarMeta(response.data);
       setViewYear(response.data.current_date.year);
-      setViewMonthIndex(response.data.current_date.month_index);
       setShowDateModal(false);
       setShowDayModal(false);
       setContextMenu(null);
@@ -341,7 +297,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
   };
 
   const handleCreateEvent = async () => {
-    if (!isDM || !newEventName || !selectedDay || viewYear === null || viewMonthIndex === null) return;
+    if (!isDM || !newEventName || !selectedDay || viewYear === null) return;
 
     try {
       await axios.post(
@@ -360,7 +316,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
       setNewEventName('');
       setNewEventDescription('');
       setNewEventVisible(false);
-      await fetchMonthView(viewYear, viewMonthIndex);
+      await fetchYearView(viewYear);
       await fetchCalendarMeta();
       setShowDayModal(false);
       setSelectedDay(null);
@@ -374,8 +330,8 @@ function Calendar({ headers, campaignID, accountType, socket }) {
       await axios.patch(`/api/calendar/events/${event.id}`, {
         is_player_visible: !event.is_player_visible,
       }, { headers });
-      const updated = await fetchMonthView(viewYear, viewMonthIndex);
-      const refreshedDay = updated?.days?.find(day =>
+      const updated = await fetchYearView(viewYear);
+      const refreshedDay = updated?.months?.flatMap(month => month.days).find(day =>
         day.year === selectedDay.year && day.month_index === selectedDay.month_index && day.day === selectedDay.day
       );
       if (refreshedDay) setSelectedDay(refreshedDay);
@@ -401,12 +357,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     setNewEventVisible(false);
   };
 
-  const currentMonthLabel = useMemo(() => {
-    if (!monthView?.month) return '';
-    return monthView.month.subtitle
-      ? `${monthView.month.name} (${monthView.month.subtitle})`
-      : monthView.month.name;
-  }, [monthView]);
+  const monthLabel = (month) => month?.subtitle ? `${month.name} (${month.subtitle})` : month?.name || '';
 
   const isDM = accountType?.toLowerCase() === 'dm';
 
@@ -489,7 +440,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     );
   }
 
-  if (!calendarMeta || !monthView) {
+  if (!calendarMeta || !yearView) {
     return (
       <Container className="calendar-page">
         <div className="calendar-loading">Loading calendar...</div>
@@ -501,30 +452,27 @@ function Calendar({ headers, campaignID, accountType, socket }) {
     <Container fluid className="calendar-page">
       <div className="calendar-shell">
 
-        <Row className="year-banner align-items-center">
+        <Row className="year-banner align-items-center calendar-year-toolbar">
           <Col xs="auto">
-            <Button onClick={handlePreviousMonth}>Previous Month</Button>
+            <Button onClick={handlePreviousYear}>Previous Year</Button>
           </Col>
           <Col className="text-center">
-            <h1>Year {monthView.year}</h1>
+            <h1>Year {yearView.year}</h1>
           </Col>
           <Col xs="auto" className="text-end">
-            <Button onClick={handleNextMonth}>Next Month</Button>
-          </Col>
-        </Row>
-
-        <Row className="month-banner align-items-center">
-          <Col className="text-center">
-            <h2>
-              {currentMonthLabel} - Month {monthView.month_index + 1}
-            </h2>
+            <Button onClick={handleNextYear}>Next Year</Button>
           </Col>
         </Row>
 
         <Row className="calendar-controls mb-3">
           <Col xs="auto">
-            <Button variant="secondary" onClick={handleSetTodayMonth}>
-              Go to Current Month
+            <a href="/timeline" className="calendar-timeline-button btn btn-primary">
+              Timeline
+            </a>
+          </Col>
+          <Col xs="auto">
+            <Button variant="secondary" onClick={handleSetTodayYear}>
+              Go to Current Year
             </Button>
           </Col>
           {isDM && (
@@ -548,82 +496,61 @@ function Calendar({ headers, campaignID, accountType, socket }) {
           </Col>
         </Row>
 
-        <div
-          className="calendar-weekday-row"
-          style={{ gridTemplateColumns: `repeat(${monthView.columns.length}, 1fr)` }}
-        >
-          {monthView.columns.map((col, index) => (
-            <div key={index} className="calendar-weekday-cell">
-              {col.short_name || col.name || col}
-            </div>
-          ))}
-        </div>
-
-        <div
-          className="calendar-grid"
-          style={{ gridTemplateColumns: `repeat(${monthView.columns.length}, 1fr)` }}
-        >
-          {monthView.days.map((dayObj) => {
-            const isCurrentDay =
-              calendarMeta.current_date?.year === dayObj.year &&
-              calendarMeta.current_date?.month_index === dayObj.month_index &&
-              calendarMeta.current_date?.day === dayObj.day;
-
-            return (
-              <div
-                key={`${dayObj.year}-${dayObj.month_index}-${dayObj.day}`}
-                className={`calendar-day day-clickable ${isCurrentDay ? 'current-day' : ''}`}
-                onClick={() => openDayModal(dayObj)}
-                onContextMenu={(event) => {
-                  if (!isDM) return;
-                  event.preventDefault();
-                  setContextMenu({ x: event.clientX, y: event.clientY, day: dayObj });
-                }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    openDayModal(dayObj);
-                  }
-                }}
-              >
-                <div className="day-header">
-                  <div className="day-number">{dayObj.day}</div>
-                  <div className="moon-row">
-                    {dayObj.moons?.map((moon, idx) => (
-                      <span key={idx} className="moon-phase" title={`${moon.name}: ${moon.phase}`}>
-                        {renderMoonPhase(moon.phase)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {dayObj.holidays?.length > 0 && (
-                  <div className="holiday-list">
-                    {dayObj.holidays.map((holiday, idx) => (
-                      <div key={idx} className="holiday-item">
-                        {holiday.name}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="event-list">
-                  {dayObj.events?.map((event) => (
-                    <div
-                      key={event.id}
-                      className="event"
-                      style={{ borderLeft: `4px solid ${event.color || '#c084fc'}` }}
-                    >
-                      <strong>{event.name}</strong>
-                      {event.description ? <div>{event.description}</div> : null}
-                    </div>
-                  ))}
-                </div>
+        <div className="calendar-year-stack" aria-label={`Calendar year ${yearView.year}`}>
+          {yearView.months.map((monthView) => (
+            <section className="calendar-month-section" key={`${yearView.year}-${monthView.month_index}`} aria-labelledby={`calendar-month-${monthView.month_index}`}>
+              <div className="month-banner">
+                <h2 id={`calendar-month-${monthView.month_index}`}>{monthLabel(monthView.month)} <span>Month {monthView.month_index + 1}</span></h2>
               </div>
-            );
-          })}
+              <div className="calendar-weekday-row" style={{ gridTemplateColumns: `repeat(${monthView.columns.length}, 1fr)` }}>
+                {monthView.columns.map((col, index) => (
+                  <div key={index} className="calendar-weekday-cell">{col.short_name || col.name || col}</div>
+                ))}
+              </div>
+              <div className="calendar-grid" style={{ gridTemplateColumns: `repeat(${monthView.columns.length}, 1fr)` }}>
+                {monthView.days.map((dayObj) => {
+                  const isCurrentDay =
+                    calendarMeta.current_date?.year === dayObj.year &&
+                    calendarMeta.current_date?.month_index === dayObj.month_index &&
+                    calendarMeta.current_date?.day === dayObj.day;
+                  return (
+                    <div
+                      key={`${dayObj.year}-${dayObj.month_index}-${dayObj.day}`}
+                      className={`calendar-day day-clickable ${isCurrentDay ? 'current-day' : ''}`}
+                      onClick={() => openDayModal(dayObj)}
+                      onContextMenu={(event) => {
+                        if (!isDM) return;
+                        event.preventDefault();
+                        setContextMenu({ x: event.clientX, y: event.clientY, day: dayObj });
+                      }}
+                      role="button"
+                      aria-label={`${monthView.month.name} ${dayObj.day}, Year ${dayObj.year}`}
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openDayModal(dayObj);
+                        }
+                      }}
+                    >
+                      <div className="day-header">
+                        <div className="day-number">{dayObj.day}</div>
+                        <div className="moon-row">
+                          {dayObj.moons?.map((moon) => (
+                            <span key={moon.name} className="moon-phase" title={`${moon.name}: ${moon.phase}`} aria-label={`${moon.name}: ${moon.phase}`}>
+                              {renderMoonPhase(moon.phase)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      {dayObj.holidays?.length > 0 && <div className="holiday-list">{dayObj.holidays.map((holiday) => <div key={holiday.name} className="holiday-item">{holiday.name}</div>)}</div>}
+                      <div className="event-list">{dayObj.events?.map((event) => <div key={event.id} className="event" style={{ borderLeft: `4px solid ${event.color || '#c084fc'}` }}><strong>{event.name}</strong>{event.description ? <div>{event.description}</div> : null}</div>)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
 
         {contextMenu && (
@@ -680,7 +607,7 @@ function Calendar({ headers, campaignID, accountType, socket }) {
         <Modal show={showDayModal} onHide={closeDayModal} centered>
           <Modal.Header closeButton>
             <Modal.Title>
-              {selectedDay ? `${currentMonthLabel} ${selectedDay.day}, Year ${selectedDay.year}` : 'Day Details'}
+              {selectedDay ? `${monthLabel(calendarMeta.months?.[selectedDay.month_index])} ${selectedDay.day}, Year ${selectedDay.year}` : 'Day Details'}
             </Modal.Title>
           </Modal.Header>
           <Modal.Body>
@@ -750,23 +677,23 @@ function Calendar({ headers, campaignID, accountType, socket }) {
 function renderMoonPhase(phase) {
   switch (phase) {
     case 'new':
-      return '●';
+      return '🌑';
     case 'waxing-crescent':
-      return '◔';
+      return '🌒';
     case 'first-quarter':
-      return '◑';
+      return '🌓';
     case 'waxing-gibbous':
-      return '◕';
+      return '🌔';
     case 'full':
-      return '○';
+      return '🌕';
     case 'waning-gibbous':
-      return '◕';
+      return '🌖';
     case 'last-quarter':
-      return '◐';
+      return '🌗';
     case 'waning-crescent':
-      return '◓';
+      return '🌘';
     default:
-      return '○';
+      return '🌑';
   }
 }
 

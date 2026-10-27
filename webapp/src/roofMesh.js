@@ -109,24 +109,8 @@ export function createBlueprintRoofMesh(scene, roof, baseElevation, buildingId) 
   }
 
   if (!positions.length) {
-    const center = sourceRings[0].reduce(
-      (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
-      { x: 0, y: 0 }
-    );
-    center.x /= sourceRings[0].length;
-    center.y /= sourceRings[0].length;
-    const rotation = radians(roof.rotation);
-    const cosine = Math.cos(rotation);
-    const sine = Math.sin(rotation);
     const rings = sourceRings.map((ring, index) =>
-      offsetRing(ring, roof.overhang, index > 0).map(point => {
-        const x = point.x - center.x;
-        const y = point.y - center.y;
-        return {
-          x: center.x + x * cosine - y * sine,
-          y: center.y + x * sine + y * cosine,
-        };
-      })
+      offsetRing(ring, roof.overhang, index > 0)
     );
     const flat = [];
     const holeIndices = [];
@@ -163,6 +147,7 @@ export function createBlueprintRoofMesh(scene, roof, baseElevation, buildingId) 
     const radius = Math.max(0.1, ...outer.map(point => Math.hypot(point.x - centerX, point.y - centerY)));
     const pitch = Math.tan(radians(Math.min(80, Math.max(0, roof.pitch))));
     const mansardBreak = Math.max(0.1, Number(roof.mansard_break) || 3);
+    const roofTopBase = baseElevation + roof.thickness;
     const baseHeight = (point) => {
       const x = point.x - centerX;
       const y = point.y - centerY;
@@ -170,24 +155,24 @@ export function createBlueprintRoofMesh(scene, roof, baseElevation, buildingId) 
       switch (roof.type) {
         case 'shed': {
           const projection = x * slope.x + y * slope.y;
-          return baseElevation + (projection + slopeHalfWidth) * pitch;
+          return roofTopBase + (projection + slopeHalfWidth) * pitch;
         }
         case 'gable':
-          return baseElevation + Math.max(0, ridgeHalfWidth - Math.abs(x * across.x + y * across.y)) * pitch;
+          return roofTopBase + Math.max(0, ridgeHalfWidth - Math.abs(x * across.x + y * across.y)) * pitch;
         case 'hip': {
           const edgeDistance = rings.reduce((minimum, ring) =>
             Math.min(minimum, ...ring.map((start, index) =>
               distanceToSegment(point, start, ring[(index + 1) % ring.length])
             )),
           Infinity);
-          return baseElevation + edgeDistance * pitch;
+          return roofTopBase + edgeDistance * pitch;
         }
         case 'dome': {
           const radial = Math.min(1, Math.hypot(x, y) / radius);
-          return baseElevation + radius * pitch * Math.sqrt(Math.max(0, 1 - radial * radial));
+          return roofTopBase + radius * pitch * Math.sqrt(Math.max(0, 1 - radial * radial));
         }
         case 'cone':
-          return baseElevation + Math.max(0, 1 - Math.hypot(x, y) / radius) * radius * pitch;
+          return roofTopBase + Math.max(0, 1 - Math.hypot(x, y) / radius) * radius * pitch;
         case 'mansard': {
           const edgeDistance = rings.reduce((minimum, ring) =>
             Math.min(minimum, ...ring.map((start, index) =>
@@ -195,12 +180,12 @@ export function createBlueprintRoofMesh(scene, roof, baseElevation, buildingId) 
             )),
           Infinity);
           const steepRise = mansardBreak * pitch;
-          return baseElevation + (edgeDistance <= mansardBreak
+          return roofTopBase + (edgeDistance <= mansardBreak
             ? edgeDistance * pitch
             : steepRise + (edgeDistance - mansardBreak) * Math.tan(radians(roof.pitch * 0.35)));
         }
         default:
-          return baseElevation;
+          return roofTopBase;
       }
     };
     const subdivisions = ['dome', 'cone', 'hip', 'mansard', 'shed', 'gable'].includes(roof.type) ? 5 : 1;

@@ -30,6 +30,12 @@
     { "name": "Uktar", "subtitle": "The Rotting", "length": 30 },
     { "name": "Nightal", "subtitle": "The Drawing Down", "length": 30 }
   ],
+  "seasons": [
+    { "name": "Winter", "months": [0, 1, 2], "end_month_index": 2 },
+    { "name": "Spring", "months": [3, 4, 5], "end_month_index": 5 },
+    { "name": "Summer", "months": [6, 7, 8], "end_month_index": 8 },
+    { "name": "Autumn", "months": [9, 10, 11], "end_month_index": 11 }
+  ],
   "leap_rule": {
     "type": "harptos_shieldmeet"
   },
@@ -41,12 +47,12 @@
     }
   ],
   "holidays": [
-    { "name": "Midwinter", "month_index": 0, "day": 31, "intercalary": true },
-    { "name": "Greengrass", "month_index": 3, "day": 31, "intercalary": true },
-    { "name": "Midsummer", "month_index": 6, "day": 31, "intercalary": true },
-    { "name": "Highharvestide", "month_index": 8, "day": 31, "intercalary": true },
-    { "name": "Feast of the Moon", "month_index": 10, "day": 31, "intercalary": true },
-    { "name": "Shieldmeet", "month_index": 6, "day": 32, "intercalary": true, "leap_only": true }
+    { "name": "Midwinter", "month_index": 0, "day": 31, "intercalary": true, "season": "Winter" },
+    { "name": "Greengrass", "month_index": 3, "day": 31, "intercalary": true, "season": "Spring" },
+    { "name": "Midsummer", "month_index": 6, "day": 31, "intercalary": true, "season": "Summer" },
+    { "name": "Highharvestide", "month_index": 8, "day": 31, "intercalary": true, "season": "Autumn" },
+    { "name": "Feast of the Moon", "month_index": 10, "day": 31, "intercalary": true, "season": "Autumn" },
+    { "name": "Shieldmeet", "month_index": 6, "day": 32, "intercalary": true, "leap_only": true, "season": "Summer" }
   ],
   "time_periods": [
     {

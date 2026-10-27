@@ -1,7 +1,143 @@
 """Schedule authoring/compilation. Inspection never executes NPC actions."""
 from copy import deepcopy
+import random
 
 CAPABILITIES = {'sleep', 'rest', 'eat', 'prepare_food', 'wash', 'work', 'study', 'socialize', 'worship', 'store_items', 'guard', 'tend_animals', 'trade', 'pass_through', 'change_clothes', 'clean', 'read'}
+
+OCCUPATION_ARCHETYPES = {
+    'dockworker': {'start': '06:00', 'duration_minutes': 480, 'activity': 'work', 'room_purposes': ['dock', 'warehouse', 'yard']},
+    'laborer': {'start': '07:00', 'duration_minutes': 480, 'activity': 'work', 'room_purposes': ['workshop', 'yard']},
+    'merchant': {'start': '09:00', 'duration_minutes': 540, 'activity': 'trade', 'room_purposes': ['shop', 'market', 'office']},
+    'shopkeeper': {'start': '09:00', 'duration_minutes': 540, 'activity': 'trade', 'room_purposes': ['shop', 'market']},
+    'clergy': {'start': '08:00', 'duration_minutes': 420, 'activity': 'worship', 'room_purposes': ['chapel', 'shrine', 'temple']},
+    'noble': {'start': '10:00', 'duration_minutes': 240, 'activity': 'work', 'room_purposes': ['office', 'study', 'hall']},
+    'aristocrat': {'start': '10:00', 'duration_minutes': 240, 'activity': 'socialize', 'room_purposes': ['parlor', 'hall', 'office']},
+    'researcher': {'start': '09:00', 'duration_minutes': 360, 'activity': 'study', 'room_purposes': ['study', 'library', 'laboratory']},
+    'scholar': {'start': '09:00', 'duration_minutes': 360, 'activity': 'study', 'room_purposes': ['study', 'library']},
+    'guard': {'start': '08:00', 'duration_minutes': 480, 'activity': 'guard', 'room_purposes': ['guard post', 'gate', 'barracks']},
+    'adventurer': {'start': '09:00', 'duration_minutes': 360, 'activity': 'work', 'room_purposes': ['guild hall', 'training area']},
+}
+
+
+def _field(value, key, default=None):
+    return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
+
+
+def _occupation_archetype(definition):
+    configured = deepcopy(_field(definition, 'schedule_archetype', {}) or {})
+    if configured:
+        return configured
+    key = str(_field(definition, 'occupation_key', '') or '').casefold()
+    return deepcopy(OCCUPATION_ARCHETYPES.get(key, {
+        'start': '08:00', 'duration_minutes': 480, 'activity': 'work', 'room_purposes': ['work area'],
+    }))
+
+
+def _weighted_activity(definition, seed):
+    """Choose an optional free-time activity reproducibly from valid weights."""
+    configured = _field(definition, 'activity_weights', {}) or {}
+    choices = sorted(
+        (activity, float(weight)) for activity, weight in configured.items()
+        if activity in CAPABILITIES and isinstance(weight, (int, float))
+        and not isinstance(weight, bool) and weight > 0
+    )
+    if not choices:
+        return None
+    cursor = random.Random(str(seed)).uniform(0, sum(weight for _, weight in choices))
+    for activity, weight in choices:
+        cursor -= weight
+        if cursor <= 0:
+            return activity
+    return choices[-1][0]
+
+
+def schedule_from_domains(npc_key, occupations, roles, existing=None):
+    """Build a deterministic draft without consulting or resolving combat data.
+
+    ``occupations`` contains ``(association, definition)`` pairs. Existing
+    manually-authored rules survive and always receive precedence over generated
+    work rules. Generated rules are replaced idempotently on the next run.
+    """
+    document = deepcopy(existing) if isinstance(existing, dict) else {
+        'schema_version': 1, 'schedule_key': f'npc-{npc_key}.routine', 'module_key': None,
+        'npc_key': str(npc_key), 'revision': 1, 'enabled': False, 'visibility': 'dm_only',
+        'clock': 'campaign_calendar', 'provenance': {'basis': 'dm_invention', 'confidence': 'proposed'},
+        'bindings': {}, 'rules': [], 'exceptions': [], 'default_behavior': 'idle_at_current_location',
+    }
+    document.setdefault('bindings', {})
+    document.setdefault('rules', [])
+    document.setdefault('exceptions', [])
+    manual = [rule for rule in document['rules'] if _field(_field(rule, 'provenance', {}), 'generator') != 'occupation_archetype']
+    active_occupations = [(association, definition) for association, definition in occupations
+                          if _field(association, 'status', 'current') == 'current']
+    active_occupations.sort(key=lambda pair: (not bool(_field(pair[0], 'is_primary', False)), _field(pair[0], 'id', 0) or 0))
+    active_roles = [role for role in roles if _field(role, 'status', 'active') == 'active']
+    active_roles.sort(key=lambda role: (-int(_field(role, 'priority', 0) or 0), _field(role, 'id', 0) or 0,
+                                        str(_field(role, 'position_title', '')).casefold()))
+    manual_floor = min((int(_field(rule, 'priority', 10)) for rule in manual), default=100)
+    generated = []
+
+    def generated_rule(rule_id, archetype, binding, priority, source):
+        activity = archetype.get('activity', 'work')
+        return {
+            'id': rule_id, 'start': archetype.get('start', '08:00'),
+            'duration_minutes': int(archetype.get('duration_minutes', 480)), 'priority': priority,
+            'activity': activity, 'repeat': deepcopy(archetype.get('repeat') or {'kind': 'daily'}),
+            'destination': {'binding': binding, 'capability': archetype.get('capability', activity),
+                            'fallbacks': [{'binding': 'home', 'capability': 'rest'}]},
+            'arrival_policy': 'require_arrival', 'on_unavailable': 'wait_and_retry', 'retry_minutes': 15,
+            'provenance': {'basis': 'dm_invention', 'confidence': 'proposed',
+                           'generator': 'occupation_archetype', 'source': source},
+        }
+
+    document['bindings'].setdefault('home', {})
+    role_occupation = {_field(association, 'id'): definition for association, definition in active_occupations}
+    if active_roles:
+        for rank, role in enumerate(active_roles):
+            role_id = _field(role, 'id') or rank + 1
+            binding = f'role-{role_id}-workplace'
+            workplace = deepcopy(_field(role, 'workplace', {}) or {})
+            definition = role_occupation.get(_field(role, 'occupation_association_id'))
+            archetype = deepcopy(_field(role, 'schedule_override', {}) or {}) or _occupation_archetype(definition)
+            workplace.setdefault('room_purposes', archetype.get('room_purposes', []))
+            if _field(role, 'workplace_location_id') and not workplace.get('resolved'):
+                workplace['world_atlas_location_id'] = _field(role, 'workplace_location_id')
+            document['bindings'][binding] = workplace
+            priority = manual_floor - rank - 1
+            generated.append(generated_rule(f'role-{role_id}-work', archetype, binding, priority,
+                                            {'kind': 'role', 'id': role_id}))
+    elif active_occupations:
+        association, definition = active_occupations[0]
+        archetype = _occupation_archetype(definition)
+        document['bindings']['workplace'] = {
+            **document['bindings'].get('workplace', {}), 'room_purposes': archetype.get('room_purposes', []),
+        }
+        generated.append(generated_rule(f'occupation-{_field(association, "id", 0) or "primary"}-work', archetype,
+                                        'workplace', manual_floor - 1,
+                                        {'kind': 'occupation', 'id': _field(association, 'id')}))
+    if active_occupations:
+        association, definition = active_occupations[0]
+        activity = _weighted_activity(definition, f'{npc_key}:{_field(association, "id", "primary")}:activity')
+        if activity:
+            archetype = _occupation_archetype(definition)
+            free_time = {
+                'start': archetype.get('activity_start', '19:00'),
+                'duration_minutes': int(archetype.get('activity_duration_minutes', 120)),
+                'activity': activity,
+            }
+            generated.append(generated_rule(
+                f'occupation-{_field(association, "id", 0) or "primary"}-free-time',
+                free_time, 'home', manual_floor - len(generated) - 1,
+                {'kind': 'occupation_activity_weights', 'id': _field(association, 'id')},
+            ))
+    document['rules'] = manual + generated
+    document['generated_from_domains'] = {
+        'occupation_ids': [_field(item[0], 'id') for item in active_occupations],
+        'role_ids': [_field(role, 'id') for role in active_roles],
+        'strategy': 'manual_precedence_then_role_priority_then_stable_id',
+    }
+    document['enabled'] = False
+    return document
 
 
 def compile_schedule(document, hours=24, minutes=60):

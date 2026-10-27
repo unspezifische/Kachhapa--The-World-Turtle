@@ -2,6 +2,14 @@
   position: relative;
 }
 
+:where(html[data-kachhapa-ui="core"]) .character-sheet-page {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 :where(html[data-kachhapa-ui="core"]) .character-sheet-page .edit-icon {
   position: absolute;
   top: 10px;
@@ -17,6 +25,32 @@
 :where(html[data-kachhapa-ui="core"]) .character-sheet-page .tile:hover .edit-icon {
   opacity: 1;
   pointer-events: auto;
+}
+
+:where(html[data-kachhapa-ui="core"]) .character-sheet-page .tile:focus-within .edit-icon {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none), (max-width: 700px) {
+  :where(html[data-kachhapa-ui="core"]) .character-sheet-page .edit-icon {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  :where(html[data-kachhapa-ui="core"]) .character-sheet-page .react-grid-layout {
+    min-width: 0;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .character-sheet-page .character-sheet-paper {
+    overflow-wrap: anywhere;
+  }
 }
 
 :where(html[data-kachhapa-ui="core"]) .character-sheet-page .skill-row {

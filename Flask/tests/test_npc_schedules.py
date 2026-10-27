@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from npc_schedules import compile_schedule, planned_schedule
+from npc_schedules import compile_schedule, planned_schedule, schedule_from_domains
 from npc_generation import smart_fill_npc
 
 
@@ -9,6 +9,50 @@ def schedule():
 
 
 class ScheduleTests(unittest.TestCase):
+    def test_domain_schedule_preserves_manual_rules_and_orders_roles_deterministically(self):
+        existing=schedule()
+        roles=[
+            {'id':22,'status':'active','position_title':'Second duty','priority':5,'occupation_association_id':1,'workplace':{},'schedule_override':{'start':'14:00','duration_minutes':120,'activity':'guard'}},
+            {'id':21,'status':'active','position_title':'Primary duty','priority':20,'occupation_association_id':1,'workplace':{'resolved':{'settlement_id':1,'property_id':'watch'}},'schedule_override':{'start':'08:00','duration_minutes':480,'activity':'guard'}},
+        ]
+        occupations=[({'id':1,'status':'current','is_primary':True},{'occupation_key':'guard','schedule_archetype':{}})]
+        first=schedule_from_domains('guard-1',occupations,roles,existing)
+        second=schedule_from_domains('guard-1',occupations,list(reversed(roles)),first)
+        self.assertEqual(first,second)
+        self.assertEqual(first['rules'][0]['id'],'sleep')
+        generated=first['rules'][1:]
+        self.assertEqual([rule['id'] for rule in generated],['role-21-work','role-22-work'])
+        self.assertTrue(all(rule['priority'] < first['rules'][0]['priority'] for rule in generated))
+        self.assertEqual(first['bindings']['role-21-workplace']['resolved']['property_id'],'watch')
+
+    def test_former_occupation_does_not_generate_an_active_routine(self):
+        occupations=[({'id':9,'status':'former','is_primary':False},{'occupation_key':'adventurer','schedule_archetype':{}})]
+        result=schedule_from_domains('retired',occupations,[],None)
+        self.assertEqual(result['rules'],[])
+        self.assertEqual(result['generated_from_domains']['occupation_ids'],[])
+
+    def test_occupation_archetypes_use_room_purposes_and_allow_individual_role_overrides(self):
+        occupations=[({'id':3,'status':'current','is_primary':True},{'occupation_key':'clergy','schedule_archetype':{}})]
+        routine=schedule_from_domains('priestess',occupations,[],None)
+        self.assertEqual(routine['rules'][0]['activity'],'worship')
+        self.assertIn('chapel',routine['bindings']['workplace']['room_purposes'])
+        independent=schedule_from_domains('researcher',occupations,[{'id':7,'status':'active','priority':1,'position_title':'Researcher','occupation_association_id':3,'workplace':{},'schedule_override':{'start':'11:00','duration_minutes':180,'activity':'study','room_purposes':['laboratory']}}],None)
+        self.assertEqual(independent['rules'][0]['start'],'11:00')
+        self.assertEqual(independent['bindings']['role-7-workplace']['room_purposes'],['laboratory'])
+
+    def test_activity_weights_add_a_reproducible_lower_priority_suggestion(self):
+        occupations=[(
+            {'id':9,'status':'current','is_primary':True},
+            {'occupation_key':'scholar','activity_weights':{'study':3,'read':1,'invalid':99}},
+        )]
+        first=schedule_from_domains('scholar-9',occupations,[],None)
+        second=schedule_from_domains('scholar-9',occupations,[],None)
+        self.assertEqual(first,second)
+        self.assertEqual(len(first['rules']),2)
+        self.assertIn(first['rules'][1]['activity'],{'study','read'})
+        self.assertLess(first['rules'][1]['priority'],first['rules'][0]['priority'])
+        self.assertEqual(first['rules'][1]['provenance']['source']['kind'],'occupation_activity_weights')
+
     def test_overnight_and_custom_day(self):
         document, compiled, warnings = compile_schedule(schedule())
         calendar = SimpleNamespace(current_year=1, current_month_index=0, current_day=2, current_hour=2, current_minute=0, get_hours_in_day=lambda: 24, get_minutes_in_hour=lambda: 60)

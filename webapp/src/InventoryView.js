@@ -817,7 +817,7 @@ export default function InventoryView({ username, characterName, accountType, he
   };
 
   return (
-    <Container>
+    <Container className="inventory-page">
       <Stack gap={3}>
         <h1>{characterName}'s Inventory</h1>
       
@@ -845,7 +845,7 @@ export default function InventoryView({ username, characterName, accountType, he
             </Stack>
           )}
         </Stack>
-        <div style={{ maxHeight: '700px', overflowY: 'auto', minHeight: '50vh' }}>
+        <div className="inventory-table-wrap">
           <DndProvider backend={HTML5Backend}>
             <Table striped bordered hover>
               <thead className="sticky-table-header">
@@ -1334,7 +1334,7 @@ export default function InventoryView({ username, characterName, accountType, he
         onHide={handleCloseItemDetails}
         centered
         scrollable
-        dialogClassName='modal-full-height'>
+        className="inventory-item-details-modal">
         <Modal.Header closeButton>
           <Modal.Title>
             <Row>
@@ -1423,7 +1423,7 @@ export default function InventoryView({ username, characterName, accountType, he
             </Row>
           </Container>
         </Modal.Body>
-        <Modal.Footer style={{ height: '100px' }}>
+        <Modal.Footer>
           <Container>
             <Row className="mb-2">
               <Col>

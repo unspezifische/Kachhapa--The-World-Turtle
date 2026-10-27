@@ -14,9 +14,14 @@ test('property mesh keeps ownership line independent of gate cutout and outdoor 
     ],
   }, outdoor_areas: [{ id: 'garden', polygon: [{ x: 2, y: 2 }, { x: 6, y: 2 }, { x: 2, y: 6 }], material: '#567f42' }] };
   const rendered = createPropertyMeshes(scene, [property], () => 0, true);
-  expect(rendered.meshes.filter(mesh => mesh.metadata?.segmentId === 'south')).toHaveLength(2);
+  expect(rendered.meshes.filter(mesh => mesh.metadata?.segmentId === 'south')).toHaveLength(3);
+  expect(rendered.meshes.some(mesh => mesh.metadata?.openingId === 'gate')).toBe(true);
   expect(rendered.meshes.some(mesh => mesh.metadata?.outdoorAreaId === 'garden')).toBe(true);
   expect(rendered.meshes.some(mesh => mesh.name === 'property-line-east')).toBe(true);
+  expect(rendered.meshes.find(mesh => mesh.name === 'property-line-east')).toMatchObject({
+    isPickable: true,
+    metadata: { kind: 'property-boundary', propertyId: 'estate', segmentId: 'east' },
+  });
   rendered.dispose();
   scene.dispose();
   engine.dispose();
@@ -45,6 +50,7 @@ test('closed iron gate has grille bars while an arch keeps a curved clear openin
   });
   expect(archRuns.length).toBeGreaterThan(4);
   expect(new Set(archRuns.map(mesh => mesh.position.y.toFixed(2))).size).toBeGreaterThan(2);
+  expect(south.some(mesh => mesh.metadata?.kind === 'property-boundary-opening' && mesh.metadata.openingId === 'iron')).toBe(true);
   rendered.dispose();
   scene.dispose();
   engine.dispose();

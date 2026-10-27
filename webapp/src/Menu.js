@@ -16,30 +16,38 @@ import Tooltip from '@mui/material/Tooltip';
 
 import MenuIcon from '@mui/icons-material/Menu';
 import CloseIcon from '@mui/icons-material/Close';
-import ConstructionIcon from '@mui/icons-material/Construction';
-import PersonIcon from '@mui/icons-material/Person';
-import BackpackIcon from '@mui/icons-material/Backpack';
-import HistoryEduIcon from '@mui/icons-material/HistoryEdu';
-import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';
-import CalendarIcon from '@mui/icons-material/CalendarToday';
-import HikingIcon from '@mui/icons-material/Hiking';
-import AutoStoriesIcon from '@mui/icons-material/AutoStories';
-import MapIcon from '@mui/icons-material/Map';
-import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+
+import ConstructionIcon from '@mui/icons-material/Construction';    // DM Tools?
+import PersonIcon from '@mui/icons-material/Person';                // Character Sheet
+import BackpackIcon from '@mui/icons-material/Backpack';            // Inventory
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';      // Spellbook
+import HistoryEduIcon from '@mui/icons-material/HistoryEdu';        // Journal
+import LocalLibraryIcon from '@mui/icons-material/LocalLibrary';    // Library
+import CalendarIcon from '@mui/icons-material/CalendarToday';       // Calendar
+import HikingIcon from '@mui/icons-material/Hiking';                // Wiki?
+import AutoStoriesIcon from '@mui/icons-material/AutoStories';      // Compendium
+import MapIcon from '@mui/icons-material/Map';                      // Settlement Simulator
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';  // Account Profile/Dashboard
+
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import LogoutIcon from '@mui/icons-material/Logout';
+import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
+
+import './Menu.css';
 
 const DRAWER_WIDTH = 240;
 const COLLAPSED_WIDTH = 72;
 
 function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, theme, setTheme, primaryOrigin = window.location.origin }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   const toggleOpen = () => setIsOpen((prev) => !prev);
   const closeDrawer = () => setIsOpen(false);
+  const closeMobileMore = () => setIsMobileMoreOpen(false);
 
   function navigateToExternalLink(url) {
     window.open(url, '_blank');
@@ -52,8 +60,9 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
       accountType: accountType || '',
       tool: 'atlas',
     });
-    const simulatorPath = `/settlementManager?${context.toString()}`;
-    const dmWindow = window.open(simulatorPath, 'kachhapa-settlement-dm');
+    const isPlayer = accountType === 'Player';
+    const simulatorPath = `${isPlayer ? '/maps/player' : '/settlementManager'}?${context.toString()}`;
+    const dmWindow = window.open(simulatorPath, isPlayer ? 'kachhapa-settlement-player' : 'kachhapa-settlement-dm');
 
     if (!dmWindow) {
       navigate(simulatorPath);
@@ -101,16 +110,15 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
       : []),
 
     { key: 'inventoryView', label: 'Inventory', icon: <BackpackIcon />, onClick: () => navigate('/inventoryView') },
+    { key: 'spellbook', label: 'Spellbook', icon: <AutoFixHighIcon />, onClick: () => navigate('/spellbook') },
     { key: 'journal', label: 'Journal', icon: <HistoryEduIcon />, onClick: () => navigate('/journal') },
     { key: 'library', label: 'Library', icon: <LocalLibraryIcon />, onClick: () => navigate('/library') },
     { key: 'calendar', label: 'Calendar', icon: <CalendarIcon />, onClick: () => navigate('/calendar') },
 
     ...(accountType === 'DM'
-      ? [
-        { key: 'compendium', label: 'Compendium', icon: <AutoStoriesIcon />, onClick: () => navigateToExternalLink(primaryOrigin + '/5etools/') },
-        { key: 'settlementManager', label: 'Settlement Simulator', icon: <MapIcon />, onClick: openSettlementSimulator },
-      ]
+      ? [{ key: 'compendium', label: 'Compendium', icon: <AutoStoriesIcon />, onClick: () => navigateToExternalLink(primaryOrigin + '/5etools/') }]
       : []),
+    { key: 'settlementManager', label: 'Settlement Simulator', icon: <MapIcon />, onClick: openSettlementSimulator },
 
     { key: 'wiki', label: 'Wiki', icon: <HikingIcon />, onClick: openWiki },
 
@@ -125,20 +133,21 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
     },
   ];
 
-  const utilityItems = [
-    {
-      key: 'theme',
-      label: theme === 'dark' ? 'Light Mode' : 'Dark Mode',
-      icon: theme === 'dark' ? <LightModeIcon /> : <DarkModeIcon />,
-      custom: true,
-    },
-    {
-      key: 'logout',
-      label: 'Log Out',
-      icon: <LogoutIcon />,
-      onClick: logOut,
-    },
-  ];
+  const dashboardItem = navItems.find((item) => item.key === 'dashboardHome');
+  const roleItem = navItems.find((item) => item.key === (accountType === 'DM' ? 'dmTools' : 'characterSheet'));
+  const calendarItem = navItems.find((item) => item.key === 'calendar');
+  const mobilePrimaryItems = [dashboardItem, roleItem, calendarItem].filter(Boolean);
+  const mobileMoreItems = navItems.filter((item) => !mobilePrimaryItems.includes(item) && item.key !== 'dashboardHome');
+  const moreIsActive = mobileMoreItems.some((item) => (
+    item.key === 'settlementManager'
+      ? ['/settlementManager', '/maps/player'].includes(location.pathname)
+      : location.pathname === `/${item.key}`
+  ));
+
+  const activateMobileItem = (item) => {
+    item.onClick();
+    closeMobileMore();
+  };
 
   const paperStyles = {
     width: isOpen ? DRAWER_WIDTH : COLLAPSED_WIDTH,
@@ -177,6 +186,7 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
   return (
     <Box className="menu-shell" sx={{ height: '100%' }}>
       <Drawer
+        className="desktop-navigation-drawer"
         variant="permanent"
         open={isOpen}
         sx={{
@@ -214,12 +224,14 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
             height: 'calc(100% - 72px)',
           }}
         >
-          <List sx={{ flex: '1 1 auto', overflowY: 'auto', pt: 0 }}>
+          <List sx={{ flex: '1 1 auto', minWidth: 0, overflowY: 'auto', overflowX: 'hidden', pt: 0 }}>
             {navItems.map((item) => {
               const isActive =
                 item.key === 'dashboardHome'
                   ? location.pathname === '/accountProfile'
-                  : location.pathname === `/${item.key}`;
+                  : item.key === 'settlementManager'
+                    ? ['/settlementManager', '/maps/player'].includes(location.pathname)
+                    : location.pathname === `/${item.key}`;
 
               const button = (
                 <ListItemButton
@@ -256,7 +268,7 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
 
           <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)' }} />
 
-          <List sx={{ flexShrink: 0, pb: 1 }}>
+          <List sx={{ flexShrink: 0, minWidth: 0, overflowX: 'hidden', pb: 1 }}>
             <ListItem disablePadding sx={{ display: 'block' }}>
               <ListItemButton sx={itemButtonSx}>
                 <ListItemIcon sx={iconSx}>
@@ -327,6 +339,76 @@ function Menu({ headers, accountType, selectedCampaign, setSelectedCampaign, the
               )}
             </ListItem>
           </List>
+        </Box>
+      </Drawer>
+
+      <Box component="nav" className="mobile-bottom-navigation" aria-label="Primary navigation">
+        {mobilePrimaryItems.map((item) => {
+          const active = item.key === 'dashboardHome'
+            ? location.pathname === '/accountProfile'
+            : location.pathname === `/${item.key}`;
+          return (
+            <button
+              type="button"
+              key={item.key}
+              className={active ? 'is-active' : ''}
+              aria-current={active ? 'page' : undefined}
+              onClick={() => activateMobileItem(item)}
+            >
+              {item.icon}
+              <span>{item.key === 'characterSheet' ? 'Character' : item.label}</span>
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          className={isMobileMoreOpen || moreIsActive ? 'is-active' : ''}
+          aria-expanded={isMobileMoreOpen}
+          aria-controls="mobile-more-navigation"
+          onClick={() => setIsMobileMoreOpen(true)}
+        >
+          <MoreHorizIcon />
+          <span>More</span>
+        </button>
+      </Box>
+
+      <Drawer
+        className="mobile-more-drawer"
+        anchor="bottom"
+        open={isMobileMoreOpen}
+        onClose={closeMobileMore}
+        ModalProps={{ keepMounted: true }}
+        PaperProps={{ id: 'mobile-more-navigation' }}
+      >
+        <Box className="mobile-more-sheet">
+          <Box className="mobile-more-heading">
+            <div>
+              <span>Kachhapa</span>
+              <strong>More destinations</strong>
+            </div>
+            <IconButton onClick={closeMobileMore} aria-label="Close more navigation"><CloseIcon /></IconButton>
+          </Box>
+          <List className="mobile-more-list">
+            {mobileMoreItems.map((item) => (
+              <ListItem key={item.key} disablePadding>
+                <ListItemButton onClick={() => activateMobileItem(item)}>
+                  <ListItemIcon>{item.icon}</ListItemIcon>
+                  <ListItemText primary={item.label} />
+                </ListItemButton>
+              </ListItem>
+            ))}
+          </List>
+          <Divider />
+          <Box className="mobile-more-utilities">
+            <button type="button" onClick={handleThemeToggle}>
+              {theme === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}
+              <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+            </button>
+            <button type="button" onClick={logOut}>
+              <LogoutIcon />
+              <span>Log Out</span>
+            </button>
+          </Box>
         </Box>
       </Drawer>
     </Box>

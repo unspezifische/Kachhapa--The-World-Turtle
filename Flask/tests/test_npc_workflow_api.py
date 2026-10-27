@@ -21,10 +21,14 @@ class WorkflowTests(unittest.TestCase):
             id=db.Column(db.Integer,primary_key=True); campaign_id=db.Column(db.Integer); name=db.Column(db.String); buildings=db.Column(db.JSON); properties=db.Column(db.JSON)
         class CampaignModuleInstallation(db.Model):
             id=db.Column(db.Integer,primary_key=True); campaign_id=db.Column(db.Integer); module_key=db.Column(db.String)
+        class CreatureCatalog(db.Model):
+            id=db.Column(db.Integer,primary_key=True); source=db.Column(db.String); name=db.Column(db.String); data=db.Column(db.JSON)
+        self.CreatureCatalog=CreatureCatalog
         class Calendar(db.Model):
-            id=db.Column(db.Integer,primary_key=True); campaign_id=db.Column(db.Integer)
+            id=db.Column(db.Integer,primary_key=True); campaign_id=db.Column(db.Integer); current_year=db.Column(db.Integer,default=1); current_month_index=db.Column(db.Integer,default=0); current_day=db.Column(db.Integer,default=1); current_hour=db.Column(db.Integer,default=0); current_minute=db.Column(db.Integer,default=0)
             def get_hours_in_day(self): return 24
             def get_minutes_in_hour(self): return 60
+            def get_format_data(self): return {'months':[{'name':f'Month {index+1}','length':30} for index in range(12)],'seasons':[{'name':'Winter','months':[0,1,2]},{'name':'Spring','months':[3,4,5]},{'name':'Summer','months':[6,7,8]},{'name':'Autumn','months':[9,10,11]}]}
         tree=ast.parse((Path(__file__).parents[1]/'tables.py').read_text())
         scope=dict(db=db, datetime=datetime,timezone=timezone,UniqueConstraint=UniqueConstraint,JSONB=JSONB)
         selected=[node for node in tree.body if isinstance(node,ast.ClassDef) and node.name in ('NPC','NpcScheduleDefinition','NpcScheduleRule','NpcProfileHistory')]
@@ -35,9 +39,14 @@ class WorkflowTests(unittest.TestCase):
             return db.session.get(Campaign,1),None,None
         self.app.add_url_rule('/api/npcs', 'create_npc', lambda:None, methods=['POST'])
         self.app.add_url_rule('/api/npcs', 'get_npcs', lambda:None, methods=['GET'])
-        register_npc_workflow(self.app,db,(self.NPC,self.Definition,scope['NpcScheduleRule'],self.History,Calendar,WorldAtlasLocation,CampaignModuleInstallation),context,lambda c,y,m,d:d-1)
+        def normalize_date(calendar, value):
+            month=value.get('month_index'); season=value.get('season')
+            if month not in (None, ''): season=['Winter','Spring','Summer','Autumn'][int(month)//3]
+            if value.get('year') in (None, '') or not season: raise ValueError('Invalid birth date')
+            return {'year':int(value['year']),'season':season,'month_index':None if month in (None,'') else int(month),'day':None if value.get('day') in (None,'') else int(value['day'])}
+        register_npc_workflow(self.app,db,(self.NPC,self.Definition,scope['NpcScheduleRule'],self.History,Calendar,WorldAtlasLocation,CampaignModuleInstallation,CreatureCatalog),context,lambda c,y,m,d:d-1,normalize_date=normalize_date)
         self.context=self.app.app_context(); self.context.push(); db.create_all()
-        db.session.add_all([Campaign(id=1),Campaign(id=2), WorldAtlasLocation(id=1,campaign_id=1,name='Town',buildings=[],properties=[{'id':'p','name':'Estate','structure_ids':[]}])]); db.session.commit()
+        db.session.add_all([Campaign(id=1),Campaign(id=2),Calendar(campaign_id=1), WorldAtlasLocation(id=1,campaign_id=1,name='Town',buildings=[],properties=[{'id':'p','name':'Estate','structure_ids':[]}])]); db.session.commit()
         self.headers={'Role':'DM','Authorization':'Bearer '+create_access_token(identity='dm')}; self.client=self.app.test_client()
         self.profile={'name':'Test NPC','description':'A resident','size':'Medium','creature_type':'humanoid','creature_subtype':'human','alignment':'neutral','ac':'10','hp':'4','speed':30,**{key:10 for key in ('strength','dexterity','constitution','intelligence','wisdom','charisma')}}
 
@@ -53,6 +62,35 @@ class WorkflowTests(unittest.TestCase):
         self.assertIsInstance(self.client.get('/api/npcs',headers=self.headers).json,list)
         paged=self.client.get('/api/npcs?limit=1',headers=self.headers).json
         self.assertNotIn('schedule',paged['items'][0])
+
+    def test_normalized_combat_is_exposed_without_breaking_legacy_fields(self):
+        record=self.create().json
+        self.app.resolve_npc_combat_profile=lambda npc:{
+            'configured':True,'authoring_mode':'custom','source':{'kind':'custom_definition'},
+            'resolved':{'hp':'99','ac':'18','actions':'Normalized action'},'provenance':{'test':True},
+        }
+        detail=self.client.get(f"/api/npcs/{record['id']}",headers=self.headers).json
+        self.assertEqual(detail['id'],record['id'])
+        self.assertEqual(detail['hp'],'99')
+        self.assertEqual(detail['actions'],'Normalized action')
+        self.assertTrue(detail['combat_enabled'])
+        listed=self.client.get('/api/npcs',headers=self.headers).json[0]
+        self.assertEqual(listed['hp'],'99')
+        self.assertEqual(listed['combat_profile']['authoring_mode'],'custom')
+        self.app.resolve_npc_combat_profile=lambda npc:{'configured':True,'authoring_mode':'none','source':{'kind':'none'},'resolved':None}
+        no_combat=self.client.get(f"/api/npcs/{record['id']}",headers=self.headers).json
+        self.assertFalse(no_combat['combat_enabled'])
+        self.assertEqual(no_combat['id'],record['id'])
+
+    def test_adventurer_class_is_saved_as_profile_metadata(self):
+        created=self.create(occupation='adventurer',character_class='Wizard').json
+        self.assertEqual(created['profile_metadata']['occupation'],'adventurer')
+        self.assertEqual(created['profile_metadata']['character_class'],'Wizard')
+        updated=self.client.patch(f"/api/npcs/{created['id']}",json={
+            'expected_revision':created['revision'],'occupation':'retired_adventurer','character_class':'Fighter'
+        },headers=self.headers)
+        self.assertEqual(updated.status_code,200,updated.json)
+        self.assertEqual(updated.json['profile_metadata']['character_class'],'Fighter')
 
     def test_invalid_enabled_schedule_is_atomic_and_disabled_draft_retained(self):
         bad=schedule(); bad['rules'][0]['duration_minutes']=-1
@@ -118,6 +156,14 @@ class WorkflowTests(unittest.TestCase):
         following=self.client.get('/api/npcs?limit=1&cursor=1',headers=self.headers).json
         self.assertNotEqual(page['items'][0]['id'],following['items'][0]['id'])
 
+    def test_named_npc_can_be_created_from_catalog_monster(self):
+        creature=self.CreatureCatalog(source='MM',name='Goblin',data={'name':'Goblin','source':'MM','size':['S'],'type':{'type':'humanoid','tags':['goblinoid']},'alignment':['N','E'],'ac':[15],'hp':{'average':7},'speed':{'walk':30},'str':8,'dex':14,'con':10,'int':10,'wis':8,'cha':8,'cr':'1/4','languages':['Common','Goblin'],'action':[{'name':'Scimitar','entries':['Melee Weapon Attack.']}]})
+        self.db.session.add(creature);self.db.session.commit()
+        result=self.client.post('/api/npcs',json={'catalog_creature_id':creature.id,'name':'Snik'},headers=self.headers)
+        self.assertEqual(result.status_code,201,result.json)
+        self.assertEqual(result.json['name'],'Snik');self.assertEqual(result.json['creature_subtype'],'goblinoid')
+        self.assertEqual(result.json['profile_metadata']['catalog_creature_id'],creature.id)
+
     def test_disable_is_campaign_local_reversible_and_revision_checked(self):
         npc=self.create().json
         result=self.client.patch(f"/api/npcs/{npc['id']}",json={'expected_revision':npc['revision'],'disabled':True},headers=self.headers)
@@ -129,3 +175,11 @@ class WorkflowTests(unittest.TestCase):
         enabled=self.client.patch(f"/api/npcs/{npc['id']}",json={'expected_revision':result.json['revision'],'disabled':False},headers=self.headers)
         self.assertEqual(enabled.status_code,200)
         self.assertEqual(len(self.client.get('/api/npcs',headers=self.headers).json),1)
+
+    def test_birth_precision_is_saved_updated_and_cleared_with_revision_history(self):
+        created=self.create(birth_year=1460,birth_season='Autumn').json
+        self.assertEqual(created['birth_year'],1460);self.assertEqual(created['birth_season'],'Autumn')
+        updated=self.client.patch(f"/api/npcs/{created['id']}",json={'expected_revision':created['revision'],'birth_year':1460,'birth_month_index':6,'birth_day':12},headers=self.headers)
+        self.assertEqual(updated.status_code,200,updated.json);self.assertEqual(updated.json['birth_season'],'Summer')
+        cleared=self.client.patch(f"/api/npcs/{created['id']}",json={'expected_revision':updated.json['revision'],'birth_year':None,'birth_season':None,'birth_month_index':None,'birth_day':None},headers=self.headers)
+        self.assertEqual(cleared.status_code,200,cleared.json);self.assertIsNone(cleared.json['birth_year'])

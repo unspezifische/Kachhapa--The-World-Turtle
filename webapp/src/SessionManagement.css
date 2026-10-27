@@ -31,3 +31,59 @@
 :where(html[data-kachhapa-ui="core"]) .session-activity li { margin-bottom:.7rem; }
 :where(html[data-kachhapa-ui="core"]) .session-activity small { display:block; color:var(--text-subtle); }
 @media(max-width:900px) { :where(html[data-kachhapa-ui="core"]) .session-layout { grid-template-columns:1fr; } }
+
+@media(max-width:700px) {
+  :where(html[data-kachhapa-ui="core"]) .session-manager,
+  :where(html[data-kachhapa-ui="core"]) .session-command-bar,
+  :where(html[data-kachhapa-ui="core"]) .session-selector {
+    box-sizing:border-box;
+    width:100%;
+    max-width:100%;
+    min-width:0;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-command-bar {
+    align-items:stretch;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-command-bar > div:first-child {
+    min-width:0;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-command-bar > .session-actions {
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    width:100%;
+    gap:.45rem;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-command-bar > .session-actions > .btn {
+    width:100%;
+    min-width:0;
+    min-height:48px;
+    padding:.45rem .35rem;
+    line-height:1.15;
+    white-space:normal;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-selector {
+    display:grid;
+    grid-template-columns:minmax(0,1.55fr) repeat(2,minmax(0,.8fr));
+    align-items:end;
+    gap:.5rem;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-selector .session-field {
+    min-width:0;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-selector .form-select {
+    width:100%;
+    min-width:0;
+    min-height:48px;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-selector > .btn {
+    width:100%;
+    min-width:0;
+    min-height:48px;
+    padding:.45rem .35rem;
+    line-height:1.15;
+    white-space:normal;
+  }
+  :where(html[data-kachhapa-ui="core"]) .session-selector > .session-status {
+    display:none;
+  }
+}

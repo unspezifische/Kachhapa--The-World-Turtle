@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Button, Card, Col, Container, Form, Modal, Row, Image } from 'react-bootstrap';
+import './Library.css';
 
 function Library({ headers, socket }) {
   const [files, setFiles] = useState([]);
@@ -104,11 +105,11 @@ function Library({ headers, socket }) {
 
 
   return (
-    <Container>
+    <Container className="library-page">
       <h1>Library</h1>
-      <div style={{ height: '100vh', overflow: 'auto' }}>
-        <Row>
-          <Col>
+      <div className="library-scroll">
+        <Row className="library-toolbar">
+          <Col className="library-filter-controls">
             <Button onClick={() => setShowUploadModal(true)}>Upload File</Button>
           </Col>
           <Col>

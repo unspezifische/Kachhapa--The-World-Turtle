@@ -62,6 +62,9 @@ def validate_properties(properties, buildings):
         if item['id'] in property_ids:
             raise ValueError('Property IDs must be unique')
         property_ids.add(item['id'])
+        access_points = item.get('travel_access_points', [])
+        if not isinstance(access_points, list) or len(access_points) > 20 or not all(_point(point) for point in access_points):
+            raise ValueError('Property travel access points must contain finite coordinates')
         refs = item.get('structure_ids', [])
         if not isinstance(refs, list):
             raise ValueError('property.structure_ids must be an array')
@@ -126,6 +129,18 @@ def validate_properties(properties, buildings):
     for building in buildings:
         if not isinstance(building, dict):
             continue
+        access_points = building.get('travel_access_points', [])
+        if not isinstance(access_points, list) or len(access_points) > 20 or not all(_point(point) for point in access_points):
+            raise ValueError('Building travel access points must contain finite coordinates')
+        level_numbers = set()
+        for level in building.get('levels') or []:
+            if not isinstance(level, dict) or level.get('level_number') is None:
+                continue
+            level_number = level.get('level_number')
+            if (not isinstance(level_number, int) or isinstance(level_number, bool)
+                    or level_number in level_numbers):
+                raise ValueError('Building level numbers must be unique integers')
+            level_numbers.add(level_number)
         for level in building.get('levels') or []:
             for opening in level.get('openings') or []:
                 if isinstance(opening, dict) and opening.get('id'):

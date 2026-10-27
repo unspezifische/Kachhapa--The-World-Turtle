@@ -1,3 +1,4 @@
+import NpcMediaImage from './NpcMediaImage';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Stack, Container, Row, Col, Form, Button } from 'react-bootstrap';
 import axios from 'axios';  // Makes API calls
@@ -14,8 +15,17 @@ import IconButton from '@mui/material/IconButton';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
 
 
-function Chat({ headers, socket, characterName, username, campaignID, users, messages, setMessages, requestActiveUsers }) {
-  const [message, setMessage] = useState(''); 
+function Chat({ headers, socket, characterName, username, campaignID, users, messages, setMessages, requestActiveUsers, isDm = false }) {
+  const [message, setMessage] = useState('');
+  const [npcSenders, setNpcSenders] = useState([]);
+  const [senderNpcId, setSenderNpcId] = useState('');
+  useEffect(() => {
+    setSenderNpcId(''); setNpcSenders([]);
+    if(!isDm && characterName !== 'DM' && characterName !== 'Admin') return;
+    let live=true;
+    axios.get('/api/npcs',{headers}).then(({data})=>{if(live)setNpcSenders(Array.isArray(data)?data:data.items || []);}).catch(()=>{});
+    return()=>{live=false;};
+  }, [headers, characterName, isDm]);
   const [selectedUsers, setSelectedUsers] = useState([]);
   const userID = headers.userID;
   const [error, setError] = useState('');
@@ -98,6 +108,9 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
   const renderAvatar = (avatar, label, className) => {
     const normalized = normalizeAvatar(avatar, label);
 
+    if (normalized.authorized_npc && normalized.image_url) {
+      return <NpcMediaImage asset={{url:normalized.image_url}} headers={headers} size={64} alt={label} className={className} style={{width:36,height:36,borderRadius:'50%'}} />;
+    }
     if (normalized.mode === 'image' && normalized.image_url) {
       return (
         <Tooltip title={label} arrow placement="top">
@@ -134,7 +147,7 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
     participants.push({
       key: `sender-${message.sender}`,
       name: senderName,
-      avatar: isCurrentUser ? selfAvatar : senderAvatar,
+      avatar: isCurrentUser && !message.sender_npc_id ? selfAvatar : senderAvatar,
     });
 
     // Then show recipients
@@ -180,6 +193,7 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
       const messageObj = {
         type: item ? 'item_transfer' : 'text_message',
         sender: headers.userID,
+        ...(senderNpcId && !item ? {sender_npc_id:Number(senderNpcId)} : {}),
         campaignID: campaignID,
         text: message,
         recipients: selectedUsers,
@@ -417,7 +431,7 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
 
         {isCurrentUser && (
           <div className="message-avatar-wrap">
-            {renderAvatar(selfAvatar, characterName || username || 'Me', 'message-avatar message-avatar-self')}
+            {renderAvatar(message.sender_npc_id ? senderAvatar : selfAvatar, message.sender_npc_id ? senderName : characterName || username || 'Me', 'message-avatar message-avatar-self')}
           </div>
         )}
       </div>
@@ -461,6 +475,7 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
 
                     return (
                       <Chip
+                        key={user.userID}
                         clickable
                         onClick={() => toggleSelectedUser(user.userID)}
                         avatar={
@@ -509,6 +524,7 @@ function Chat({ headers, socket, characterName, username, campaignID, users, mes
         <Row className="chat-compose-row">
           <Col className="chat-compose-col">
             <Form onSubmit={sendMessage} className="chat-compose-form">
+              {!!npcSenders.length && <Form.Label>Speak as<Form.Select value={senderNpcId} onChange={event=>setSenderNpcId(event.target.value)}><option value="">My character</option>{npcSenders.map(npc=><option key={npc.id} value={npc.id}>{npc.name}</option>)}</Form.Select></Form.Label>}
               <Form.Group>
                 <Form.Control
                   as="textarea"

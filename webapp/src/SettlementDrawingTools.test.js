@@ -80,6 +80,26 @@ test('road select mode shows the list alone and refine controls stay above it', 
   expect(details.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
+test('selected road spans expose routing restrictions and persist them on the segment', async () => {
+  let roads = [{ id:'main', name:'Main Street', road_class:'street',
+    points:[{x:0,y:0},{x:100,y:0}], segments:[{}] }];
+  const setRoads = updater => { roads = updater(roads); };
+  render(<ToolWorkflow activeTool="road" roadMode="refine" setRoadMode={jest.fn()}
+    roadDraft={[]} setRoadDraft={jest.fn()} roadWidth={30} roadClass="street" roadSurface="stone"
+    roadSnapEnabled roadSnapToleranceFeet={10} setRoadSnapEnabled={jest.fn()}
+    state={{ roads, selectedRoadId:'main', selectedRoadPointIndexes:[], selectedRoadSegmentIndexes:[0],
+      selectedRoadPointIndex:null, recordSplineUndo:jest.fn(), setRoads,
+      setSelectedRoadId:jest.fn(), setSelectedRoadPointIndex:jest.fn(), setSelectedRoadPointIndexes:jest.fn(),
+      setSelectedRoadSegmentIndexes:jest.fn(), setSelected:jest.fn(), pastRef:{current:[]}, futureRef:{current:[]} }} />);
+  fireEvent.mouseDown(screen.getByText('Two-way'));
+  fireEvent.click(await screen.findByRole('option',{name:'Forward only'}));
+  fireEvent.mouseDown(screen.getByText('Open'));
+  fireEvent.click(await screen.findByRole('option',{name:'Closed'}));
+  fireEvent.mouseDown(screen.getByText('Crossings connect'));
+  fireEvent.click(await screen.findByRole('option',{name:'Bridge / no connection'}));
+  expect(roads[0].segments[0]).toMatchObject({direction:'forward',status:'closed',crossing:'grade_separated'});
+});
+
 test('terrain keeps every brush mode in the header above history and brush controls', () => {
   const setTerrainMode = jest.fn();
   const { container } = render(<ToolWorkflow activeTool="terrain" terrainMode="raise"

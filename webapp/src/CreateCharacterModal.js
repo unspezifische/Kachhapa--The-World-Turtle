@@ -103,7 +103,7 @@ const SelectionDetails = ({ title, details, loading }) => {
     );
 };
 
-const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
+const CreateCharacterModal = ({ show, setShow, onHide, headers, onSubmitCharacter }) => {
     const [activeStep, setActiveStep] = useState(0);
     const steps = ['Race', 'Class', 'Abilities', 'Description', 'Equipment', 'Summary'];
     const [completedSteps, setStepCompleted] = useState([false, false, false, false, false, false]);
@@ -333,13 +333,16 @@ const CreateCharacterModal = ({ show, setShow, onHide, headers }) => {
         };
         const requestHeaders = { ...headers, System: payload.system };
 
-        axios.post('/api/characters', payload, { headers: requestHeaders })
+        Promise.resolve().then(() => onSubmitCharacter
+            ? onSubmitCharacter(payload)
+            : axios.post('/api/characters', payload, { headers: requestHeaders }))
             .then((response) => {
                 console.log(response);
                 onHide();
             })
             .catch((error) => {
                 console.error(error);
+                setStepError(error.response?.data?.message || error.message || 'Unable to create the character.');
             });
     };
 

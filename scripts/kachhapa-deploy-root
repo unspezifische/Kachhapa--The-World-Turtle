@@ -2,12 +2,40 @@
 set -Eeuo pipefail
 
 readonly KACHHAPA_SERVICE="kachhapa-backend"
+readonly KACHHAPA_SOUND_SERVICE="kachhapa-sound-worker"
 readonly MTG_SERVICE="mtg-backend"
+
+ensure_runtime_dependencies() {
+  local missing=()
+  local audio_dir
+  if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+    missing+=(ffmpeg)
+  fi
+  command -v file >/dev/null || missing+=(file)
+  if (( ${#missing[@]} )); then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+  fi
+
+  # Exercise the encoder and shared libraries used by sound uploads, rather
+  # than accepting a binary that exists but cannot perform conversion.
+  audio_dir=$(mktemp -d /tmp/kachhapa-audio-check.XXXXXX)
+  if ! ffmpeg -nostdin -hide_banner -loglevel error -f lavfi \
+      -i 'anullsrc=r=44100:cl=mono' -t 0.1 -c:a libmp3lame -b:a 192k -threads 1 "$audio_dir/check.mp3" ||
+     ! ffprobe -v error -select_streams a:0 -show_entries stream=codec_name \
+      -of default=noprint_wrappers=1:nokey=1 "$audio_dir/check.mp3" | grep -Fxq mp3; then
+    rm -rf "$audio_dir"
+    echo "FFmpeg MP3 conversion/ffprobe runtime check failed." >&2
+    return 1
+  fi
+  rm -rf "$audio_dir"
+  echo "System dependencies verified: file, FFmpeg MP3 encoder, and ffprobe."
+}
 
 restart_service() {
   local service_name=$1
   case "$service_name" in
-    "$KACHHAPA_SERVICE"|"$MTG_SERVICE") ;;
+    "$KACHHAPA_SERVICE"|"$KACHHAPA_SOUND_SERVICE"|"$MTG_SERVICE") ;;
     *)
       echo "Unsupported service: $service_name" >&2
       exit 2
@@ -76,9 +104,77 @@ install_socket_service() {
   rm -f "$previous" "$source_file"
 }
 
+install_mtg_service() {
+  local source_file="/home/ijohnson/mtg-backend.service.new"
+  local active="/etc/systemd/system/mtg-backend.service"
+  local previous="/etc/systemd/system/mtg-backend.service.previous"
+  local had_previous=false
+
+  test -f "$source_file"
+  grep -Fq 'ExecStart=/home/ijohnson/MtG-webapp/venv/bin/gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 1 --bind 127.0.0.1:5050 run:app' "$source_file"
+  grep -Fxq 'Environment="SOCKETIO_ASYNC_MODE=gevent"' "$source_file"
+  runuser -u ijohnson -- /home/ijohnson/MtG-webapp/venv/bin/python \
+    -c 'import gevent.monkey; import geventwebsocket'
+  if [[ -f "$active" ]]; then
+    cp -a "$active" "$previous"
+    had_previous=true
+  fi
+  install -o root -g root -m 0644 "$source_file" "$active"
+  systemctl daemon-reload
+  if ! systemctl restart "$MTG_SERVICE" || ! systemctl is-active --quiet "$MTG_SERVICE"; then
+    if $had_previous; then
+      mv "$previous" "$active"
+    else
+      rm -f "$active"
+    fi
+    systemctl daemon-reload
+    systemctl restart "$MTG_SERVICE" || true
+    echo "MTG service restart failed; the previous unit was restored." >&2
+    exit 1
+  fi
+  rm -f "$previous" "$source_file"
+}
+
+install_sound_worker() {
+  local source_file="/home/ijohnson/kachhapa-sound-worker.service.new"
+  local active="/etc/systemd/system/kachhapa-sound-worker.service"
+  local previous="/etc/systemd/system/kachhapa-sound-worker.service.previous"
+
+  test -f "$source_file"
+  grep -Fq '/venv/bin/flask --app app process-sound-uploads' "$source_file"
+  grep -Fq 'Nice=10' "$source_file"
+  if [[ -f "$active" ]]; then
+    cp -a "$active" "$previous"
+  fi
+  install -o root -g root -m 0644 "$source_file" "$active"
+  systemctl daemon-reload
+  if ! systemctl enable --now "$KACHHAPA_SOUND_SERVICE" || ! systemctl is-active --quiet "$KACHHAPA_SOUND_SERVICE"; then
+    if [[ -f "$previous" ]]; then
+      mv "$previous" "$active"
+      systemctl daemon-reload
+      systemctl restart "$KACHHAPA_SOUND_SERVICE" || true
+    else
+      systemctl disable --now "$KACHHAPA_SOUND_SERVICE" || true
+      rm -f "$active"
+      systemctl daemon-reload
+    fi
+    echo "Sound worker installation failed; the previous unit was restored." >&2
+    exit 1
+  fi
+  rm -f "$previous" "$source_file"
+}
+
 case "${1:-}" in
+  capabilities)
+    [[ $# -eq 1 ]]
+    printf '%s\n' check capabilities restart mtg-db nginx socket-service mtg-service sound-worker runtime-deps
+    ;;
   check)
     [[ $# -eq 1 ]]
+    ;;
+  runtime-deps)
+    [[ $# -eq 1 ]]
+    ensure_runtime_dependencies
     ;;
   restart)
     [[ $# -eq 2 ]] || { echo "Usage: $0 restart NAME" >&2; exit 2; }
@@ -95,6 +191,14 @@ case "${1:-}" in
   socket-service)
     [[ $# -eq 1 ]]
     install_socket_service
+    ;;
+  mtg-service)
+    [[ $# -eq 1 ]]
+    install_mtg_service
+    ;;
+  sound-worker)
+    [[ $# -eq 1 ]]
+    install_sound_worker
     ;;
   *)
     echo "Unsupported deployment operation." >&2

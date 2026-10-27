@@ -25,6 +25,7 @@ fi
 destination="ijohnson@${target_ip:-$hostname}"
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
+echo "This one-time setup updates the Pi's publish helper and may prompt for the ijohnson sudo password."
 scp "$script_dir/kachhapa-deploy-root" "$destination:/home/ijohnson/kachhapa-deploy-root.new"
 scp "$script_dir/kachhapa-publish.sudoers" "$destination:/home/ijohnson/kachhapa-publish.sudoers.new"
 ssh -tt "$destination" 'set -Eeuo pipefail
@@ -32,6 +33,9 @@ sudo install -o root -g root -m 0755 /home/ijohnson/kachhapa-deploy-root.new /us
 sudo visudo -cf /home/ijohnson/kachhapa-publish.sudoers.new
 sudo install -o root -g root -m 0440 /home/ijohnson/kachhapa-publish.sudoers.new /etc/sudoers.d/kachhapa-publish
 rm -f /home/ijohnson/kachhapa-deploy-root.new /home/ijohnson/kachhapa-publish.sudoers.new
-sudo -n /usr/local/sbin/kachhapa-deploy-root check'
+sudo -n /usr/local/sbin/kachhapa-deploy-root check
+sudo -n /usr/local/sbin/kachhapa-deploy-root capabilities | grep -Fxq sound-worker
+sudo -n /usr/local/sbin/kachhapa-deploy-root capabilities | grep -Fxq runtime-deps
+sudo -n /usr/local/sbin/kachhapa-deploy-root capabilities | grep -Fxq mtg-service'
 
 echo "Passwordless publish privileges configured for $destination."

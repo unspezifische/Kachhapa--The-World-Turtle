@@ -37,25 +37,43 @@ import hashlib
 import mimetypes
 import base64
 import csv  ## For importing items from CSV
+import re
 
 import logging ## For debug logging
 import traceback
 import shutil
 import subprocess
+import time
 
 from settlement_simulation import calculate_lamplighter_state
 from property_destinations import settlement_destinations
 from property_navigation import resolve_rest_route, destination_key
 from settlement_lighting import generated_lighting_routes, validate_region_lighting
 from travel_planning import estimate_travel_options
+from settlement_routing import (RouteError, destination_by_key,
+                                plan_route_options, settlement_exterior_destinations,
+                                validate_roads)
 from economy_simulation import commodity_price, simulate_business_day, simulate_commodity_day
 from workforce_simulation import rebalance_workforce, choose_noble_investment
 from module_templates import campaign_module_template, module_catalog, module_definition
 from module_npcs import module_npc_presets
 from reference_image import display_dimensions, viewer_image
 from npc_generation import generated_npc, supported_generation_options
+from timeline_service import (
+    age_at_event, age_during_event, base_month_days, calendar_holidays, calendar_seasons, date_label, date_range_label,
+    normalize_partial_date, resolved_date, season_for_date,
+)
+from timeline_export_service import build_timeline_json, build_timeline_markdown, build_timeline_pdf
+from timeline_import_service import parse_timeline_file
 from settlement_generation import BIOMES, GOVERNMENTS, RESOURCES, SETTLEMENT_PRESETS, generate_settlement
 from password_security import hash_password, password_validation_error, verify_password
+from spatial_service import (
+    SpatialConflictError, SpatialValidationError, connection_dict, create_configured_connection,
+    create_connected_space, create_connection, create_endpoint, create_space, delete_endpoint, delete_space,
+    endpoint_dict, graph_layout, save_graph_layout, space_dict, spatial_graph,
+    sync_physical_spaces, update_connection, update_endpoint, update_space,
+)
+from spellbook_access import spell_eligibility
 
 import markdown
 from urllib.parse import unquote
@@ -730,6 +748,7 @@ AVATAR_DEFAULT_ROOT = AVATAR_ROOT / "defaults"
 CAMPAIGN_ICON_ROOT = MEDIA_ROOT / "campaign-icons"
 MAP_REFERENCE_ROOT = MEDIA_ROOT / "maps"
 SOUND_ROOT = MEDIA_ROOT / "sounds"
+SOUND_STAGING_ROOT = Path(os.environ.get('SOUND_UPLOAD_ROOT', BASE_DIR.parent / 'tmp' / 'sound-uploads')).resolve()
 
 # Configure Flask app with absolute paths for media directories
 app.config["MEDIA_ROOT"] = str(MEDIA_ROOT)
@@ -825,15 +844,6 @@ def allowed_map_reference_file(filename: str) -> bool:
 
 def allowed_sound_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_SOUND_EXTENSIONS
-
-
-def sound_library_user():
-    user = User.query.filter_by(username=get_jwt_identity()).first()
-    campaign_id = request.headers.get('CampaignID')
-    campaign = Campaign.query.get(campaign_id) if campaign_id else None
-    if not user or not campaign or user.id not in {campaign.dm_id, campaign.owner_id}:
-        return None
-    return user
 
 
 def sound_library_context():
@@ -968,10 +978,271 @@ def transcode_sound_to_mp3(source_path, destination_path):
         raise SoundTranscodeError('transcode_failed', 'The server could not convert this audio file to MP3.')
 
 
+def fail_sound_upload_job(job_id, code, message):
+    """Record a terminal worker error while retaining the staged source for retry."""
+    db.session.rollback()
+    job = SoundUploadJob.query.get(job_id)
+    if not job:
+        return
+    job.status = 'failed'
+    job.error_code = code
+    job.error_message = str(message)[:1000]
+    job.finished_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+
+def process_sound_upload_job(job_id):
+    """Convert and finalize one already-staged sound upload."""
+    job = SoundUploadJob.query.get(job_id)
+    if not job or job.status != 'processing':
+        return False
+
+    source_path = SOUND_STAGING_ROOT / job.staged_filename
+    if not source_path.is_file():
+        fail_sound_upload_job(job.id, 'staged_file_missing', 'The staged upload is missing; select the file again.')
+        return False
+
+    content_sha256 = getattr(job, 'content_sha256', None)
+    duplicate = SoundAsset.query.filter_by(content_sha256=content_sha256).first() if content_sha256 else None
+    if duplicate:
+        job.sound_asset_id = duplicate.id
+        job.status = 'duplicate'
+        job.error_code = None
+        job.error_message = None
+        job.finished_at = datetime.now(timezone.utc)
+        db.session.commit()
+        source_path.unlink(missing_ok=True)
+        return True
+
+    extension = Path(job.original_filename).suffix.lower().lstrip('.')
+    should_transcode = extension in LOSSLESS_SOUND_EXTENSIONS
+    stored_extension = 'mp3' if should_transcode else extension
+    stored_mimetype = 'audio/mpeg' if should_transcode else job.mimetype
+    stored_filename = f'{job.id}.{stored_extension}'
+    stored_path = SOUND_ROOT / stored_filename
+    cover_filename = None
+    cover_mimetype = None
+
+    try:
+        SOUND_ROOT.mkdir(parents=True, exist_ok=True)
+        extracted_cover = extract_embedded_sound_cover(source_path)
+        if should_transcode:
+            transcode_sound_to_mp3(source_path, stored_path)
+        else:
+            shutil.copy2(source_path, stored_path)
+
+        if extracted_cover:
+            cover_bytes, cover_extension, cover_mimetype = extracted_cover
+            cover_root = SOUND_ROOT / 'covers'
+            cover_root.mkdir(parents=True, exist_ok=True)
+            cover_filename = f'{job.id}.{cover_extension}'
+            (cover_root / cover_filename).write_bytes(cover_bytes)
+
+        asset = SoundAsset(
+            name=job.name,
+            filename=stored_filename,
+            original_filename=job.original_filename,
+            original_byte_size=job.byte_size,
+            content_sha256=job.content_sha256,
+            mimetype=stored_mimetype,
+            category=job.category,
+            cover_filename=cover_filename,
+            cover_mimetype=cover_mimetype,
+            duration_seconds=sound_duration_seconds(stored_path),
+            uploaded_by_id=job.uploaded_by_id,
+        )
+        db.session.add(asset)
+        db.session.flush()
+        job.sound_asset_id = asset.id
+        job.status = 'complete'
+        job.error_code = None
+        job.error_message = None
+        job.finished_at = datetime.now(timezone.utc)
+        db.session.commit()
+        source_path.unlink(missing_ok=True)
+        return True
+    except SoundTranscodeError as error:
+        stored_path.unlink(missing_ok=True)
+        if cover_filename:
+            (SOUND_ROOT / 'covers' / cover_filename).unlink(missing_ok=True)
+        fail_sound_upload_job(job.id, error.code, str(error))
+    except (OSError, IOError) as error:
+        stored_path.unlink(missing_ok=True)
+        if cover_filename:
+            (SOUND_ROOT / 'covers' / cover_filename).unlink(missing_ok=True)
+        app.logger.exception('Unable to finalize queued sound upload %s', job.original_filename)
+        fail_sound_upload_job(job.id, 'storage_error', 'The server could not finalize this audio file.')
+    except Exception:
+        stored_path.unlink(missing_ok=True)
+        if cover_filename:
+            (SOUND_ROOT / 'covers' / cover_filename).unlink(missing_ok=True)
+        app.logger.exception('Unable to record queued sound upload %s', job.original_filename)
+        fail_sound_upload_job(job.id, 'database_error', 'The file was processed, but its library record could not be saved.')
+    return False
+
+
+def claim_next_sound_upload_job():
+    """Atomically claim the oldest queued job; safe if more workers are added later."""
+    job = (SoundUploadJob.query.filter_by(status='queued')
+           .order_by(SoundUploadJob.created_at, SoundUploadJob.id)
+           .with_for_update(skip_locked=True).first())
+    if not job:
+        db.session.rollback()
+        return None
+    job.status = 'processing'
+    job.started_at = datetime.now(timezone.utc)
+    job.finished_at = None
+    job.attempt_count += 1
+    job.error_code = None
+    job.error_message = None
+    job_id = job.id
+    db.session.commit()
+    return job_id
+
+
+def recover_interrupted_sound_upload_jobs():
+    """A single systemd worker can safely reclaim work left by its predecessor."""
+    recovered = SoundUploadJob.query.filter_by(status='processing').update({
+        SoundUploadJob.status: 'queued',
+        SoundUploadJob.started_at: None,
+        SoundUploadJob.error_code: None,
+        SoundUploadJob.error_message: None,
+    }, synchronize_session=False)
+    stale_receiving = SoundUploadJob.query.filter(
+        SoundUploadJob.status == 'receiving',
+        SoundUploadJob.updated_at < datetime.now(timezone.utc) - timedelta(minutes=15),
+    ).all()
+    for job in stale_receiving:
+        job.status = 'failed'
+        job.error_code = 'upload_interrupted'
+        job.error_message = 'The upload was interrupted before it reached the processing queue.'
+        job.finished_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return recovered + len(stale_receiving)
+
+
+def cleanup_expired_sound_uploads():
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    stale_receiving = SoundUploadJob.query.filter(
+        SoundUploadJob.status == 'receiving', SoundUploadJob.updated_at < stale_cutoff).all()
+    for job in stale_receiving:
+        job.status = 'failed'
+        job.error_code = 'upload_interrupted'
+        job.error_message = 'The upload was interrupted before it reached the processing queue.'
+        job.finished_at = datetime.now(timezone.utc)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    expired = SoundUploadJob.query.filter(
+        SoundUploadJob.status.in_(['failed', 'duplicate']), SoundUploadJob.finished_at < cutoff).all()
+    for job in expired:
+        (SOUND_STAGING_ROOT / job.staged_filename).unlink(missing_ok=True)
+        db.session.delete(job)
+    db.session.commit()
+    return len(stale_receiving) + len(expired)
+
+
+@app.cli.command('process-sound-uploads')
+@click.option('--once', is_flag=True, help='Process at most one queued upload, then exit.')
+@click.option('--poll-seconds', default=2.0, type=float, show_default=True)
+def process_sound_uploads_command(once, poll_seconds):
+    """Run the durable, single-concurrency sound preparation worker."""
+    recovered = recover_interrupted_sound_upload_jobs()
+    if recovered:
+        click.echo(f'Recovered {recovered} interrupted sound upload job(s).')
+    cleanup_counter = 0
+    while True:
+        job_id = claim_next_sound_upload_job()
+        if job_id:
+            process_sound_upload_job(job_id)
+        elif once:
+            return
+        else:
+            time.sleep(max(0.25, poll_seconds))
+        cleanup_counter += 1
+        if cleanup_counter >= 300:
+            cleanup_expired_sound_uploads()
+            cleanup_counter = 0
+        if once:
+            return
+
+
+def normalized_sound_identity(value):
+    return ' '.join(str(value or '').strip().casefold().split())
+
+
+def backfill_sound_asset_sizes(assets):
+    """Recover exact original sizes for legacy tracks that were stored without conversion."""
+    updated = False
+    for asset in assets:
+        if asset.original_byte_size is not None:
+            continue
+        if Path(asset.original_filename).suffix.casefold() != Path(asset.filename).suffix.casefold():
+            continue
+        try:
+            asset.original_byte_size = (SOUND_ROOT / asset.filename).stat().st_size
+            updated = True
+        except OSError:
+            continue
+    if updated:
+        db.session.commit()
+
+
+@app.route('/api/sound-upload-checks', methods=['POST'])
+@jwt_required()
+def sound_upload_checks():
+    user, campaign = sound_library_context()
+    if not user:
+        return jsonify({'message': 'Only a campaign DM or owner may check sound uploads'}), 403
+    files = (request.get_json(silent=True) or {}).get('files')
+    if not isinstance(files, list) or len(files) > 500:
+        return jsonify({'message': 'Provide a list of at most 500 sound files.'}), 400
+
+    assets = SoundAsset.query.all()
+    backfill_sound_asset_sizes(assets)
+    active_jobs = SoundUploadJob.query.filter(
+        SoundUploadJob.status.in_(['receiving', 'queued', 'processing'])
+    ).all()
+    asset_index = {}
+    job_index = {}
+    for asset in assets:
+        if asset.original_byte_size is None:
+            continue
+        key = (normalized_sound_identity(asset.name), normalized_sound_identity(asset.original_filename),
+               int(asset.original_byte_size))
+        asset_index.setdefault(key, asset)
+    for job in active_jobs:
+        key = (normalized_sound_identity(job.name), normalized_sound_identity(job.original_filename), int(job.byte_size))
+        job_index.setdefault(key, job)
+
+    checks = []
+    selected = {}
+    for candidate in files:
+        client_id = str(candidate.get('clientId') or '') if isinstance(candidate, dict) else ''
+        name = candidate.get('name') if isinstance(candidate, dict) else ''
+        filename = candidate.get('originalFilename') if isinstance(candidate, dict) else ''
+        try:
+            byte_size = int(candidate.get('byteSize'))
+        except (TypeError, ValueError, AttributeError):
+            byte_size = -1
+        key = (normalized_sound_identity(name), normalized_sound_identity(filename), byte_size)
+        asset = asset_index.get(key)
+        job = job_index.get(key)
+        prior_client_id = selected.get(key)
+        if asset:
+            checks.append({'clientId': client_id, 'status': 'library', 'sound': asset.to_dict()})
+        elif job:
+            checks.append({'clientId': client_id, 'status': 'queued', 'job': job.to_dict()})
+        elif prior_client_id:
+            checks.append({'clientId': client_id, 'status': 'selection', 'duplicateOfClientId': prior_client_id})
+        else:
+            checks.append({'clientId': client_id, 'status': 'upload'})
+            selected.setdefault(key, client_id)
+    return jsonify({'checks': checks}), 200
+
+
 @app.route('/api/sounds', methods=['GET', 'POST'])
 @jwt_required()
 def sounds():
-    user = sound_library_user()
+    user, campaign = sound_library_context()
     if not user:
         return jsonify({'message': 'Only a campaign DM or owner may use the shared sound library'}), 403
 
@@ -1019,80 +1290,135 @@ def sounds():
     if not display_name:
         return sound_upload_error('A sound name is required.', 'missing_name', 400, uploaded.filename)
 
-    SOUND_ROOT.mkdir(parents=True, exist_ok=True)
-    should_transcode = extension in LOSSLESS_SOUND_EXTENSIONS
-    stored_extension = 'mp3' if should_transcode else extension
-    stored_mimetype = 'audio/mpeg' if should_transcode else uploaded.mimetype
-    stored_filename = f'{uuid4().hex}.{stored_extension}'
-    stored_path = SOUND_ROOT / stored_filename
-    source_path = SOUND_ROOT / f'.{uuid4().hex}.upload.{extension}'
+    idempotency_key = (request.headers.get('Idempotency-Key') or request.form.get('idempotencyKey') or uuid4().hex).strip()
+    if not idempotency_key or len(idempotency_key) > 128:
+        return sound_upload_error('The upload idempotency key is invalid.', 'invalid_idempotency_key', 400,
+                                  uploaded.filename)
+    existing = SoundUploadJob.query.filter_by(uploaded_by_id=user.id, idempotency_key=idempotency_key).first()
+    if existing:
+        staged_path = SOUND_STAGING_ROOT / existing.staged_filename
+        if existing.status == 'failed' and not staged_path.is_file():
+            db.session.delete(existing)
+            db.session.commit()
+        else:
+            return jsonify({'job': existing.to_dict()}), 202
+
+    SOUND_STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    job_id = uuid4().hex
+    staged_filename = f'{job_id}.{extension}'
+    source_path = SOUND_STAGING_ROOT / staged_filename
+    job = SoundUploadJob(
+        id=job_id,
+        idempotency_key=idempotency_key,
+        campaign_id=campaign.id,
+        uploaded_by_id=user.id,
+        name=display_name,
+        category=category,
+        original_filename=original_name,
+        staged_filename=staged_filename,
+        mimetype=uploaded.mimetype or mimetypes.guess_type(original_name)[0] or 'application/octet-stream',
+        byte_size=uploaded_size,
+        status='receiving',
+    )
     try:
-        uploaded.save(source_path)
+        db.session.add(job)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        existing = SoundUploadJob.query.filter_by(uploaded_by_id=user.id, idempotency_key=idempotency_key).first()
+        if existing:
+            return jsonify({'job': existing.to_dict()}), 202
+        app.logger.exception('Unable to reserve queued sound upload %s', original_name)
+        return sound_upload_error('The server could not reserve this upload.', 'database_error', 500,
+                                  uploaded.filename)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Unable to reserve queued sound upload %s', original_name)
+        return sound_upload_error('The server could not reserve this upload.', 'database_error', 500,
+                                  uploaded.filename)
+    try:
+        digest = hashlib.sha256()
+        with source_path.open('wb') as staged_file:
+            while True:
+                chunk = uploaded.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                staged_file.write(chunk)
     except (OSError, IOError):
         source_path.unlink(missing_ok=True)
         app.logger.exception('Unable to write uploaded sound %s', original_name)
+        fail_sound_upload_job(job.id, 'storage_error', 'The server could not write this file to sound storage.')
         return sound_upload_error(
             'The server could not write this file to sound storage.',
             'storage_error', 500, uploaded.filename,
         )
-
-    cover_filename = None
-    cover_mimetype = None
-    extracted_cover = extract_embedded_sound_cover(source_path)
     try:
-        if should_transcode:
-            transcode_sound_to_mp3(source_path, stored_path)
-        else:
-            source_path.replace(stored_path)
-    except SoundTranscodeError as error:
-        stored_path.unlink(missing_ok=True)
-        return sound_upload_error(str(error), error.code, 422, uploaded.filename)
-    except (OSError, IOError):
-        stored_path.unlink(missing_ok=True)
-        app.logger.exception('Unable to finalize uploaded sound %s', original_name)
-        return sound_upload_error('The server could not finalize this audio file.', 'storage_error', 500, uploaded.filename)
-    finally:
-        source_path.unlink(missing_ok=True)
-
-    if extracted_cover:
-        cover_bytes, cover_extension, cover_mimetype = extracted_cover
-        cover_root = SOUND_ROOT / 'covers'
-        cover_root.mkdir(parents=True, exist_ok=True)
-        cover_filename = f'{uuid4().hex}.{cover_extension}'
-        try:
-            (cover_root / cover_filename).write_bytes(cover_bytes)
-        except (OSError, IOError):
-            cover_filename = None
-            cover_mimetype = None
-            app.logger.warning('Audio uploaded, but embedded cover art could not be stored for %s', original_name)
-
-    asset = SoundAsset(
-        name=display_name,
-        filename=stored_filename,
-        original_filename=original_name,
-        mimetype=stored_mimetype,
-        category=category,
-        cover_filename=cover_filename,
-        cover_mimetype=cover_mimetype,
-        duration_seconds=sound_duration_seconds(stored_path),
-        uploaded_by_id=user.id,
-    )
-    try:
-        db.session.add(asset)
+        job.content_sha256 = digest.hexdigest()
+        duplicate_asset = SoundAsset.query.filter_by(content_sha256=job.content_sha256).first()
+        duplicate_job = SoundUploadJob.query.filter(
+            SoundUploadJob.id != job.id,
+            SoundUploadJob.content_sha256 == job.content_sha256,
+            SoundUploadJob.status.in_(['receiving', 'queued', 'processing', 'complete', 'duplicate']),
+        ).order_by(SoundUploadJob.created_at).first()
+        if duplicate_asset or duplicate_job:
+            job.sound_asset_id = duplicate_asset.id if duplicate_asset else duplicate_job.sound_asset_id
+            job.status = 'duplicate'
+            job.finished_at = datetime.now(timezone.utc)
+            db.session.commit()
+            source_path.unlink(missing_ok=True)
+            return jsonify({'job': job.to_dict()}), 200
+        job.status = 'queued'
         db.session.commit()
     except Exception:
         db.session.rollback()
-        stored_path.unlink(missing_ok=True)
-        if cover_filename:
-            (SOUND_ROOT / 'covers' / cover_filename).unlink(missing_ok=True)
-        app.logger.exception('Unable to record uploaded sound %s', original_name)
+        source_path.unlink(missing_ok=True)
+        app.logger.exception('Unable to queue uploaded sound %s', original_name)
+        fail_sound_upload_job(job.id, 'database_error', 'The processing job could not be queued.')
         return sound_upload_error(
-            'The file reached the server, but its library record could not be saved.',
+            'The file reached the server, but its processing job could not be saved.',
             'database_error', 500, uploaded.filename,
         )
+    return jsonify({'job': job.to_dict()}), 202
 
-    socketio.emit('sound_library_updated', {'action': 'created', 'sound': asset.to_dict()})
-    return jsonify({'sound': asset.to_dict()}), 201
+
+@app.route('/api/sound-upload-jobs', methods=['GET'])
+@jwt_required()
+def sound_upload_jobs():
+    user, campaign = sound_library_context()
+    if not user:
+        return jsonify({'message': 'Only a campaign DM or owner may inspect sound uploads'}), 403
+    query = SoundUploadJob.query.filter_by(uploaded_by_id=user.id, campaign_id=campaign.id)
+    requested_ids = [value.strip() for value in (request.args.get('ids') or '').split(',') if value.strip()]
+    if requested_ids:
+        query = query.filter(SoundUploadJob.id.in_(requested_ids[:100]))
+    elif request.args.get('active') == 'true':
+        query = query.filter(SoundUploadJob.status.in_(['receiving', 'queued', 'processing', 'failed']))
+    jobs = query.order_by(SoundUploadJob.created_at.desc()).limit(100).all()
+    return jsonify({'jobs': [job.to_dict() for job in jobs]}), 200
+
+
+@app.route('/api/sound-upload-jobs/<job_id>/retry', methods=['POST'])
+@jwt_required()
+def retry_sound_upload_job(job_id):
+    user, campaign = sound_library_context()
+    if not user:
+        return jsonify({'message': 'Only a campaign DM or owner may retry sound uploads'}), 403
+    job = SoundUploadJob.query.filter_by(id=job_id, uploaded_by_id=user.id, campaign_id=campaign.id).first()
+    if not job:
+        return jsonify({'message': 'Sound upload job not found'}), 404
+    if job.status != 'failed':
+        return jsonify({'message': 'Only failed sound uploads can be retried'}), 409
+    if not (SOUND_STAGING_ROOT / job.staged_filename).is_file():
+        return jsonify({'message': 'The staged file has expired; select the file again.',
+                        'error': {'code': 'staged_file_missing'}}), 409
+    job.status = 'queued'
+    job.error_code = None
+    job.error_message = None
+    job.started_at = None
+    job.finished_at = None
+    db.session.commit()
+    return jsonify({'job': job.to_dict()}), 202
 
 
 @app.route('/api/sound-playlists', methods=['GET', 'POST'])
@@ -1787,76 +2113,9 @@ def register():
     ## app.logger.debug(new_user.is_online)
     access_token = create_access_token(identity=new_user.username)
     
-    # If the client provided an initial character, create it and associate with the user and campaign
-    try:
-        character_data = data.get('character')
-        campaign_id = data.get('CampaignID', 1)
-
-        created_character = None
-        if character_data:
-            # Map incoming character fields to the Character model columns
-            mapped = map_fields(character_data, Character)
-
-            # Ability scores may be provided nested under `abilityScores`
-            ability_scores = character_data.get('abilityScores') or character_data.get('ability_scores') or {}
-
-            # Helper to get value from nested abilityScores or top-level mapped fields
-            def get_score(key):
-                val = ability_scores.get(key) if isinstance(ability_scores, dict) else None
-                if val is None:
-                    val = mapped.get(key)
-                return int(val) if val is not None and str(val).isdigit() else 0
-
-            created_character = Character(
-                icon=mapped.get('icon'),
-                system=mapped.get('system', character_data.get('system', 'D&D 5e')),
-                userID=new_user.id,
-                campaignID=campaign_id,
-                character_name=(mapped.get('character_name') or mapped.get('name') or character_data.get('Name') or character_data.get('name')),
-                Class=mapped.get('Class') or mapped.get('class'),
-                Background=mapped.get('Background') or mapped.get('background'),
-                Race=mapped.get('Race') or mapped.get('race'),
-                Alignment=mapped.get('Alignment') or mapped.get('alignment'),
-                ExperiencePoints=int(mapped.get('ExperiencePoints')) if mapped.get('ExperiencePoints') else 0,
-                strength=get_score('strength'),
-                dexterity=get_score('dexterity'),
-                constitution=get_score('constitution'),
-                intelligence=get_score('intelligence'),
-                wisdom=get_score('wisdom'),
-                charisma=get_score('charisma'),
-                PersonalityTraits=mapped.get('PersonalityTraits') or mapped.get('personalitytraits'),
-                Ideals=mapped.get('Ideals') or mapped.get('ideals'),
-                Bonds=mapped.get('Bonds') or mapped.get('bonds'),
-                Flaws=mapped.get('Flaws') or mapped.get('flaws'),
-                Feats=json.dumps(mapped.get('Feats', [])) if mapped.get('Feats') is not None else json.dumps([]),
-                Proficiencies=json.dumps(mapped.get('Proficiencies', [])) if mapped.get('Proficiencies') is not None else json.dumps([]),
-                CurrentHitPoints=int(mapped.get('CurrentHitPoints')) if mapped.get('CurrentHitPoints') else 0,
-                cp=int(mapped.get('cp')) if mapped.get('cp') else 0,
-                sp=int(mapped.get('sp')) if mapped.get('sp') else 0,
-                ep=int(mapped.get('ep')) if mapped.get('ep') else 0,
-                gp=int(mapped.get('gp')) if mapped.get('gp') else 0,
-                pp=int(mapped.get('pp')) if mapped.get('pp') else 0
-            )
-
-            db.session.add(created_character)
-            db.session.flush()  # ensure id is available
-
-            # Insert association row into campaign_members with the characterID
-            try:
-                insert_stmt = campaign_members.insert().values(
-                    userID=new_user.id,
-                    campaignID=campaign_id,
-                    characterID=created_character.id
-                )
-                db.session.execute(insert_stmt)
-            except Exception:
-                app.logger.exception('Failed to insert campaign_members row')
-
-        db.session.commit()
-    except Exception:
-        # If character creation or association failed, rollback but still return registration token
-        app.logger.exception('Error creating initial character for new user')
-        db.session.rollback()
+    # New accounts begin without campaign access. Characters are created from the
+    # dashboard or while accepting a campaign invitation.
+    created_character = None
 
     response = jsonify({
         'message': 'Registration successful!', 
@@ -1997,6 +2256,433 @@ def profile_photo():
     user.profile_photo_updated = datetime.utcnow()
     db.session.commit()
     return jsonify({'has_profile_photo': True})
+
+
+def friendship_pair(user_id, other_user_id):
+    return (min(user_id, other_user_id), max(user_id, other_user_id))
+
+
+def user_friend_summary(user):
+    return {
+        'id': user.id,
+        'username': user.username,
+        'is_online': bool(user.is_online),
+        'has_profile_photo': bool(user.profile_photo),
+    }
+
+
+def friend_connection_for(user_id, other_user_id):
+    low_id, high_id = friendship_pair(user_id, other_user_id)
+    return FriendConnection.query.filter_by(user_low_id=low_id, user_high_id=high_id).first()
+
+
+def accepted_friend_ids(user_id):
+    rows = FriendConnection.query.filter(
+        FriendConnection.status == 'accepted',
+        db.or_(FriendConnection.user_low_id == user_id, FriendConnection.user_high_id == user_id),
+    ).all()
+    return {
+        row.user_high_id if row.user_low_id == user_id else row.user_low_id
+        for row in rows
+    }
+
+
+@app.route('/api/friends', methods=['GET'])
+@jwt_required()
+def friends():
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    if not user:
+        return jsonify({'message': 'User not found.'}), 404
+    connections = FriendConnection.query.filter(db.or_(
+        FriendConnection.user_low_id == user.id,
+        FriendConnection.user_high_id == user.id,
+    )).all()
+    other_ids = {
+        row.user_high_id if row.user_low_id == user.id else row.user_low_id
+        for row in connections
+    }
+    users = {item.id: item for item in User.query.filter(User.id.in_(other_ids)).all()} if other_ids else {}
+    payload = {'friends': [], 'incoming_requests': [], 'outgoing_requests': []}
+    for connection in connections:
+        other_id = connection.user_high_id if connection.user_low_id == user.id else connection.user_low_id
+        other = users.get(other_id)
+        if not other:
+            continue
+        item = {'id': connection.id, 'user': user_friend_summary(other)}
+        if connection.status == 'accepted':
+            payload['friends'].append(item)
+        elif connection.requested_by_id == user.id:
+            payload['outgoing_requests'].append(item)
+        else:
+            payload['incoming_requests'].append(item)
+    for key in payload:
+        payload[key].sort(key=lambda item: item['user']['username'])
+    return jsonify(payload), 200
+
+
+@app.route('/api/friend-requests', methods=['POST'])
+@jwt_required()
+def create_friend_request():
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    username = str((request.get_json(silent=True) or {}).get('username') or '').strip().casefold()
+    if not user or not username:
+        return jsonify({'message': 'Enter a username.'}), 400
+    recipient = User.query.filter(func.lower(User.username) == username).first()
+    if not recipient:
+        return jsonify({'message': 'No user has that username.'}), 404
+    if recipient.id == user.id:
+        return jsonify({'message': 'You cannot send a friend request to yourself.'}), 400
+    existing = friend_connection_for(user.id, recipient.id)
+    if existing:
+        if existing.status == 'accepted':
+            return jsonify({'message': 'You are already friends.'}), 409
+        if existing.requested_by_id == recipient.id:
+            return jsonify({'message': 'This user already sent you a friend request.'}), 409
+        return jsonify({'message': 'Friend request already pending.'}), 409
+    low_id, high_id = friendship_pair(user.id, recipient.id)
+    connection = FriendConnection(
+        user_low_id=low_id, user_high_id=high_id, requested_by_id=user.id, status='pending')
+    db.session.add(connection)
+    db.session.commit()
+    return jsonify({'id': connection.id, 'user': user_friend_summary(recipient)}), 201
+
+
+@app.route('/api/friend-requests/<int:request_id>', methods=['PATCH', 'DELETE'])
+@jwt_required()
+def manage_friend_request(request_id):
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    connection = FriendConnection.query.filter_by(id=request_id, status='pending').first()
+    if not user or not connection:
+        return jsonify({'message': 'Friend request not found.'}), 404
+    pair_ids = {connection.user_low_id, connection.user_high_id}
+    if user.id not in pair_ids:
+        return jsonify({'message': 'Friend request not found.'}), 404
+    if request.method == 'DELETE':
+        if connection.requested_by_id != user.id:
+            return jsonify({'message': 'Only the sender may cancel this friend request.'}), 403
+        db.session.delete(connection)
+        db.session.commit()
+        return '', 204
+    action = str((request.get_json(silent=True) or {}).get('action') or '').strip().lower()
+    if connection.requested_by_id == user.id:
+        return jsonify({'message': 'Only the recipient may respond to this friend request.'}), 403
+    if action == 'accept':
+        connection.status = 'accepted'
+        connection.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({'status': 'accepted'}), 200
+    if action == 'decline':
+        db.session.delete(connection)
+        db.session.commit()
+        return '', 204
+    return jsonify({'message': 'Choose accept or decline.'}), 400
+
+
+def invitation_payload(invitation):
+    campaign = Campaign.query.get(invitation.campaign_id)
+    inviter = User.query.get(invitation.inviter_id)
+    return {
+        'id': invitation.id,
+        'status': invitation.status,
+        'campaign': campaign.to_dict() if campaign else None,
+        'inviter': user_friend_summary(inviter) if inviter else None,
+        'created_at': invitation.created_at.isoformat() if invitation.created_at else None,
+    }
+
+
+@app.route('/api/campaign-invitations', methods=['GET'])
+@jwt_required()
+def campaign_invitations():
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    if not user:
+        return jsonify({'message': 'User not found.'}), 404
+    invitations = CampaignInvitation.query.filter_by(invitee_id=user.id, status='pending').order_by(
+        CampaignInvitation.created_at, CampaignInvitation.id).all()
+    return jsonify([invitation_payload(item) for item in invitations]), 200
+
+
+def character_from_payload(user, raw_data, campaign):
+    raw_data = dict(raw_data or {})
+    raw_data['campaignID'] = campaign.id
+    raw_data['system'] = campaign.rules_system
+    data = map_fields(raw_data, Character)
+    required_fields = ['character_name', 'Class', 'Background', 'Race', 'Alignment', 'ExperiencePoints',
+                       'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']
+    missing = [field for field in required_fields if field not in data or data[field] in (None, '')]
+    if missing:
+        return None, f'{missing[0]} is required!'
+    return Character(
+        icon=data.get('icon'), system=campaign.rules_system, userID=user.id, campaignID=campaign.id,
+        character_name=data['character_name'], Class=data['Class'], Background=data['Background'],
+        Race=data['Race'], Alignment=data['Alignment'], ExperiencePoints=data['ExperiencePoints'],
+        strength=data['strength'], dexterity=data['dexterity'], constitution=data['constitution'],
+        intelligence=data['intelligence'], wisdom=data['wisdom'], charisma=data['charisma'],
+        PersonalityTraits=data.get('PersonalityTraits'), Ideals=data.get('Ideals'), Bonds=data.get('Bonds'),
+        Flaws=data.get('Flaws'), Feats=json.dumps(data.get('Feats', [])),
+        Proficiencies=json.dumps(data.get('Proficiencies', [])), CurrentHitPoints=data.get('CurrentHitPoints', 0),
+        cp=data.get('cp', 0), sp=data.get('sp', 0), ep=data.get('ep', 0), gp=data.get('gp', 0), pp=data.get('pp', 0)
+    ), None
+
+
+@app.route('/api/campaign-invitations/<int:invitation_id>', methods=['PATCH'])
+@jwt_required()
+def respond_to_campaign_invitation(invitation_id):
+    user = User.query.filter_by(username=get_jwt_identity()).first()
+    invitation = CampaignInvitation.query.filter_by(id=invitation_id).first()
+    if not user or not invitation or invitation.invitee_id != user.id:
+        return jsonify({'message': 'Campaign invitation not found.'}), 404
+    if invitation.status != 'pending':
+        return jsonify({'message': f'This campaign invitation is already {invitation.status}.'}), 409
+    campaign = Campaign.query.get(invitation.campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    data = request.get_json(silent=True) or {}
+    action = str(data.get('action') or '').strip().lower()
+    if action == 'decline':
+        invitation.status = 'declined'
+        invitation.responded_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({'status': 'declined'}), 200
+    if action != 'accept':
+        return jsonify({'message': 'Choose accept or decline.'}), 400
+    existing_membership = db.session.execute(select(campaign_members.c.userID).where(
+        campaign_members.c.userID == user.id,
+        campaign_members.c.campaignID == campaign.id,
+    )).first()
+    if existing_membership:
+        return jsonify({'message': 'You are already a member of this campaign.'}), 409
+    character = None
+    try:
+        if data.get('character_id') is not None:
+            character = Character.query.filter_by(id=data.get('character_id'), userID=user.id).first()
+            if not character or character.campaignID is not None or character.system != campaign.rules_system:
+                return jsonify({'message': 'Choose an unassigned character that uses this campaign’s rules.'}), 400
+            character.campaignID = campaign.id
+        elif isinstance(data.get('character'), dict):
+            character, error = character_from_payload(user, data['character'], campaign)
+            if error:
+                return jsonify({'message': error}), 400
+            db.session.add(character)
+            db.session.flush()
+        else:
+            return jsonify({'message': 'Choose an existing character or create a new one.'}), 400
+        db.session.execute(campaign_members.insert().values(
+            userID=user.id, campaignID=campaign.id, characterID=character.id))
+        invitation.status = 'accepted'
+        invitation.responded_at = datetime.now(timezone.utc)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'message': 'This campaign invitation was already accepted or the character is no longer available.'}), 409
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception('Unable to accept campaign invitation %s', invitation.id)
+        return jsonify({'message': 'Unable to accept the campaign invitation.'}), 500
+    return jsonify({'status': 'accepted', 'campaign': campaign.to_dict(), 'character': character.to_dict()}), 200
+
+
+@app.route('/api/campaigns/<int:campaign_id>/members', methods=['GET'])
+@jwt_required()
+def campaign_member_list(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    manager = User.query.filter_by(username=get_jwt_identity()).first()
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may manage members.'}), 403
+    rows = db.session.execute(select(
+        campaign_members.c.userID, campaign_members.c.characterID
+    ).where(campaign_members.c.campaignID == campaign.id)).all()
+    user_ids = {row.userID for row in rows}
+    users = {item.id: item for item in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    roles = {item.user_id: item.role for item in CampaignWikiRole.query.filter_by(campaign_id=campaign.id).all()}
+    active = [{**user_friend_summary(users[row.userID]), 'status': 'active', 'character_id': row.characterID,
+               'wiki_role': roles.get(row.userID, 'read_only'),
+               'is_dm': row.userID in {campaign.dm_id, campaign.owner_id}}
+              for row in rows if row.userID in users]
+    pending_rows = CampaignInvitation.query.filter_by(campaign_id=campaign.id, status='pending').all()
+    pending_ids = {item.invitee_id for item in pending_rows}
+    pending_users = {item.id: item for item in User.query.filter(User.id.in_(pending_ids)).all()} if pending_ids else {}
+    pending = [{**user_friend_summary(pending_users[item.invitee_id]), 'status': 'pending',
+                'invitation_id': item.id}
+               for item in pending_rows if item.invitee_id in pending_users]
+    friend_ids = accepted_friend_ids(manager.id) if manager else set()
+    friends_by_id = {item.id: user_friend_summary(item) for item in User.query.filter(
+        User.id.in_(friend_ids)).all()} if friend_ids else {}
+    return jsonify({
+        'active': active,
+        'pending': pending,
+        'friends': list(friends_by_id.values()),
+        'wiki_permission': campaign.wiki_permission or 'everyone',
+    }), 200
+
+
+WIKI_PERMISSION_MODES = {'everyone', 'scribes_only', 'dm_only'}
+WIKI_MEMBER_ROLES = {'scribe', 'scribe_approval', 'read_only'}
+
+
+@app.route('/api/campaigns/<int:campaign_id>/wiki-permissions', methods=['PATCH'])
+@jwt_required()
+def update_campaign_wiki_permissions(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may change wiki permissions.'}), 403
+    mode = (request.get_json(silent=True) or {}).get('mode')
+    if mode not in WIKI_PERMISSION_MODES:
+        return jsonify({'message': 'Choose Everyone, Scribes Only, or DM Only.'}), 400
+    campaign.wiki_permission = mode
+    db.session.commit()
+    return jsonify({'mode': mode}), 200
+
+
+@app.route('/api/campaigns/<int:campaign_id>/members/<int:user_id>/wiki-role', methods=['PATCH'])
+@jwt_required()
+def update_campaign_member_wiki_role(campaign_id, user_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may assign wiki roles.'}), 403
+    membership = db.session.execute(select(campaign_members.c.userID).where(
+        campaign_members.c.campaignID == campaign.id,
+        campaign_members.c.userID == user_id,
+    )).first()
+    if not membership:
+        return jsonify({'message': 'Wiki roles can only be assigned to active campaign members.'}), 404
+    role = (request.get_json(silent=True) or {}).get('role')
+    if role not in WIKI_MEMBER_ROLES:
+        return jsonify({'message': 'Choose Scribe, Scribe with Approval, or Read Only.'}), 400
+    assignment = CampaignWikiRole.query.filter_by(campaign_id=campaign.id, user_id=user_id).first()
+    if not assignment:
+        assignment = CampaignWikiRole(campaign_id=campaign.id, user_id=user_id)
+        db.session.add(assignment)
+    assignment.role = role
+    assignment.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'user_id': user_id, 'role': role}), 200
+
+
+def wiki_proposal_payload(proposal):
+    return {
+        'id': proposal.id,
+        'page_id': proposal.page_id,
+        'page_title': proposal.page_title,
+        'content': proposal.content,
+        'status': proposal.status,
+        'submitted_by': user_friend_summary(proposal.submitter) if proposal.submitter else None,
+        'created_at': proposal.created_at.isoformat() if proposal.created_at else None,
+    }
+
+
+@app.route('/api/campaigns/<int:campaign_id>/wiki-proposals', methods=['GET'])
+@jwt_required()
+def campaign_wiki_proposals(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may review wiki changes.'}), 403
+    proposals = WikiEditProposal.query.filter_by(campaign_id=campaign.id, status='pending').order_by(
+        WikiEditProposal.created_at, WikiEditProposal.id).all()
+    return jsonify([wiki_proposal_payload(item) for item in proposals]), 200
+
+
+@app.route('/api/campaigns/<int:campaign_id>/wiki-proposals/<int:proposal_id>', methods=['PATCH'])
+@jwt_required()
+def review_campaign_wiki_proposal(campaign_id, proposal_id):
+    campaign = Campaign.query.get(campaign_id)
+    reviewer = User.query.filter_by(username=get_jwt_identity()).first()
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    if not reviewer or reviewer.id not in {campaign.dm_id, campaign.owner_id}:
+        return jsonify({'message': 'Only the campaign DM or owner may review wiki changes.'}), 403
+    proposal = WikiEditProposal.query.filter_by(
+        id=proposal_id, campaign_id=campaign.id, status='pending').first()
+    if not proposal:
+        return jsonify({'message': 'Pending wiki change not found.'}), 404
+    action = (request.get_json(silent=True) or {}).get('action')
+    if action not in {'approve', 'reject'}:
+        return jsonify({'message': 'Choose approve or reject.'}), 400
+    if action == 'approve':
+        page = Page.query.filter_by(id=proposal.page_id, wiki_id=campaign.id).first() if proposal.page_id else None
+        if page:
+            db.session.add(Revisions(page_id=page.id, content=page.content, user_id=proposal.submitted_by_id))
+            page.content = proposal.content
+        else:
+            if Page.query.filter_by(wiki_id=campaign.id, title=proposal.page_title).first():
+                return jsonify({'message': 'A page with this title now exists. Review the proposal again after resolving the conflict.'}), 409
+            page = Page(title=proposal.page_title, content=proposal.content, wiki_id=campaign.id)
+            db.session.add(page)
+            db.session.flush()
+            proposal.page_id = page.id
+        proposal.status = 'approved'
+    else:
+        proposal.status = 'rejected'
+    proposal.reviewed_by_id = reviewer.id
+    proposal.reviewed_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'status': proposal.status, 'proposal': wiki_proposal_payload(proposal)}), 200
+
+
+@app.route('/api/campaigns/<int:campaign_id>/invitations', methods=['POST'])
+@jwt_required()
+def invite_campaign_friends(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    inviter = User.query.filter_by(username=get_jwt_identity()).first()
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    if not inviter or inviter.id not in {campaign.dm_id, campaign.owner_id}:
+        return jsonify({'message': 'Only the campaign DM or owner may invite members.'}), 403
+    requested_ids = (request.get_json(silent=True) or {}).get('user_ids')
+    if not isinstance(requested_ids, list) or not requested_ids:
+        return jsonify({'message': 'Select at least one friend.'}), 400
+    try:
+        requested_ids = {int(value) for value in requested_ids}
+    except (TypeError, ValueError):
+        return jsonify({'message': 'Friend IDs must be whole numbers.'}), 400
+    if not requested_ids.issubset(accepted_friend_ids(inviter.id)):
+        return jsonify({'message': 'Campaign invitations may only be sent to accepted friends.'}), 403
+    member_ids = {row.userID for row in db.session.execute(select(campaign_members.c.userID).where(
+        campaign_members.c.campaignID == campaign.id)).all()}
+    if requested_ids & member_ids:
+        return jsonify({'message': 'One or more selected friends are already campaign members.'}), 409
+    invitations = []
+    for invitee_id in sorted(requested_ids):
+        invitation = CampaignInvitation.query.filter_by(campaign_id=campaign.id, invitee_id=invitee_id).first()
+        if invitation and invitation.status == 'pending':
+            continue
+        if not invitation:
+            invitation = CampaignInvitation(campaign_id=campaign.id, inviter_id=inviter.id, invitee_id=invitee_id)
+            db.session.add(invitation)
+        invitation.inviter_id = inviter.id
+        invitation.status = 'pending'
+        invitation.responded_at = None
+        invitation.updated_at = datetime.now(timezone.utc)
+        invitations.append(invitation)
+    if not invitations:
+        return jsonify({'message': 'All selected friends already have pending invitations.'}), 409
+    db.session.commit()
+    return jsonify({'invitations': [invitation_payload(item) for item in invitations]}), 201
+
+
+@app.route('/api/campaigns/<int:campaign_id>/invitations/<int:invitation_id>', methods=['DELETE'])
+@jwt_required()
+def revoke_campaign_invitation(campaign_id, invitation_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return jsonify({'message': 'Campaign not found.'}), 404
+    if not user_can_edit_campaign(campaign):
+        return jsonify({'message': 'Only the campaign DM or owner may revoke invitations.'}), 403
+    invitation = CampaignInvitation.query.filter_by(
+        id=invitation_id, campaign_id=campaign.id, status='pending').first()
+    if not invitation:
+        return jsonify({'message': 'Pending campaign invitation not found.'}), 404
+    invitation.status = 'revoked'
+    invitation.responded_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return '', 204
 
 
 def dashboard_campaign_context(campaign_id):
@@ -2200,13 +2886,6 @@ def campaigns():
         # Add the campaign creator as a member of their own campaign
         app.logger.debug("Adding user %s to campaign %s", user.id, campaign.id)
         db.session.execute(campaign_members.insert().values(userID=user.id, campaignID=campaign.id))
-    
-        # Get all users except the current user
-        other_users = User.query.filter(User.id != user.id).all()
-        app.logger.debug("other_users- %s", other_users)
-        for other_user in other_users:
-            # Add each user to the campaign's members
-            db.session.execute(campaign_members.insert().values(userID=other_user.id, campaignID=campaign.id))
     
         db.session.commit()
         return jsonify(campaign.to_dict()), 201
@@ -2535,6 +3214,19 @@ def get_user_characters():
         # Map fields for the Character model using fuzzy matching
         data = map_fields(data, Character)
 
+        campaign_id = data.get('campaignID')
+        campaign = Campaign.query.get(campaign_id) if campaign_id else None
+        if campaign_id and not campaign:
+            return jsonify({'message': 'Campaign not found.'}), 404
+        if campaign:
+            membership = db.session.execute(select(campaign_members.c.userID).where(
+                campaign_members.c.userID == user.id,
+                campaign_members.c.campaignID == campaign.id,
+            )).first()
+            if user.id not in {campaign.dm_id, campaign.owner_id} and membership is None:
+                return jsonify({'message': 'Accept the campaign invitation before creating a character for it.'}), 403
+            data['system'] = campaign.rules_system
+
         # Validate required fields
         required_fields = ['character_name', 'Class', 'Background', 'Race', 'Alignment', 'ExperiencePoints', 
                            'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']
@@ -2547,7 +3239,7 @@ def get_user_characters():
             icon=data.get('icon'),
             system=data.get('system', 'D&D 5e'),  # Default to 'D&D 5e' if not provided
             userID=user.id,
-            campaignID=data.get('campaignID'),
+            campaignID=campaign_id,
             character_name=data['character_name'],
             Class=data['Class'],
             Background=data['Background'],
@@ -4186,14 +4878,21 @@ def delete_file_by_id(file_id):
 ##************************##
 ## **      Spells      ** ##
 ##************************##
+def current_spellbook_character(campaign, user):
+    membership = db.session.execute(select(campaign_members.c.characterID).where(
+        campaign_members.c.campaignID == campaign.id,
+        campaign_members.c.userID == user.id,
+    )).first()
+    return Character.query.get(membership.characterID) if membership and membership.characterID else None
+
+
 @app.route('/api/spellbook', methods=['GET'])
 @jwt_required()
 def get_spellbook():
-    ## Get a player's spellbook
-    campaignID = request.headers.get('CampaignID')
-    userID = request.headers.get('userID')
-    character = campaign_members.query.filter_by(campaignID=campaignID, userID=userID).first().character
-
+    campaign, user, error = catalog_campaign_context()
+    if error:
+        return error
+    character = current_spellbook_character(campaign, user)
     if not character:
         return jsonify({"error": "Character not found"}), 404
 
@@ -4213,6 +4912,132 @@ def get_all_spells():
 
     spells = Spell.query.all()
     return jsonify([spell.to_dict() for spell in spells])
+
+
+@app.route('/api/spell-catalog', methods=['GET'])
+@jwt_required()
+def get_spell_catalog():
+    """Search the shared 5etools spell catalog for any campaign member."""
+    campaign, user, error = catalog_campaign_context()
+    if error:
+        return error
+
+    query = Spell.query.filter(Spell.source.isnot(None))
+    search = (request.args.get('q') or '').strip()
+    class_name = (request.args.get('class') or '').strip()
+    level = (request.args.get('level') or '').strip()
+    school = (request.args.get('school') or '').strip()
+    casting_time = (request.args.get('casting_time') or '').strip()
+    source = (request.args.get('source') or '').strip()
+    damage_type = (request.args.get('damage_type') or '').strip().lower()
+    condition = (request.args.get('condition') or '').strip().lower()
+    saving_throw = (request.args.get('saving_throw') or '').strip().lower()
+    spell_attack = (request.args.get('spell_attack') or '').strip().upper()
+
+    if search:
+        query = query.filter(db.or_(Spell.name.ilike(f'%{search[:100]}%'),
+                                    Spell.description.ilike(f'%{search[:100]}%')))
+    if class_name:
+        query = query.filter(Spell.classes.ilike(f'%{class_name[:80]}%'))
+    if level:
+        query = query.filter(Spell.level == level[:10])
+    if school:
+        query = query.filter(Spell.school == school[:80])
+    if casting_time:
+        query = query.filter(Spell.casting_time == casting_time[:80])
+    if source:
+        query = query.filter(Spell.source == source[:80])
+    if damage_type:
+        query = query.filter(Spell.damage_types.contains([damage_type]))
+    if condition:
+        query = query.filter(Spell.conditions.contains([condition]))
+    if saving_throw:
+        query = query.filter(Spell.saving_throws.contains([saving_throw]))
+    if spell_attack:
+        query = query.filter(Spell.spell_attacks.contains([spell_attack]))
+    if request.args.get('ritual') in {'true', 'false'}:
+        query = query.filter(Spell.ritual.is_(request.args['ritual'] == 'true'))
+    if request.args.get('concentration') in {'true', 'false'}:
+        query = query.filter(Spell.concentration.is_(request.args['concentration'] == 'true'))
+
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        page_size = min(100, max(1, int(request.args.get('page_size', 50))))
+    except (TypeError, ValueError):
+        return jsonify({'message': 'page and page_size must be integers'}), 400
+
+    total = query.count()
+    rows = query.order_by(Spell.level, Spell.name, Spell.source).offset(
+        (page - 1) * page_size
+    ).limit(page_size).all()
+
+    character = current_spellbook_character(campaign, user)
+    spellbook_by_spell = {}
+    if character and rows:
+        spellbook_by_spell = {item.spell_id: item for item in Spellbook.query.filter(
+            Spellbook.characterID == character.id,
+            Spellbook.spell_id.in_([row.id for row in rows]),
+        ).all()}
+
+    serialized_rows = []
+    for row in rows:
+        serialized = row.to_dict()
+        eligibility = spell_eligibility(character, row) if character else {
+            'eligible': False, 'reason': 'No character is assigned to you in this campaign', 'source': None,
+        }
+        item = spellbook_by_spell.get(row.id)
+        serialized['eligibility'] = eligibility
+        serialized['in_spellbook'] = item is not None
+        serialized['spellbook_item_id'] = item.id if item else None
+        serialized_rows.append(serialized)
+
+    catalog = Spell.query.filter(Spell.source.isnot(None)).with_entities(
+        Spell.source, Spell.level, Spell.school, Spell.casting_time, Spell.classes,
+        Spell.damage_types, Spell.conditions, Spell.saving_throws, Spell.spell_attacks,
+    ).all()
+    filters = {
+        'classes': sorted({value.strip() for row in catalog for value in (row.classes or '').split(',') if value.strip()}),
+        'levels': sorted({str(row.level) for row in catalog}, key=lambda value: int(value) if value.isdigit() else 99),
+        'schools': sorted({row.school for row in catalog if row.school}),
+        'casting_times': sorted({row.casting_time for row in catalog if row.casting_time}),
+        'sources': sorted({row.source for row in catalog if row.source}),
+        'damage_types': sorted({value for row in catalog for value in (row.damage_types or [])}),
+        'conditions': sorted({value for row in catalog for value in (row.conditions or [])}),
+        'saving_throws': sorted({value for row in catalog for value in (row.saving_throws or [])}),
+        'spell_attacks': sorted({value for row in catalog for value in (row.spell_attacks or [])}),
+    }
+    return jsonify({'spells': serialized_rows, 'filters': filters,
+                    'page': page, 'page_size': page_size, 'total': total}), 200
+
+
+@app.route('/api/spellbook/spells/<int:spell_id>', methods=['POST'])
+@jwt_required()
+def add_catalog_spell_to_spellbook(spell_id):
+    campaign, user, error = catalog_campaign_context()
+    if error:
+        return error
+    character = current_spellbook_character(campaign, user)
+    if not character:
+        return jsonify({'message': 'No character is assigned to you in this campaign'}), 404
+    spell = Spell.query.get(spell_id)
+    if not spell or not spell.source:
+        return jsonify({'message': 'Spell not found'}), 404
+
+    eligibility = spell_eligibility(character, spell)
+    if not eligibility['eligible']:
+        return jsonify({'message': eligibility['reason'], 'eligibility': eligibility}), 403
+
+    item = Spellbook.query.filter_by(characterID=character.id, spell_id=spell.id).first()
+    if item:
+        if not item.equipped:
+            item.equipped = True
+            db.session.commit()
+        return jsonify({'message': 'Already in your spellbook', 'spell': item.to_dict()}), 200
+
+    item = Spellbook(characterID=character.id, spell_id=spell.id, quantity=1, equipped=True)
+    db.session.add(item)
+    db.session.commit()
+    return jsonify({'message': 'Added to your spellbook', 'spell': item.to_dict()}), 201
 
 @app.route('/api/prepared_spells', methods=['GET'])
 @jwt_required()
@@ -4461,7 +5286,8 @@ def create_loot_box():
         return error
     data = request.get_json(silent=True) or {}
     loot_box_name = str(data.get('name') or '').strip()[:80]
-    items = data.get('items') if isinstance(data.get('items'), list) else []
+    from catalog_payloads import normalized_loot_box_items
+    items = normalized_loot_box_items(data.get('items'))
     if not loot_box_name:
         return jsonify({'message': 'Loot box name is required'}), 400
     module_key, error = validate_catalog_module(campaign, data.get('module_key'))
@@ -4474,11 +5300,8 @@ def create_loot_box():
     db.session.flush()
 
     for item in items:
-        itemID = item.get('id')
-        try:
-            quantity = max(1, int(item.get('quantity', 1)))
-        except (TypeError, ValueError):
-            continue
+        itemID = item['id']
+        quantity = item['quantity']
         itemDB = Item.query.filter_by(id=itemID).first()
         if itemDB:
             association = loot_box_items.insert().values(loot_boxID=loot_box.id, itemID=itemDB.id, quantity=quantity)
@@ -4497,8 +5320,11 @@ def update_loot_box(box_id):
     data = request.get_json(silent=True) or {}
     # print("data:", data)
     app.logger.info("data: %s", data)
-    loot_box_name = data['name']
-    items = data['items']
+    from catalog_payloads import normalized_loot_box_items
+    loot_box_name = str(data.get('name') or '').strip()[:80]
+    items = normalized_loot_box_items(data.get('items'))
+    if not loot_box_name:
+        return jsonify({'message': 'Loot box name is required'}), 400
 
     # Get the LootBox
     # loot_box = LootBox.query.get(box_id)
@@ -4513,9 +5339,7 @@ def update_loot_box(box_id):
     loot_box.name = loot_box_name
     loot_box.module_key = module_key
 
-    # Clear the current items
-    loot_box.items = []
-
+    # Delete the association rows exactly once before inserting replacements.
     db.session.execute(loot_box_items.delete().where(loot_box_items.c.loot_boxID == box_id))
     # Add the new items
     for item in items:
@@ -4628,7 +5452,18 @@ def get_npc_generation_options():
     campaign, _user, error = catalog_campaign_context()
     if error:
         return error
-    return jsonify({**supported_generation_options(), 'campaign_id': campaign.id}), 200
+    options = supported_generation_options()
+    try:
+        system_species = [row.name for row in GameElement.query.filter_by(
+            element_type='race', system=campaign.rules_system).order_by(GameElement.name).all()]
+        system_classes = [row.name for row in GameElement.query.filter_by(
+            element_type='class', system=campaign.rules_system).order_by(GameElement.name).all()]
+    except SQLAlchemyError:
+        system_species = []
+        system_classes = []
+    options['species'] = list(dict.fromkeys([*system_species, *options['species']]))
+    options['classes'] = list(dict.fromkeys(system_classes))
+    return jsonify({**options, 'campaign_id': campaign.id}), 200
 
 
 @app.route('/api/npcs/generate', methods=['POST'])
@@ -4767,8 +5602,112 @@ def search_creatures():
     search = (request.args.get('q') or '').strip()
     if search:
         query = query.filter(CreatureCatalog.name.ilike(f'%{search[:100]}%'))
-    rows = query.order_by(CreatureCatalog.name, CreatureCatalog.source).limit(50).all()
-    return jsonify([row.summary() for row in rows]), 200
+    summaries = [row.summary() for row in query.order_by(CreatureCatalog.name, CreatureCatalog.source).all()]
+    filters = {
+        'source': request.args.get('source'),
+        'creature_type': request.args.get('type'), 'size': request.args.get('size'),
+        'alignment': request.args.get('alignment'), 'environment': request.args.get('environment'),
+        'challenge': request.args.get('cr'), 'defense': request.args.get('defense'),
+        'weakness': request.args.get('weakness'),
+    }
+    for field, wanted in filters.items():
+        if not wanted:
+            continue
+        needle = wanted.casefold()
+        if field == 'defense':
+            summaries = [row for row in summaries if needle in ' '.join((row['resistances'], row['immunities'], row['condition_immunities'])).casefold()]
+        elif field == 'weakness':
+            summaries = [row for row in summaries if needle in row['vulnerabilities'].casefold()]
+        elif field in {'challenge', 'source'}:
+            summaries = [row for row in summaries if str(row.get(field) or '').casefold() == needle]
+        else:
+            summaries = [row for row in summaries if needle in str(row.get(field) or '').casefold()]
+    try:
+        limit = max(1, min(200, int(request.args.get('limit', 100))))
+    except (TypeError, ValueError):
+        limit = 100
+    return jsonify(summaries[:limit]), 200
+
+
+@app.route('/api/creatures/filters', methods=['GET'])
+@jwt_required()
+def creature_filter_options():
+    campaign, _, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    rows = CreatureCatalog.query.filter(db.or_(
+        CreatureCatalog.is_adventure.is_(False),
+        db.func.lower(CreatureCatalog.source).in_(campaign_creature_sources(campaign.id)),
+    )).all()
+    summaries = [row.summary() for row in rows]
+
+    def options(field, split=False):
+        values = set()
+        for row in summaries:
+            raw = row.get(field) or ''
+            candidates = raw.split(',') if split else [raw]
+            values.update(value.strip() for value in candidates if value.strip())
+        return sorted(values, key=str.casefold)
+
+    defenses = set()
+    for field in ('resistances', 'immunities', 'condition_immunities'):
+        defenses.update(options(field, split=True))
+    def cr_value(value):
+        try:
+            if '/' in value:
+                numerator, denominator = value.split('/', 1)
+                return float(numerator) / float(denominator)
+            return float(value or 0)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return 1000
+
+    return jsonify({
+        'sources': options('source'), 'types': options('creature_type'), 'sizes': options('size', split=True),
+        'alignments': options('alignment'), 'environments': options('environment', split=True),
+        'challenge_ratings': sorted(options('challenge'), key=cr_value),
+        'defenses': sorted(defenses, key=str.casefold), 'weaknesses': options('vulnerabilities', split=True),
+    }), 200
+
+
+def campaign_encounter_sources(campaign_id):
+    return {'XGE', 'DMG', 'XDMG'} | {source.upper() for source in campaign_creature_sources(campaign_id)}
+
+
+@app.route('/api/encounter-presets', methods=['GET'])
+@jwt_required()
+def encounter_presets():
+    campaign, _, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    from encounter_catalog import available_presets
+    return jsonify(available_presets(campaign_encounter_sources(campaign.id))), 200
+
+
+@app.route('/api/encounter-presets/roll', methods=['POST'])
+@jwt_required()
+def roll_encounter_preset():
+    campaign, _, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    from encounter_catalog import available_presets, roll_preset
+    presets = {item['id']: item for item in available_presets(campaign_encounter_sources(campaign.id))}
+    preset_id = str(data.get('preset_id') or '')
+    if preset_id not in presets:
+        return jsonify({'message': 'That random encounter table is not available for this campaign'}), 404
+
+    def creature_lookup(name, source):
+        query = CreatureCatalog.query.filter(db.func.lower(CreatureCatalog.name) == name.casefold())
+        creature = query.filter(db.func.lower(CreatureCatalog.source) == source.casefold()).first() or query.filter(CreatureCatalog.is_adventure.is_(False)).first()
+        if not creature:
+            return None
+        summary = creature.summary()
+        return {key: summary.get(key) for key in ('id', 'name', 'hp', 'ac', 'dexterity', 'challenge')}
+
+    try:
+        return jsonify(roll_preset(preset_id, creature_lookup)), 200
+    except ValueError as exc:
+        return jsonify({'message': str(exc)}), 400
 
 
 @app.route('/api/creatures/<int:creature_id>', methods=['GET'])
@@ -4780,7 +5719,10 @@ def get_creature(creature_id):
     creature = CreatureCatalog.query.get_or_404(creature_id)
     if creature.is_adventure and creature.source.lower() not in campaign_creature_sources(campaign.id):
         return jsonify({'message': 'Install the source adventure to use this creature'}), 403
-    return jsonify({**creature.summary(), 'data': creature.data}), 200
+    from fiveetools_catalog import creature_fluff_text, npc_fields_from_creature
+    return jsonify({**creature.summary(), 'data': creature.data,
+                    'fluff_text': creature_fluff_text(creature.data),
+                    'npc_template': npc_fields_from_creature(creature.data, '')}), 200
 
 
 @app.route('/api/campaigns/<int:campaign_id>/modules/<module_key>/adventure', methods=['GET'])
@@ -4979,6 +5921,72 @@ def delete_random_table(table_id):
 ##************************##
 ## **    Wiki Stuff    ** ##
 ##************************##
+def wiki_request_user():
+    token = request.headers.get('Authorization', '').strip()
+    if token.lower().startswith('bearer '):
+        token = token[7:].strip()
+    if not token:
+        token = request.cookies.get(SHARED_SESSION_COOKIE, '')
+    if not token:
+        return None
+    try:
+        identity = decode_token(token).get('sub')
+    except Exception:
+        return None
+    return User.query.filter_by(username=identity).first() if identity else None
+
+
+def wiki_write_mode(campaign, user):
+    """Return direct, proposal, or None for this campaign member."""
+    if not user:
+        return None
+    if user.id in {campaign.dm_id, campaign.owner_id}:
+        return 'direct'
+    membership = db.session.execute(select(campaign_members.c.userID).where(
+        campaign_members.c.campaignID == campaign.id,
+        campaign_members.c.userID == user.id,
+    )).first()
+    if not membership:
+        return None
+    permission = campaign.wiki_permission or 'everyone'
+    if permission == 'everyone':
+        return 'direct'
+    if permission == 'dm_only':
+        return None
+    assignment = CampaignWikiRole.query.filter_by(campaign_id=campaign.id, user_id=user.id).first()
+    role = assignment.role if assignment else 'read_only'
+    if role == 'scribe':
+        return 'direct'
+    if role == 'scribe_approval':
+        return 'proposal'
+    return None
+
+
+def submit_wiki_content(campaign, page_title, content, user, page=None):
+    mode = wiki_write_mode(campaign, user)
+    if not mode:
+        return None, ('You do not have permission to edit this campaign wiki.', 403)
+    if mode == 'proposal':
+        proposal = WikiEditProposal(
+            campaign_id=campaign.id,
+            page_id=page.id if page else None,
+            page_title=page_title,
+            submitted_by_id=user.id,
+            content=content or '',
+        )
+        db.session.add(proposal)
+        db.session.commit()
+        return {'success': True, 'pending_approval': True, 'proposal_id': proposal.id}, None
+    if page:
+        db.session.add(Revisions(page_id=page.id, content=page.content, user_id=user.id))
+        page.content = content or ''
+    else:
+        page = Page(title=page_title, content=content or '', wiki_id=campaign.id)
+        db.session.add(page)
+    db.session.commit()
+    return {'success': True, 'pending_approval': False}, None
+
+
 @app.route('/wiki/health', methods=['GET'])
 def wiki_health():
     return jsonify({'ok': True, 'service': 'kachhapa-wiki'}), 200
@@ -5016,11 +6024,12 @@ def search(campaign_name):
     app.logger.debug("search results: %s", results)
 
     if not results:
-        return jsonify({'message': 'No results found', 'create_option': True})
+        return jsonify({
+            'message': 'No results found',
+            'create_option': bool(wiki_write_mode(campaign, wiki_request_user())),
+        })
 
     return jsonify(results) 
-
-import re
 
 def preprocess_content(content):
     # This regular expression matches Markdown links like [display text](URL)
@@ -5046,15 +6055,19 @@ def wiki_page(campaign_name, page_title):
     # Get the page using the Campaign ID and the page title
     page = Page.query.filter_by(wiki_id=campaign.id, title=page_title).first()
 
+    write_mode = wiki_write_mode(campaign, wiki_request_user())
     if page is None:
-        app.logger.error("Page %s not found", page_title)
-        # Call the create_page function directly
-        return create_page(campaign_name, page_title)
+        if write_mode:
+            return redirect(url_for('create_page', campaign_name=campaign_name, page_title=page_title))
+        return "Page not found", 404
 
     preprocessed_content = preprocess_content(page.content)
     html_content = markdown.markdown(preprocessed_content)
 
-    return render_template('page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
+    return render_template(
+        'page.html', campaign_name=campaign_name, content=html_content,
+        page_title=page.title, can_edit=bool(write_mode),
+    )
 
 @app.route('/wiki/<campaign_name>/<page_title>/create', methods=['GET', 'POST'])
 def create_page(campaign_name, page_title):
@@ -5064,6 +6077,10 @@ def create_page(campaign_name, page_title):
     if campaign is None:
         return "Campaign not found", 404
 
+    user = wiki_request_user()
+    mode = wiki_write_mode(campaign, user)
+    if not mode:
+        return "You do not have permission to create pages in this campaign wiki.", 403
     existing_page = Page.query.filter_by(wiki_id=campaign.id, title=page_title).first()
     if existing_page is not None:
         if request.method == 'GET':
@@ -5074,39 +6091,20 @@ def create_page(campaign_name, page_title):
             ))
         return "Page already exists", 409
 
-    # # Ensure the sequence is correctly set
-    # max_id_result = db.session.execute(text("SELECT MAX(id) FROM page"))
-    # max_id = max_id_result.scalar()
-    # db.session.execute(text(f"SELECT setval('page_id_seq', {max_id + 1})"))
-    # db.session.commit()
-
     if request.method == 'POST':
-        content = request.form['content']
-
         try:
-            # Create a new page entry with the provided content
-            new_page = Page(title=page_title, content=content, wiki_id=campaign.id)
-            db.session.add(new_page)
-            db.session.commit()
-
-            # Redirect to the editable version of the new page
-            return redirect(url_for('edit_page', campaign_name=campaign_name, page_title=page_title))
+            result, error = submit_wiki_content(campaign, page_title, request.form.get('content', ''), user)
+            if error:
+                return error
+            return jsonify(result), 200
         except SQLAlchemyError as e:
             db.session.rollback()
             return f"An error occurred while creating the page: {str(e)}", 500
-
-    try:
-        # Create a blank page in the database
-        new_page = Page(title=page_title, content='', wiki_id=campaign.id)
-        db.session.add(new_page)
-        db.session.commit()
-
-        # Redirect to the edit page
-        app.logger.info("Redirecting client to edit page")
-        return render_template('edit_page.html', campaign_name=campaign_name, content=f"<h1>{page_title}</h1><p><br></p>", page_title=page_title)
-    except SQLAlchemyError as e:
-        db.session.rollback()
-        return f"An error occurred while creating the page: {str(e)}", 500
+    return render_template(
+        'edit_page.html', campaign_name=campaign_name,
+        content=f"<h1>{page_title}</h1><p><br></p>", page_title=page_title,
+        save_mode=mode, is_new_page=True,
+    )
     
 @app.route('/wiki/<campaign_name>/<page_title>/edit', methods=['GET', 'POST'])
 def edit_page(campaign_name, page_title):
@@ -5116,40 +6114,31 @@ def edit_page(campaign_name, page_title):
     page = Page.query.filter_by(wiki_id=campaign.id, title=page_title).first()
     if not page:
         return "Page not found", 404
+    user = wiki_request_user()
+    mode = wiki_write_mode(campaign, user)
+    if not mode:
+        return "You do not have permission to edit this campaign wiki.", 403
 
     # Handle POST request for saving edits
     if request.method == "POST":
         app.logger.info("Edit Page POST: %s", request)
-        content = request.form.get('content')
-        userID = request.headers.get('userID')
-        app.logger.info("Edit Page- userID: %s", userID)
-
-        # Save the current state of the page to the Revisions table
-        new_revision = Revisions(
-            page_id=page.id,
-            content=page.content,
-            user_id=userID  # Store the user ID
-        )
-        db.session.add(new_revision)
-
-        # Update the page content
-        page.content = content
-
         try:
-            db.session.commit()
-            app.logger.info(f"Database commit successful for page_id: {page.id}, user_id: {userID}")
+            result, error = submit_wiki_content(
+                campaign, page_title, request.form.get('content', ''), user, page=page)
+            if error:
+                return error
         except Exception as e:
             db.session.rollback()
-            app.logger.error(f"Database commit failed for page_id: {page.id}, user_id: {userID}. Error: {e}")
+            app.logger.error("Database commit failed for page_id %s: %s", page.id, e)
             raise
-
-        # Send a response with success: true
-        return jsonify(success=True)
+        return jsonify(result)
 
     # Handle GET request for displaying the edit page
     elif request.method == "GET":
-        html_content = markdown.markdown(page.content)
-        return render_template('edit_page.html', campaign_name=campaign_name, content=html_content, page_title=page.title)
+        return render_template(
+            'edit_page.html', campaign_name=campaign_name, content=page.content or '',
+            page_title=page.title, save_mode=mode, is_new_page=False,
+        )
 
 
 ##************************##
@@ -5218,10 +6207,14 @@ def days_in_month(calendar, year, month_index):
 
     month = months[month_index]
 
-    if is_leap_year(calendar, year) and month.get('leap_length') is not None:
-        return month['leap_length']
-
-    return month.get('length', 30)
+    length = base_month_days(calendar, year, month_index, is_leap_year)
+    for holiday in get_holidays(calendar):
+        if holiday.get('month_index') != month_index:
+            continue
+        if holiday.get('leap_only') and not is_leap_year(calendar, year):
+            continue
+        length = max(length, int(holiday.get('day', length)))
+    return length
 
 
 def date_to_ordinal(calendar, year, month_index, day):
@@ -5230,12 +6223,45 @@ def date_to_ordinal(calendar, year, month_index, day):
     if not months:
         raise ValueError("Calendar format has no months defined")
 
-    ordinal = 0
     start_year = calendar.epoch_year or 1
 
-    for y in range(start_year, year):
-        for i in range(len(months)):
-            ordinal += days_in_month(calendar, y, i)
+    def configured_month_length(month_index, leap):
+        month = months[month_index]
+        length = int(month.get('leap_length') if leap and month.get('leap_length') is not None else month.get('length', 30))
+        for holiday in get_holidays(calendar):
+            if holiday.get('month_index') != month_index or (holiday.get('leap_only') and not leap):
+                continue
+            length = max(length, int(holiday.get('day', length)))
+        return length
+
+    base_year_length = sum(configured_month_length(index, False) for index in range(len(months)))
+    leap_extra_days = sum(configured_month_length(index, True) - configured_month_length(index, False) for index in range(len(months)))
+    elapsed_years = max(0, year - start_year)
+    leap_years = 0
+    rule = get_calendar_format(calendar).get('leap_rule') or {}
+    rule_type = rule.get('type')
+
+    def count_divisible(first_year, last_year_exclusive, divisor):
+        if divisor <= 0 or last_year_exclusive <= first_year:
+            return 0
+        return ((last_year_exclusive - 1) // divisor) - ((first_year - 1) // divisor)
+
+    if elapsed_years and leap_extra_days:
+        if rule_type == 'gregorian':
+            leap_years = (
+                count_divisible(start_year, year, 4)
+                - count_divisible(start_year, year, 100)
+                + count_divisible(start_year, year, 400)
+            )
+        elif rule_type in {'every_n_years', 'harptos_shieldmeet'}:
+            interval = 4 if rule_type == 'harptos_shieldmeet' else int(rule.get('interval', 4) or 4)
+            leap_years = count_divisible(start_year, year, interval)
+        elif rule_type:
+            # Preserve custom calendar behavior while keeping the common
+            # Gregorian and Harptos paths constant-time.
+            leap_years = sum(1 for candidate in range(start_year, year) if is_leap_year(calendar, candidate))
+
+    ordinal = elapsed_years * base_year_length + leap_years * leap_extra_days
 
     for i in range(month_index):
         ordinal += days_in_month(calendar, year, i)
@@ -5796,6 +6822,247 @@ def user_can_edit_campaign(campaign):
     return bool(user and user.id in {campaign.dm_id, campaign.owner_id})
 
 
+def spatial_campaign_or_error(campaign_id):
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign:
+        return None, (jsonify({'message': 'Campaign not found'}), 404)
+    if not user_can_edit_campaign(campaign):
+        return None, (jsonify({'message': 'Only the campaign DM or owner may manage spatial connections'}), 403)
+    return campaign, None
+
+
+def spatial_failure(error):
+    db.session.rollback()
+    status = 409 if isinstance(error, SpatialConflictError) else 400
+    return jsonify({'message': str(error)}), status
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-spaces', methods=['GET', 'POST'])
+@jwt_required()
+def spatial_spaces_api(campaign_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    if request.method == 'GET':
+        query = SpatialSpace.query.filter_by(campaign_id=campaign_id)
+        if request.args.get('building_id') is not None:
+            query = query.filter_by(building_id=request.args['building_id'])
+        if request.args.get('settlement_id') is not None:
+            try:
+                query = query.filter_by(settlement_id=int(request.args['settlement_id']))
+            except ValueError:
+                return jsonify({'message': 'settlement_id must be an integer'}), 400
+        return jsonify([space_dict(item) for item in query.order_by(SpatialSpace.name, SpatialSpace.id).all()]), 200
+    try:
+        item = create_space(campaign_id, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify(space_dict(item)), 201
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-spaces/<space_id>', methods=['GET', 'PATCH', 'DELETE'])
+@jwt_required()
+def spatial_space_api(campaign_id, space_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    item = SpatialSpace.query.filter_by(id=space_id, campaign_id=campaign_id).first()
+    if not item:
+        return jsonify({'message': 'Spatial space not found'}), 404
+    if request.method == 'GET':
+        return jsonify(space_dict(item)), 200
+    try:
+        if request.method == 'DELETE':
+            delete_space(item)
+            db.session.commit()
+            return jsonify({'deleted_id': space_id}), 200
+        update_space(item, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify(space_dict(item)), 200
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-endpoints', methods=['GET', 'POST'])
+@jwt_required()
+def spatial_endpoints_api(campaign_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    if request.method == 'GET':
+        query = SpatialEndpoint.query.filter_by(campaign_id=campaign_id)
+        if request.args.get('space_id'):
+            query = query.filter_by(space_id=request.args['space_id'])
+        return jsonify([endpoint_dict(item) for item in query.order_by(SpatialEndpoint.name, SpatialEndpoint.id).all()]), 200
+    try:
+        item = create_endpoint(campaign_id, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify(endpoint_dict(item)), 201
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-endpoints/<endpoint_id>', methods=['GET', 'PATCH', 'DELETE'])
+@jwt_required()
+def spatial_endpoint_api(campaign_id, endpoint_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    item = SpatialEndpoint.query.filter_by(id=endpoint_id, campaign_id=campaign_id).first()
+    if not item:
+        return jsonify({'message': 'Spatial endpoint not found'}), 404
+    if request.method == 'GET':
+        return jsonify(endpoint_dict(item)), 200
+    try:
+        if request.method == 'DELETE':
+            delete_endpoint(item)
+            db.session.commit()
+            return jsonify({'deleted_id': endpoint_id}), 200
+        update_endpoint(item, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify(endpoint_dict(item)), 200
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-connections', methods=['GET', 'POST'])
+@jwt_required()
+def spatial_connections_api(campaign_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    if request.method == 'GET':
+        items = SpatialConnection.query.filter_by(campaign_id=campaign_id).order_by(SpatialConnection.created_at).all()
+        space_id = request.args.get('space_id')
+        if space_id:
+            endpoint_ids = {item.id for item in SpatialEndpoint.query.filter_by(
+                campaign_id=campaign_id, space_id=space_id).all()}
+            items = [item for item in items if item.source_endpoint_id in endpoint_ids
+                     or item.destination_endpoint_id in endpoint_ids]
+        values = [connection_dict(item) for item in items]
+        if request.args.get('incomplete', '').lower() in {'1', 'true', 'yes'}:
+            values = [item for item in values if not item['ready_for_traversal']]
+        return jsonify(values), 200
+    try:
+        item = create_connection(campaign_id, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify(connection_dict(item)), 201
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-connections/<connection_id>', methods=['GET', 'PATCH', 'DELETE'])
+@jwt_required()
+def spatial_connection_api(campaign_id, connection_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    item = SpatialConnection.query.filter_by(id=connection_id, campaign_id=campaign_id).first()
+    if not item:
+        return jsonify({'message': 'Spatial connection not found'}), 404
+    if request.method == 'GET':
+        return jsonify(connection_dict(item)), 200
+    try:
+        if request.method == 'DELETE':
+            db.session.delete(item)
+            db.session.commit()
+            return jsonify({'deleted_id': connection_id}), 200
+        update_connection(item, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify(connection_dict(item)), 200
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-graph', methods=['GET'])
+@jwt_required()
+def spatial_graph_api(campaign_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    try:
+        settlement_id = int(request.args.get('settlement_id', ''))
+    except ValueError:
+        return jsonify({'message': 'settlement_id is required and must be an integer'}), 400
+    building_id = request.args.get('building_id')
+    if not building_id:
+        return jsonify({'message': 'building_id is required'}), 400
+    try:
+        value = spatial_graph(campaign_id, settlement_id, building_id)
+        db.session.commit()
+        return jsonify(value), 200
+    except SpatialValidationError as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-connected-space', methods=['POST'])
+@jwt_required()
+def spatial_connected_space_api(campaign_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    try:
+        space, source, destination, connection = create_connected_space(
+            campaign_id, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify({
+            'space': space_dict(space),
+            'source_endpoint': endpoint_dict(source),
+            'destination_endpoint': endpoint_dict(destination),
+            'connection': connection_dict(connection),
+        }), 201
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-configured-connection', methods=['POST'])
+@jwt_required()
+def spatial_configured_connection_api(campaign_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    try:
+        source, destination, connection = create_configured_connection(
+            campaign_id, request.get_json(silent=True) or {})
+        db.session.commit()
+        return jsonify({
+            'source_endpoint': endpoint_dict(source),
+            'destination_endpoint': endpoint_dict(destination),
+            'connection': connection_dict(connection),
+        }), 201
+    except (SpatialValidationError, SpatialConflictError) as error:
+        return spatial_failure(error)
+
+
+@app.route('/api/campaigns/<int:campaign_id>/spatial-layout', methods=['GET', 'PUT'])
+@jwt_required()
+def spatial_layout_api(campaign_id):
+    _, failure = spatial_campaign_or_error(campaign_id)
+    if failure:
+        return failure
+    try:
+        settlement_id = int(request.args.get('settlement_id', ''))
+    except ValueError:
+        return jsonify({'message': 'settlement_id is required and must be an integer'}), 400
+    building_id = request.args.get('building_id')
+    view_mode = request.args.get('view', 'space')
+    if not building_id:
+        return jsonify({'message': 'building_id is required'}), 400
+    try:
+        if request.method == 'GET':
+            item = graph_layout(campaign_id, settlement_id, building_id, view_mode)
+            return jsonify(item.layout if item else {'nodes': {}, 'viewport': {'x': 0, 'y': 0, 'zoom': 1}}), 200
+        item = save_graph_layout(
+            campaign_id, settlement_id, building_id, view_mode,
+            request.get_json(silent=True) or {},
+        )
+        db.session.commit()
+        return jsonify(item.layout), 200
+    except SpatialValidationError as error:
+        return spatial_failure(error)
+
+
 @app.route('/api/settlement-map/<int:campaign_id>', methods=['GET'])
 @jwt_required()
 def get_settlement_map_design(campaign_id):
@@ -5845,6 +7112,12 @@ def terrain_tile_for_lod(payload, requested_cell_feet):
     }
 
 
+def terrain_tile_batch_limit(cell_feet):
+    """Bound decoding and response work to four stored terrain grids."""
+    grid = min(257, max(2, int(math.ceil(4096 / cell_feet)) + 1))
+    return min(4, max(1, (4 * 257 * 257) // (grid * grid)))
+
+
 @app.route('/api/settlement-map/<int:campaign_id>/destinations', methods=['GET'])
 @jwt_required()
 def get_settlement_destinations(campaign_id):
@@ -5881,6 +7154,89 @@ def rest_activity_context(campaign_id, settlement_id, lock=False):
     return design, None
 
 
+def npc_map_campaign(campaign_id):
+    campaign, _user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return None, error
+    if campaign.id != campaign_id:
+        return None, (jsonify({'message': 'Campaign does not match the selected campaign'}), 403)
+    return campaign, None
+
+
+@app.route('/api/settlement-map/<int:campaign_id>/npc-placements', methods=['GET'])
+@jwt_required()
+def npc_map_placements(campaign_id):
+    campaign, error = npc_map_campaign(campaign_id)
+    if error:
+        return error
+    settlement_id = request.args.get('settlement_id', type=int)
+    settlement = WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign.id).first()
+    if not settlement:
+        return jsonify({'message': 'Settlement not found'}), 404
+    all_rows = NpcMapPlacement.query.filter_by(campaign_id=campaign.id).all()
+    current = [row.to_dict() for row in all_rows if row.settlement_id == settlement.id]
+    npcs = [npc.to_dict() for npc in NPC.query.filter_by(campaign_id=campaign.id).order_by(NPC.name).all()
+            if not (npc.profile_metadata or {}).get('disabled')]
+    return jsonify({
+        'placements': current,
+        'manual_npc_ids': [row.npc_id for row in all_rows],
+        'npcs': npcs,
+    }), 200
+
+
+@app.route('/api/npcs/<int:npc_id>/map-placement', methods=['PUT', 'DELETE'])
+@jwt_required()
+def npc_map_placement(npc_id):
+    campaign, _user, error = catalog_campaign_context(require_editor=True)
+    if error:
+        return error
+    npc = NPC.query.filter_by(id=npc_id, campaign_id=campaign.id).first()
+    if not npc:
+        return jsonify({'message': 'NPC not found'}), 404
+    placement = NpcMapPlacement.query.filter_by(campaign_id=campaign.id, npc_id=npc.id).first()
+    if request.method == 'DELETE':
+        if not placement:
+            return jsonify({'message': 'NPC placement not found'}), 404
+        db.session.delete(placement)
+        db.session.commit()
+        return '', 204
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'message': 'Placement must be an object'}), 400
+    if placement and data.get('expected_revision') != placement.revision:
+        return jsonify({'message': 'This token moved since you opened the map. Refresh before moving it.',
+                        'revision': placement.revision}), 409
+    visible = data.get('visible', True)
+    if not isinstance(visible, bool):
+        return jsonify({'message': 'visible must be true or false'}), 400
+    settlement_id = data.get('settlement_id', placement.settlement_id if placement else None)
+    settlement = WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign.id).first()
+    if not settlement:
+        return jsonify({'message': 'Settlement not found'}), 404
+    coordinates = {}
+    for key in ('x', 'y', 'elevation'):
+        fallback = getattr(placement, key) if placement else (0 if key == 'elevation' else None)
+        value = data.get(key, fallback)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return jsonify({'message': f'{key} must be a finite number'}), 400
+        coordinates[key] = float(value)
+    if placement:
+        placement.settlement_id = settlement.id
+        placement.x, placement.y, placement.elevation = coordinates['x'], coordinates['y'], coordinates['elevation']
+        placement.visible = visible
+        placement.revision += 1
+        placement.updated_at = datetime.now(timezone.utc)
+        status = 200
+    else:
+        placement = NpcMapPlacement(campaign_id=campaign.id, settlement_id=settlement.id,
+                                    npc_id=npc.id, visible=visible, **coordinates)
+        db.session.add(placement)
+        status = 201
+    db.session.commit()
+    return jsonify(placement.to_dict()), status
+
+
 @app.route('/api/settlement-map/<int:campaign_id>/rest-activities', methods=['GET', 'POST'])
 @jwt_required()
 def settlement_rest_activities(campaign_id):
@@ -5898,9 +7254,12 @@ def settlement_rest_activities(campaign_id):
         return jsonify({'activities': [record.to_dict() for record in records],
                         'npcs': [{'id': npc.id, 'name': npc.name} for npc in NPC.query.filter_by(campaign_id=campaign_id).order_by(NPC.name).all() if not (npc.profile_metadata or {}).get('disabled')]}), 200
     npc_id = data.get('npc_id')
-    if not isinstance(npc_id, int) or isinstance(npc_id, bool) or not NPC.query.filter_by(id=npc_id, campaign_id=campaign_id).first():
+    if not isinstance(npc_id, int) or isinstance(npc_id, bool):
         return jsonify({'message': 'Choose an NPC in this campaign'}), 400
-    if (db.session.get(NPC, npc_id).profile_metadata or {}).get('disabled'):
+    npc = NPC.query.filter_by(id=npc_id, campaign_id=campaign_id).first()
+    if not npc:
+        return jsonify({'message': 'Choose an NPC in this campaign'}), 400
+    if (npc.profile_metadata or {}).get('disabled'):
         return jsonify({'message': 'Enable this NPC in the campaign before assigning an activity'}), 400
     permissions = data.get('permissions') or {}
     if not isinstance(permissions, dict):
@@ -6002,8 +7361,9 @@ def get_settlement_terrain_tiles(campaign_id):
     if min_x > max_x or min_z > max_z:
         return jsonify({'message': 'Tile bounds are invalid'}), 400
     requested_count = (max_x - min_x + 1) * (max_z - min_z + 1)
-    if requested_count > 1024:
-        return jsonify({'message': 'At most 1024 terrain tiles may be requested'}), 413
+    max_tiles = terrain_tile_batch_limit(cell_feet)
+    if requested_count > max_tiles:
+        return jsonify({'message': f'At most {max_tiles} terrain tiles may be requested at this resolution'}), 413
 
     query = SettlementTerrainTile.query.filter(
         SettlementTerrainTile.settlement_id == design.id,
@@ -6211,11 +7571,16 @@ def save_settlement_map_design(campaign_id):
             if isinstance(item, dict) and 'source' not in item:
                 item['source'] = 'Unknown'
 
-    if 'properties' in provided or ('buildings' in provided and design.properties):
+    if 'properties' in provided or 'buildings' in provided:
         try:
             from property_schema import validate_properties
             validate_properties(provided.get('properties', design.properties or []), provided.get('buildings', design.buildings or []))
         except ValueError as error:
+            return jsonify({'message': str(error)}), 400
+    if 'roads' in provided:
+        try:
+            validate_roads(provided['roads'])
+        except RouteError as error:
             return jsonify({'message': str(error)}), 400
 
     if 'terrain_strokes' in provided:
@@ -6273,6 +7638,8 @@ def save_settlement_map_design(campaign_id):
 
     design.updated_at = datetime.now(timezone.utc)
     try:
+        if 'buildings' in provided:
+            sync_physical_spaces(campaign_id, design)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
@@ -6355,10 +7722,16 @@ def get_travel_context(campaign_id):
     if not user or not is_dm:
         return jsonify(message='Only the campaign DM can inspect party travel.'), 403
     position = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
-    if not position:
-        return jsonify({'message': 'Party position has not been set'}), 404
     points = MapPointOfInterest.query.filter_by(campaign_id=campaign_id).order_by(MapPointOfInterest.name).all()
-    return jsonify({'party_position': position.to_dict(), 'groups': session_travel_groups(campaign_id), 'points_of_interest': [point.to_dict() for point in points]}), 200
+    settlement_id = request.args.get('settlement_id', type=int)
+    settlement = (WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign_id).first()
+                  if settlement_id else WorldAtlasLocation.query.filter_by(campaign_id=campaign_id, map_key=position.map_key).first() if position else None)
+    destinations = settlement_exterior_destinations(settlement, points) if settlement else []
+    return jsonify({'party_position': position.to_dict() if position else None, 'groups': session_travel_groups(campaign_id),
+                    'points_of_interest': [point.to_dict() for point in points],
+                    'destinations': destinations,
+                    'settlement_id': settlement.id if settlement else None,
+                    'map_revision': settlement.updated_at.isoformat() if settlement and settlement.updated_at else None}), 200
 
 
 @app.route('/api/travel/<int:campaign_id>/party-position', methods=['PATCH'])
@@ -6385,8 +7758,6 @@ def calculate_travel(campaign_id):
         return jsonify(message='Only the campaign DM can plan party travel.'), 403
     data = request.json or {}
     origin_record = PartyMapPosition.query.filter_by(campaign_id=campaign_id).first()
-    if not origin_record:
-        return jsonify({'message': 'Party position has not been set'}), 404
 
     destination = data.get('destination')
     poi_id = data.get('poi_id')
@@ -6395,10 +7766,7 @@ def calculate_travel(campaign_id):
         if not poi:
             return jsonify({'message': 'Point of interest not found'}), 404
         destination = poi.to_dict()
-    if not destination or destination.get('x') is None or destination.get('y') is None:
-        return jsonify({'message': 'A destination point or poi_id is required'}), 400
-
-    origin = origin_record.to_dict()
+    origin = origin_record.to_dict() if origin_record else None
     groups = [group for group in session_travel_groups(campaign_id) if group['members']]
     if len(groups) > 1 and not data.get('group_id'):
         return jsonify(message='The party is split. Select a group before calculating travel.'), 400
@@ -6407,17 +7775,73 @@ def calculate_travel(campaign_id):
         if not group or group['location'].get('x') is None or group['location'].get('y') is None:
             return jsonify(message='Choose a group with a mapped coordinate origin, or use a DM-specified journey duration.'), 400
         origin = group['location']
-    destination.setdefault('map_key', origin['map_key'])
+    if not origin:
+        return jsonify(message='Choose a group with a mapped coordinate origin, or set the party position.'), 400
+    settlement_id = data.get('settlement_id')
+    settlement = (WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign_id).first()
+                  if settlement_id is not None else WorldAtlasLocation.query.filter_by(campaign_id=campaign_id, map_key=origin.get('map_key')).first())
+    if data.get('destination_key'):
+        if not settlement:
+            return jsonify(message='Settlement not found.'), 404
+        points = MapPointOfInterest.query.filter_by(campaign_id=campaign_id, map_key=settlement.map_key).all()
+        destination = destination_by_key(settlement, data['destination_key'], points)
+        if not destination:
+            return jsonify(message='That destination is no longer available in this settlement.'), 404
+    if not destination or destination.get('x') is None or destination.get('y') is None:
+        return jsonify({'message': 'A destination point, destination_key, or poi_id is required'}), 400
+    destination.setdefault('map_key', origin.get('map_key'))
     try:
-        estimate = estimate_travel_options(
-            origin,
-            destination,
-            party_size=max(1, int(data.get('party_size', 1))),
-            route_distance_miles=data.get('route_distance_miles'),
-        )
-    except (TypeError, ValueError) as error:
+        if settlement and origin.get('map_key') == settlement.map_key and destination.get('map_key') == settlement.map_key:
+            estimate = plan_route_options(settlement.roads or [], origin, destination,
+                                          party_size=max(1, int(data.get('party_size', 1))))
+            revision = settlement.updated_at.isoformat() if settlement.updated_at else None
+            for option in estimate['options']:
+                if option.get('available'):
+                    option['route'].update(settlement_id=settlement.id, map_key=settlement.map_key,
+                                           map_revision=revision, mode=option['mode'],
+                                           origin={**origin, 'label': origin.get('label') or 'Current location'},
+                                           destination=destination)
+            estimate['map_revision'] = revision
+            estimate['settlement_id'] = settlement.id
+        else:
+            estimate = estimate_travel_options(
+                origin, destination, party_size=max(1, int(data.get('party_size', 1))),
+                route_distance_miles=data.get('route_distance_miles'))
+    except (RouteError, TypeError, ValueError) as error:
         return jsonify({'message': str(error)}), 400
     return jsonify({'origin': origin, 'destination': destination, **estimate}), 200
+
+
+def authoritative_route_plan(campaign_id, origin, route_request):
+    """Recalculate a preview under the session transaction before departure."""
+    settlement_id = route_request.get('settlement_id')
+    settlement = WorldAtlasLocation.query.filter_by(id=settlement_id, campaign_id=campaign_id).first()
+    if not settlement:
+        raise RouteError('Settlement not found.')
+    current_revision = settlement.updated_at.isoformat() if settlement.updated_at else None
+    if route_request.get('map_revision') != current_revision:
+        raise RouteError('The settlement roads changed. Recalculate the route before starting.')
+    points = MapPointOfInterest.query.filter_by(campaign_id=campaign_id, map_key=settlement.map_key).all()
+    destination = (destination_by_key(settlement, route_request.get('destination_key'), points)
+                   if route_request.get('destination_key') else route_request.get('destination'))
+    if not destination or destination.get('x') is None or destination.get('y') is None:
+        raise RouteError('That destination is no longer available in this settlement.')
+    destination = {**destination, 'kind': destination.get('kind') or 'waypoint',
+                   'label': destination.get('label') or destination.get('name') or 'Map waypoint',
+                   'map_key': settlement.map_key, 'settlement_id': settlement.id}
+    if origin.get('map_key') != settlement.map_key:
+        raise RouteError('The group is not currently in this settlement.')
+    mode = route_request.get('mode')
+    option = next((value for value in plan_route_options(settlement.roads or [], origin, destination,
+                   route_request.get('party_size', 1))['options'] if value['mode'] == mode), None)
+    if not option or not option.get('available'):
+        raise RouteError(option.get('unavailable_reason') if option else 'Choose walking, riding, or carriage.')
+    snapshot = option['route']
+    snapshot.update(settlement_id=settlement.id, map_key=settlement.map_key,
+                    map_revision=current_revision, mode=mode,
+                    origin={**origin, 'label': origin.get('label') or 'Current location'},
+                    destination=destination)
+    return snapshot
 
 
 def bootstrap_settlement_economy(campaign_id):
@@ -6676,15 +8100,20 @@ def ensure_calendar_format(format_slug):
     source = CALENDAR_FORMAT_SOURCES.get(format_slug)
     if not source:
         return None
+    calendar_path = Path(app.root_path) / source['filename']
+    with calendar_path.open('r', encoding='utf-8') as calendar_file:
+        format_data = json.load(calendar_file)
     element = GameElement.query.filter_by(
         element_type='calendar_format',
         name=source['name'],
     ).first()
     if element:
+        current = dict(element.data or {})
+        if current.get('seasons') != format_data.get('seasons') or current.get('holidays') != format_data.get('holidays'):
+            current['seasons'] = format_data.get('seasons', [])
+            current['holidays'] = format_data.get('holidays', [])
+            element.data = current
         return element
-    calendar_path = Path(app.root_path) / source['filename']
-    with calendar_path.open('r', encoding='utf-8') as calendar_file:
-        format_data = json.load(calendar_file)
     element = GameElement(
         system=source['system'],
         element_type='calendar_format',
@@ -6851,6 +8280,276 @@ def get_calendar_events(campaign_id):
     return jsonify([event.to_dict() for event in events]), 200
 
 
+def calendar_event_values(event):
+    return {
+        'year': event.start_year,
+        'season': event.season,
+        'month_index': event.start_month_index,
+        'day': event.start_day,
+    }
+
+
+def calendar_event_end_values(event):
+    return {
+        'year': getattr(event, 'end_year', None),
+        'season': getattr(event, 'end_season', None),
+        'month_index': getattr(event, 'end_month_index', None),
+        'day': getattr(event, 'end_day', None),
+    }
+
+
+def validate_calendar_event_document(calendar, data, event=None):
+    current = calendar_event_values(event) if event else {'year': None, 'season': None, 'month_index': None, 'day': None}
+    values = {key: data[key] if key in data else current[key] for key in current}
+    end_current = calendar_event_end_values(event) if event else {'year': None, 'season': None, 'month_index': None, 'day': None}
+    end_values = {key: data[f'end_{key}'] if f'end_{key}' in data else end_current[key] for key in end_current}
+    has_end = any(value not in (None, '') for value in end_values.values())
+    normalized = normalize_partial_date(calendar, values, is_leap_year, days_in_month, allow_year_only=has_end)
+    normalized_end = normalize_partial_date(
+        calendar, end_values, is_leap_year, days_in_month, allow_year_only=True
+    ) if has_end else None
+    if normalized_end and resolved_date(calendar, normalized_end, is_leap_year, base_month_days) < resolved_date(calendar, normalized, is_leap_year, base_month_days):
+        raise ValueError('The range end must be on or after the start.')
+    name = data.get('name', event.name if event else None)
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError('Event title is required.')
+    if len(name.strip()) > 100:
+        raise ValueError('Event title must be 100 characters or fewer.')
+    description = data.get('description', event.description if event else None)
+    if description is not None and not isinstance(description, str):
+        raise ValueError('Event description must be text.')
+    if description and len(description) > 10000:
+        raise ValueError('Event description is too long.')
+    visible = data.get('is_player_visible', event.is_player_visible if event else False)
+    if not isinstance(visible, bool):
+        raise ValueError('Event visibility must be true or false.')
+    npc_ids = data.get('npc_ids', [npc.id for npc in event.characters] if event else [])
+    if not isinstance(npc_ids, list) or any(isinstance(value, bool) or not isinstance(value, int) for value in npc_ids):
+        raise ValueError('NPC selections must be a list of IDs.')
+    npcs = NPC.query.filter(NPC.campaign_id == calendar.campaign_id, NPC.id.in_(set(npc_ids))).all() if npc_ids else []
+    if len(npcs) != len(set(npc_ids)):
+        raise ValueError('Every selected NPC must belong to this campaign.')
+    return normalized, normalized_end, name.strip(), description, visible, npcs
+
+
+def timeline_event_payload(calendar, event):
+    values = calendar_event_values(event)
+    end_values = calendar_event_end_values(event) if getattr(event, 'end_year', None) is not None else None
+    payload = event.to_dict()
+    payload.update({
+        'date_label': date_range_label(calendar, values, end_values, is_leap_year),
+        'precision': 'day' if event.start_day is not None else 'month' if event.start_month_index is not None else 'season' if event.season else 'year',
+        'characters': [],
+    })
+    for npc in sorted(event.characters, key=lambda item: item.name.casefold()):
+        birth = {
+            'year': npc.birth_year,
+            'season': npc.birth_season,
+            'month_index': npc.birth_month_index,
+            'day': npc.birth_day,
+        }
+        payload['characters'].append({
+            'id': npc.id,
+            'name': npc.name,
+            **age_during_event(calendar, birth, values, end_values, is_leap_year, base_month_days, date_to_ordinal),
+        })
+    return payload
+
+
+def timeline_events_for_role(calendar, is_dm):
+    query = CalendarEvent.query.filter_by(calendar_id=calendar.id)
+    if not is_dm:
+        query = query.filter_by(is_player_visible=True)
+    events = list(query.all())
+    events.sort(key=lambda event: (*resolved_date(calendar, calendar_event_values(event), is_leap_year, base_month_days), event.id))
+    return events
+
+
+@app.route('/api/calendar/<int:campaign_id>/timeline', methods=['GET'])
+@jwt_required()
+def get_campaign_timeline(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({'message': f'No calendar found for campaign {campaign_id}'}), 404
+    events = timeline_events_for_role(calendar, is_dm)
+    payload = {
+        'calendar': {
+            'id': calendar.id,
+            'name': calendar.name,
+            'months': get_months(calendar),
+            'seasons': calendar_seasons(calendar),
+            'holidays': calendar_holidays(calendar),
+        },
+        'events': [timeline_event_payload(calendar, event) for event in events],
+        'can_edit': is_dm,
+    }
+    if is_dm:
+        payload['npcs'] = [{
+            'id': npc.id,
+            'name': npc.name,
+            'disabled': bool((npc.profile_metadata or {}).get('disabled')),
+            'birth_year': npc.birth_year,
+            'birth_season': npc.birth_season,
+            'birth_month_index': npc.birth_month_index,
+            'birth_day': npc.birth_day,
+        } for npc in NPC.query.filter_by(campaign_id=campaign_id).order_by(NPC.name).all()]
+    return jsonify(payload), 200
+
+
+@app.route('/api/calendar/<int:campaign_id>/timeline/export', methods=['GET'])
+@jwt_required()
+def export_campaign_timeline(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({'message': f'No calendar found for campaign {campaign_id}'}), 404
+    export_format = str(request.args.get('format') or '').lower()
+    orientation = str(request.args.get('orientation') or 'portrait').lower()
+    if export_format not in {'json', 'markdown', 'pdf'}:
+        return jsonify({'message': 'Export format must be json, markdown, or pdf.'}), 400
+    if export_format == 'pdf' and orientation not in {'portrait', 'landscape'}:
+        return jsonify({'message': 'PDF orientation must be portrait or landscape.'}), 400
+    events = [timeline_event_payload(calendar, event) for event in timeline_events_for_role(calendar, is_dm)]
+    safe_name = secure_filename(calendar.name or 'campaign') or 'campaign'
+    if export_format == 'json':
+        content = build_timeline_json(calendar.name, calendar.format_slug, events).encode('utf-8')
+        response = send_file(io.BytesIO(content), mimetype='application/json; charset=utf-8', as_attachment=True,
+                             download_name=f'{safe_name}-timeline.json')
+    elif export_format == 'markdown':
+        content = build_timeline_markdown(calendar.name, events).encode('utf-8')
+        response = send_file(io.BytesIO(content), mimetype='text/markdown; charset=utf-8', as_attachment=True,
+                             download_name=f'{safe_name}-timeline.md')
+    else:
+        response = send_file(build_timeline_pdf(calendar.name, events, orientation), mimetype='application/pdf',
+                             as_attachment=True, download_name=f'{safe_name}-timeline-{orientation}.pdf')
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
+def timeline_import_identity(name, date, end_date):
+    return (
+        name.strip().casefold(), date['year'], date['season'], date['month_index'], date['day'],
+        end_date['year'] if end_date else None, end_date['season'] if end_date else None,
+        end_date['month_index'] if end_date else None, end_date['day'] if end_date else None,
+    )
+
+
+def prepare_timeline_import(calendar, imported_events):
+    npc_names = {}
+    for npc in NPC.query.filter_by(campaign_id=calendar.campaign_id).all():
+        npc_names.setdefault(npc.name.strip().casefold(), []).append(npc)
+    existing = {
+        timeline_import_identity(event.name, calendar_event_values(event),
+                                 calendar_event_end_values(event) if event.end_year is not None else None)
+        for event in CalendarEvent.query.filter_by(calendar_id=calendar.id).all()
+    }
+    seen = set(existing)
+    prepared, duplicates, invalid, warnings = [], [], [], []
+    for index, raw in enumerate(imported_events, start=1):
+        title = str(raw.get('name') or f'Event {index}').strip()
+        if raw.get('_parse_error'):
+            invalid.append({'index': index, 'name': title, 'reason': raw['_parse_error']})
+            continue
+        selected_npcs = []
+        event_warnings = []
+        for requested_name in raw.get('character_names') or []:
+            matches = npc_names.get(requested_name.strip().casefold(), [])
+            if len(matches) == 1:
+                selected_npcs.append(matches[0])
+            elif matches:
+                event_warnings.append(f'NPC "{requested_name}" is ambiguous and was not linked.')
+            else:
+                event_warnings.append(f'NPC "{requested_name}" was not found and was not linked.')
+        document = {key: raw.get(key) for key in (
+            'name', 'description', 'color', 'is_player_visible', 'year', 'season', 'month_index', 'day',
+            'end_year', 'end_season', 'end_month_index', 'end_day',
+        )}
+        document['npc_ids'] = [npc.id for npc in selected_npcs]
+        if document.get('color') is not None and not re.fullmatch(r'#[0-9a-fA-F]{6}', str(document['color'])):
+            document['color'] = None
+            event_warnings.append('An invalid marker color was replaced with the default color.')
+        try:
+            date, end_date, name, description, visible, npcs = validate_calendar_event_document(calendar, document)
+        except (ValueError, TypeError) as error:
+            invalid.append({'index': index, 'name': title, 'reason': str(error)})
+            continue
+        identity = timeline_import_identity(name, date, end_date)
+        if identity in seen:
+            duplicates.append({'index': index, 'name': name, 'date_label': date_range_label(calendar, date, end_date, is_leap_year)})
+            continue
+        seen.add(identity)
+        warnings.extend({'index': index, 'name': name, 'message': warning} for warning in event_warnings)
+        prepared.append({
+            'index': index, 'name': name, 'description': description, 'visible': visible,
+            'color': document.get('color'), 'date': date, 'end_date': end_date, 'npcs': npcs,
+            'date_label': date_range_label(calendar, date, end_date, is_leap_year),
+            'warnings': event_warnings,
+        })
+    return prepared, duplicates, invalid, warnings
+
+
+@app.route('/api/calendar/<int:campaign_id>/timeline/import', methods=['POST'])
+@jwt_required()
+def import_campaign_timeline(campaign_id):
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user or not is_dm:
+        return jsonify({'message': 'Only the campaign DM can import timeline events.'}), 403
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({'message': f'No calendar found for campaign {campaign_id}'}), 404
+    uploaded = request.files.get('file')
+    if not uploaded or not uploaded.filename:
+        return jsonify({'message': 'Choose a Markdown or JSON timeline file.'}), 400
+    content = uploaded.stream.read(2 * 1024 * 1024 + 1)
+    if len(content) > 2 * 1024 * 1024:
+        return jsonify({'message': 'Timeline import files must be 2 MB or smaller.'}), 413
+    try:
+        source_format, imported_events = parse_timeline_file(uploaded.filename, content, calendar)
+        if len(imported_events) > 1000:
+            raise ValueError('A timeline import may contain at most 1,000 events.')
+        prepared, duplicates, invalid, warnings = prepare_timeline_import(calendar, imported_events)
+    except (ValueError, TypeError) as error:
+        return jsonify({'message': str(error)}), 400
+    summary = {
+        'detected': len(imported_events), 'ready': len(prepared),
+        'duplicates': len(duplicates), 'invalid': len(invalid), 'warnings': len(warnings),
+    }
+    preview = {
+        'source_format': source_format, 'summary': summary,
+        'events': [{'index': item['index'], 'name': item['name'], 'date_label': item['date_label'],
+                    'warnings': item['warnings']} for item in prepared],
+        'duplicates': duplicates, 'invalid': invalid, 'warnings': warnings,
+    }
+    if str(request.form.get('commit') or '').lower() != 'true':
+        return jsonify(preview), 200
+    try:
+        for item in prepared:
+            date, end_date = item['date'], item['end_date']
+            db.session.add(CalendarEvent(
+                calendar_id=calendar.id, source=f"Imported {'JSON' if source_format == 'json' else 'Markdown'}", name=item['name'],
+                description=item['description'], color=item['color'], start_year=date['year'],
+                season=date['season'], start_month_index=date['month_index'], start_day=date['day'],
+                end_year=end_date['year'] if end_date else None,
+                end_season=end_date['season'] if end_date else None,
+                end_month_index=end_date['month_index'] if end_date else None,
+                end_day=end_date['day'] if end_date else None,
+                is_player_visible=item['visible'], characters=item['npcs'],
+            ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Unable to import timeline for campaign %s', campaign_id)
+        return jsonify({'message': 'The timeline import could not be saved.'}), 500
+    if prepared:
+        emit_calendar_updated(campaign_id, {'kind': 'event_imported', 'count': len(prepared)})
+    return jsonify({**preview, 'imported': len(prepared)}), 201
+
+
 #POST   /api/calendar/<campaign_id>/events
 @app.route('/api/calendar/<int:campaign_id>/events', methods=['POST'])
 @jwt_required()
@@ -6863,19 +8562,21 @@ def create_calendar_event(campaign_id):
         return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
 
     data = request.json or {}
+    try:
+        date, end_date, name, description, visible, npcs = validate_calendar_event_document(calendar, data)
+    except (ValueError, TypeError) as error:
+        return jsonify({'message': str(error)}), 400
 
     event = CalendarEvent(
-        calendar_id=calendar.id,
-        source='Homebrew',
-        name=data.get('name'),
-        description=data.get('description'),
-        color=data.get('color'),
-        start_year=data.get('year'),
-        start_month_index=data.get('month_index'),
-        start_day=data.get('day'),
-        start_hour=data.get('hour'),
-        start_minute=data.get('minute'),
-        is_player_visible=data.get('is_player_visible') is True,
+        calendar_id=calendar.id, source='Homebrew', name=name, description=description,
+        color=data.get('color'), start_year=date['year'], season=date['season'],
+        start_month_index=date['month_index'], start_day=date['day'],
+        end_year=end_date['year'] if end_date else None,
+        end_season=end_date['season'] if end_date else None,
+        end_month_index=end_date['month_index'] if end_date else None,
+        end_day=end_date['day'] if end_date else None,
+        start_hour=data.get('hour'), start_minute=data.get('minute'),
+        is_player_visible=visible, characters=npcs,
     )
 
     db.session.add(event)
@@ -6911,27 +8612,29 @@ def update_calendar_event(event_id):
     old_day = event.start_day
 
     data = request.json or {}
+    try:
+        date, end_date, name, description, visible, npcs = validate_calendar_event_document(calendar, data, event)
+    except (ValueError, TypeError) as error:
+        return jsonify({'message': str(error)}), 400
 
-    if 'name' in data:
-        event.name = data['name']
-    if 'description' in data:
-        event.description = data['description']
+    event.name = name
+    event.description = description
     if 'color' in data:
         event.color = data['color']
-    if 'year' in data:
-        event.start_year = data['year']
-    if 'month_index' in data:
-        event.start_month_index = data['month_index']
-    if 'day' in data:
-        event.start_day = data['day']
+    event.start_year = date['year']
+    event.season = date['season']
+    event.start_month_index = date['month_index']
+    event.start_day = date['day']
+    event.end_year = end_date['year'] if end_date else None
+    event.end_season = end_date['season'] if end_date else None
+    event.end_month_index = end_date['month_index'] if end_date else None
+    event.end_day = end_date['day'] if end_date else None
     if 'hour' in data:
         event.start_hour = data['hour']
     if 'minute' in data:
         event.start_minute = data['minute']
-    if 'is_player_visible' in data:
-        if not isinstance(data['is_player_visible'], bool):
-            return jsonify({'message': 'Event visibility must be true or false.'}), 400
-        event.is_player_visible = data['is_player_visible']
+    event.is_player_visible = visible
+    event.characters = npcs
 
     db.session.commit()
 
@@ -7066,6 +8769,78 @@ def get_calendar_month_view(campaign_id):
             'hour': calendar.current_hour,
             'minute': calendar.current_minute,
         }
+    }), 200
+
+
+#GET    /api/calendar/<campaign_id>/year-view
+@app.route('/api/calendar/<int:campaign_id>/year-view', methods=['GET'])
+@jwt_required()
+def get_calendar_year_view(campaign_id):
+    """Return every month in a year with one authorization and event query."""
+    user, _, is_dm, _ = dashboard_campaign_context(campaign_id)
+    if not user:
+        return jsonify({'message': 'Campaign not found or access denied.'}), 404
+    calendar = Calendar.query.filter_by(campaign_id=campaign_id).first()
+    if not calendar:
+        return jsonify({"message": f"No calendar found for campaign {campaign_id}"}), 404
+
+    year = request.args.get('year', type=int, default=calendar.current_year)
+    months = get_months(calendar)
+    weekdays = get_weekdays(calendar)
+    moons = get_moons(calendar)
+
+    event_query = CalendarEvent.query.filter_by(calendar_id=calendar.id, start_year=year)
+    if not is_dm:
+        event_query = event_query.filter_by(is_player_visible=True)
+    event_map = {}
+    for event in event_query.all():
+        event_map.setdefault((event.start_month_index, event.start_day), []).append(event.to_dict())
+
+    month_views = []
+    for month_index, month in enumerate(months):
+        total_days = days_in_month(calendar, year, month_index)
+        holiday_map = {}
+        for holiday in get_holidays_for_month(calendar, year, month_index):
+            holiday_day = holiday.get('day')
+            if holiday_day is not None and 1 <= holiday_day <= total_days:
+                holiday_map.setdefault(holiday_day, []).append(holiday)
+
+        days = []
+        for day_num in range(1, total_days + 1):
+            ordinal = date_to_ordinal(calendar, year, month_index, day_num)
+            days.append({
+                'year': year,
+                'month_index': month_index,
+                'day': day_num,
+                'events': event_map.get((month_index, day_num), []),
+                'holidays': holiday_map.get(day_num, []),
+                'moons': [
+                    {'name': moon.get('name', 'Moon'), 'phase': get_moon_phase(moon, ordinal)}
+                    for moon in moons
+                ],
+                'weather_icon': '',
+            })
+
+        month_views.append({
+            'year': year,
+            'month_index': month_index,
+            'month': month,
+            'columns': weekdays,
+            'days': days,
+        })
+
+    return jsonify({
+        'year': year,
+        'months': month_views,
+        'current_date': {
+            'year': calendar.current_year,
+            'month_index': calendar.current_month_index,
+            'month_name': months[calendar.current_month_index].get('name') if 0 <= calendar.current_month_index < len(months) else None,
+            'month_subtitle': months[calendar.current_month_index].get('subtitle') if 0 <= calendar.current_month_index < len(months) else None,
+            'day': calendar.current_day,
+            'hour': calendar.current_hour,
+            'minute': calendar.current_minute,
+        },
     }), 200
 
 
@@ -7208,6 +8983,7 @@ def get_chat_history():
             'text': message.message_text,
             'type': message.message_type,
             'timestamp': message.timestamp.isoformat() if message.timestamp else None,
+            **app.npc_message_identity(message, db.session.get(Campaign, int(campaignID))),
         }
 
     # Fetch all messages for this user in this campaign
@@ -7516,8 +9292,26 @@ def handle_send_message(messageObj):
     app.logger.debug("MESSAGE- campaignID: %s", campaignID)
     app.logger.debug("MESSAGE- recipients: %s", recipients)
 
+    connected_user = User.query.filter_by(sid=request.sid).first()
+    try:
+        campaign_key = int(campaignID)
+    except (TypeError, ValueError):
+        return {'error': 'Invalid campaign'}
+    campaign = db.session.get(Campaign, campaign_key)
+    if not connected_user or str(connected_user.id) != str(sender) or not campaign:
+        return {'error': 'Unauthorized message author'}
+    sender_npc = None
+    if messageObj.get('sender_npc_id'):
+        if connected_user.id not in (campaign.dm_id, campaign.owner_id) or messageObj.get('type') != 'text_message':
+            return {'error': 'Only the DM may speak as an NPC'}
+        if type(messageObj['sender_npc_id']) is not int:
+            return {'error': 'Invalid NPC identifier'}
+        sender_npc = NPC.query.filter_by(id=messageObj['sender_npc_id'], campaign_id=campaign.id).first()
+        if not sender_npc:
+            return {'error': 'NPC not found'}
+    messageObj.pop('sender_npc_id', None)
     recipient_characters = []
-    
+
     if isinstance(recipients, dict):
         recipients = [recipients]
     
@@ -7596,6 +9390,7 @@ def handle_send_message(messageObj):
 
         new_message = Message(
             sender_id=sender,
+            sender_npc_id=sender_npc.id if sender_npc else None,
             campaign_id=campaignID,
             recipient_ids=",".join(recipient_ids_str),
             message_type=messageObj['type'],
@@ -7606,6 +9401,7 @@ def handle_send_message(messageObj):
         db.session.add(new_message)
         db.session.commit()
 
+        messageObj.update(app.npc_message_identity(new_message, campaign))
         recipient_user_ids = [character.userID for character in recipient_characters]
 
         for recipient_user_id in recipient_user_ids:
@@ -7878,7 +9674,26 @@ def handle_disconnect():
 
 
 from npc_workflow import register_npc_workflow
-register_npc_workflow(app, db, (NPC, NpcScheduleDefinition, NpcScheduleRule, NpcProfileHistory, Calendar, WorldAtlasLocation, CampaignModuleInstallation), catalog_campaign_context, date_to_ordinal, days_in_month)
+register_npc_workflow(
+    app, db,
+    (NPC, NpcScheduleDefinition, NpcScheduleRule, NpcProfileHistory, Calendar,
+     WorldAtlasLocation, CampaignModuleInstallation, CreatureCatalog),
+    catalog_campaign_context, date_to_ordinal, days_in_month,
+    lambda campaign, creature: not creature.is_adventure or creature.source.lower() in campaign_creature_sources(campaign.id),
+    lambda calendar, values: normalize_partial_date(calendar, values, is_leap_year, days_in_month),
+)
+
+from npc_domains import register_npc_domains
+register_npc_domains(app, db, globals())
+
+from npc_media import register_npc_media
+register_npc_media(app, db, globals())
+from npc_voice import register_npc_voice
+register_npc_voice(app, db, globals())
+from npc_chat_media import register_npc_chat_media
+register_npc_chat_media(app, db, globals())
+from npc_voice_events import register_npc_voice_events
+register_npc_voice_events(app, db, globals())
 
 from session_api import register_session_api
 register_session_api(app, globals())

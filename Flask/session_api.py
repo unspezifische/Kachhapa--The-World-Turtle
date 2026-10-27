@@ -5,7 +5,7 @@ from copy import deepcopy
 from urllib.parse import urlsplit
 from flask import request, jsonify
 from flask_jwt_extended import jwt_required
-from session_management import initial_state, apply_command, SessionError, running
+from session_management import initial_state, apply_command, SessionError, running, journey_position, label
 
 
 def register_session_api(app, ns):
@@ -65,18 +65,30 @@ def register_session_api(app, ns):
         result = []
         if 'MapPointOfInterest' not in ns:
             return result
-        for point in ns['MapPointOfInterest'].query.filter_by(campaign_id=campaign_id).all():
+        points = ns['MapPointOfInterest'].query.filter_by(campaign_id=campaign_id).all()
+        for point in points:
             result.append(dict(key=f'poi:{point.id}', kind='poi', label=point.name, **point.to_dict()))
         for place in ns['WorldAtlasLocation'].query.filter_by(campaign_id=campaign_id).all():
             base = dict(settlement_id=place.id, map_key=place.map_key)
+            exterior = {}
+            if 'settlement_exterior_destinations' in ns:
+                exterior = {item['key']: item for item in ns['settlement_exterior_destinations'](
+                    place, [point for point in points if point.map_key == place.map_key])}
             for parcel in place.properties or []:
-                result.append(dict(base, key=f'{place.id}:property:{parcel["id"]}', kind='property', property_id=parcel['id'], label=f'{place.name} / {parcel.get("name") or "Property"}'))
+                key = f'{place.id}:property:{parcel["id"]}'
+                point = exterior.get(key) or {}
+                result.append(dict(base, key=key, kind='property', property_id=parcel['id'],
+                                   label=f'{place.name} / {parcel.get("name") or "Property"}',
+                                   **{axis: point[axis] for axis in ('x', 'y') if axis in point}))
             links = {str(structure): parcel for parcel in place.properties or [] for structure in parcel.get('structure_ids', [])}
             for building in place.buildings or []:
                 parcel = links.get(str(building['id']), {})
                 building_name = f'{place.name} / {parcel.get("name") or "Property"} / {building.get("name") or "Structure"}'
                 structure = dict(base, structure_id=building['id'], property_id=parcel.get('id'))
-                result.append(dict(structure, key=f'{place.id}:structure:{building["id"]}', kind='structure', label=building_name, **{k: building[k] for k in ('x','y','elevation') if k in building}))
+                key = f'{place.id}:structure:{building["id"]}'
+                point = exterior.get(key) or building
+                result.append(dict(structure, key=key, kind='structure', label=building_name,
+                                   **{k: point[k] for k in ('x','y','elevation') if k in point}))
                 for floor in building.get('levels') or []:
                     for room in floor.get('rooms') or []:
                         if isinstance(room, dict) and room.get('id') is not None:
@@ -91,14 +103,29 @@ def register_session_api(app, ns):
             if not canonical:
                 raise SessionError('That mapped location is no longer available in this campaign.')
             return canonical
-        from session_management import label
+        if value.get('x') is not None and value.get('y') is not None and value.get('map_key'):
+            import math
+            place = ns['WorldAtlasLocation'].query.filter_by(campaign_id=campaign_id, map_key=value['map_key']).first()
+            try:
+                x, y = float(value['x']), float(value['y'])
+            except (TypeError, ValueError):
+                raise SessionError('Coordinates must be finite numbers.')
+            if not place or not math.isfinite(x) or not math.isfinite(y):
+                raise SessionError('Choose a mapped point in this campaign.')
+            return {'kind': value.get('kind') or 'coordinate', 'label': label(value.get('label') or value.get('name') or 'Map waypoint'),
+                    'settlement_id': place.id, 'map_key': place.map_key, 'x': x, 'y': y,
+                    **({'elevation': float(value.get('elevation') or 0)} if value.get('elevation') is not None else {})}
         return {'kind': 'manual', 'label': label(value.get('label'))}
 
     def snapshot(campaign_id):
         saved, doc, chars = document(campaign_id)
         cal = ns['Calendar'].query.filter_by(campaign_id=campaign_id).first()
+        now = clock_seconds(cal)
+        for journey in doc.get('journeys', []):
+            if journey.get('status') == 'travelling':
+                journey.update(journey_position(journey, now))
         return dict(revision=saved.revision if saved else 0, document=doc, roster=chars,
-                    calendar=cal.to_dict() if cal else None, now=clock_seconds(cal), locations=locations(campaign_id))
+                    calendar=cal.to_dict() if cal else None, now=now, locations=locations(campaign_id))
 
     def sync_legacy(campaign_id, doc):
         party = next((g for g in doc['groups'] if g['id'] == 'party'), None)
@@ -192,7 +219,19 @@ def register_session_api(app, ns):
             if action == 'group' and data.get('location'):
                 data['location'] = validate_location(data['location'], campaign_id)
             if action == 'journey':
-                data['destination'] = validate_location(data.get('destination'), campaign_id)
+                if data.get('route_request'):
+                    group = next((value for value in doc['groups'] if value['id'] == data.get('group_id')), None)
+                    if not group:
+                        raise SessionError('Choose a travel group.')
+                    try:
+                        route = ns['authoritative_route_plan'](campaign_id, group['location'], data['route_request'])
+                    except ValueError as error:
+                        raise SessionError(str(error))
+                    data['route_snapshot'] = route
+                    data['seconds'] = route['elapsed_seconds']
+                    data['destination'] = route['destination']
+                else:
+                    data['destination'] = validate_location(data.get('destination'), campaign_id)
             if action == 'set_time':
                 if not cal:
                     raise SessionError('Configure the campaign calendar first.')
@@ -209,7 +248,7 @@ def register_session_api(app, ns):
             db.session.commit()
             changed(campaign_id, clock=new_now != now, location=action in ('group', 'stop_journey'))
             # Existing initiative consumers receive only public combat state.
-            if action in ('start_encounter', 'begin_encounter', 'next_turn', 'encounter_status', 'initiative', 'roll_npc_initiative'):
+            if action in ('start_encounter', 'begin_encounter', 'next_turn', 'encounter_status', 'initiative', 'roll_npc_initiative', 'roll_all_npc_initiative'):
                 encounter = running(new_doc)
                 if action == 'start_encounter':
                     # Only explicitly selected players receive the roll prompt.

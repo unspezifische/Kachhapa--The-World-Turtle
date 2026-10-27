@@ -34,27 +34,40 @@
 :where(html[data-kachhapa-ui="core"]) .user-profile-settings-body .dashboard-button { justify-self: start; }
 @media(max-width:680px) { :where(html[data-kachhapa-ui="core"]) .user-profile-grid { grid-template-columns: 1fr; } :where(html[data-kachhapa-ui="core"]) .user-profile-header { padding: 25px; } :where(html[data-kachhapa-ui="core"]) .user-profile-settings summary { flex-wrap: wrap; } }
 
-:where(html[data-kachhapa-ui="core"]) .user-profile-wrap { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-page,
+:where(html[data-kachhapa-ui="core"]) .user-profile-wrap,
+:where(html[data-kachhapa-ui="core"]) .user-profile-grid,
+:where(html[data-kachhapa-ui="core"]) .user-profile-card,
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings { box-sizing: border-box; max-width: 100%; min-width: 0; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-page { overflow-x: hidden; padding: clamp(10px,.9vw,14px); }
+:where(html[data-kachhapa-ui="core"]) .user-profile-wrap { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-back { flex: 0 0 auto; align-self: flex-start; margin: 0; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-header { flex: 0 0 auto; padding: 19px 25px; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-header h1 { margin: 5px 0 3px; font-size: clamp(30px,3vw,43px); }
 :where(html[data-kachhapa-ui="core"]) .user-profile-header p { font-size: 13px; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-grid { flex: 1 1 55%; min-height: 0; margin: 0; overflow: hidden; gap: 12px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-grid { flex: 0 0 auto; min-height: auto; margin: 0; overflow: visible; gap: 12px; align-items: stretch; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-card { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 19px 22px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card { overflow: visible; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-card h2,
 :where(html[data-kachhapa-ui="core"]) .user-profile-settings h2 { margin-bottom: 12px; font-size: 23px; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-portrait { width: clamp(98px,14vh,128px); height: clamp(98px,14vh,128px); flex: 0 0 auto; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-photo-card p { margin: 10px 0; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-card form { gap: 10px; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-card textarea { min-height: 72px; max-height: 100px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card:not(.user-profile-photo-card) form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+:where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card:not(.user-profile-photo-card) form > label:nth-of-type(3),
+:where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card:not(.user-profile-photo-card) .user-profile-form-bottom { grid-column: 1 / -1; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-card textarea { height: 72px; min-height: 72px; max-height: 100px; }
+:where(html[data-kachhapa-ui="core"]) .appearance-settings { flex: 1 1 0; min-height: 72px; margin: 0; overflow-x: hidden; overflow-y: auto; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-settings { flex: 0 0 auto; min-height: 0; overflow: hidden; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] { --settings-summary-height: 58px; position: relative; flex: 1 1 45%; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-settings summary { height: 58px; padding: 12px 22px; font-size: 21px; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body { max-width: none; padding: 0 22px 18px; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] .user-profile-settings-body { position: absolute; top: var(--settings-summary-height); right: 0; bottom: 0; left: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body form { max-width: none; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px 12px; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body form .dashboard-button { grid-column: 3; justify-self: end; }
-:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body p { margin: 0 0 9px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] { position: static; flex: 0 0 auto; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings summary { height: 52px; padding: 10px 22px; font-size: 21px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: baseline; column-gap: 12px; max-width: none; padding: 0 22px 12px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] .user-profile-settings-body { position: static; min-height: 0; overflow: visible; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body form { max-width: none; grid-template-columns: repeat(3,minmax(0,1fr)) auto; align-items: end; gap: 10px 12px; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body form .dashboard-button { grid-column: 4; justify-self: end; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body h2,
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body p { margin: 0; }
+:where(html[data-kachhapa-ui="core"]) .user-profile-settings-body form { grid-column: 1 / -1; margin-top: 8px; }
 :where(html[data-kachhapa-ui="core"]) .user-profile-card,
 :where(html[data-kachhapa-ui="core"]) .user-profile-settings-body { scrollbar-width: thin; }
 
@@ -74,6 +87,11 @@
 @media(max-height:800px) {
   :where(html[data-kachhapa-ui="core"]) .user-profile-header { padding: 12px 20px; }
   :where(html[data-kachhapa-ui="core"]) .user-profile-header p { display: none; }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-grid { max-height: 250px; min-height: 0; }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card { overflow-x: hidden; overflow-y: auto; }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] { display: flex; flex: 0 1 190px; flex-direction: column; max-height: 190px; }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] summary { flex: 0 0 auto; }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] .user-profile-settings-body { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
   :where(html[data-kachhapa-ui="core"]) .user-profile-settings-body h2 { margin-bottom: 6px; }
   :where(html[data-kachhapa-ui="core"]) .user-profile-settings-body p { margin-bottom: 5px; }
   :where(html[data-kachhapa-ui="core"]) .user-profile-settings-body form { gap: 7px 10px; }
@@ -83,4 +101,64 @@
   :where(html[data-kachhapa-ui="core"]) .user-profile-header { padding: 12px 20px; }
   :where(html[data-kachhapa-ui="core"]) .user-profile-header p { display: none; }
   :where(html[data-kachhapa-ui="core"]) .user-profile-settings summary { padding-block: 10px; }
+}
+
+@media(max-width:700px) {
+  :where(html[data-kachhapa-ui="core"]) .user-profile-page {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-wrap {
+    height: auto;
+    overflow-x: hidden;
+    overflow-y: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-grid {
+    flex: none;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-card {
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] {
+    display: block;
+    position: static;
+    flex: none;
+    max-height: none;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings[open] .user-profile-settings-body {
+    position: static;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .appearance-settings {
+    flex: none;
+    min-height: 0;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card:not(.user-profile-photo-card) form,
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings-body {
+    grid-template-columns: 1fr;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card:not(.user-profile-photo-card) form > label,
+  :where(html[data-kachhapa-ui="core"]) .user-profile-grid > .user-profile-card:not(.user-profile-photo-card) .user-profile-form-bottom,
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings-body form {
+    grid-column: 1;
+  }
+}
+
+@media(max-width:700px) {
+  :where(html[data-kachhapa-ui="core"]) .user-profile-card,
+  :where(html[data-kachhapa-ui="core"]) .user-profile-settings {
+    padding: 17px;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-form-bottom {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  :where(html[data-kachhapa-ui="core"]) .user-profile-page button,
+  :where(html[data-kachhapa-ui="core"]) .user-profile-page .dashboard-button {
+    min-height: 44px;
+  }
 }

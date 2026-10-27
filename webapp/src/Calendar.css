@@ -1,8 +1,11 @@
 :where(html[data-kachhapa-ui="core"]) .calendar-page {
   width: 100%;
+  height: 100%;
   padding: 1rem;
   background-color: transparent;
-  min-height: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   color: var(--text-main);
   box-sizing: border-box;
 }
@@ -13,8 +16,70 @@
   border: 1px solid var(--border-main);
   border-radius: 0.5rem;
   background-color: var(--bg-surface);
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-year-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin: 0;
+  padding: .75rem;
+  border-bottom: 1px solid var(--border-main);
+  border-radius: .5rem .5rem 0 0;
+  background: color-mix(in srgb, var(--bg-surface-2) 94%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-year-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 0 1rem 1rem;
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-month-section {
+  overflow: hidden;
+  border: 1px solid var(--border-main);
+  border-radius: .65rem;
+  background: var(--bg-surface);
+  scroll-margin-top: 5.5rem;
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-month-section .month-banner {
+  padding: .75rem 1rem;
+  border-bottom: 1px solid var(--border-main);
+  background: var(--bg-surface-2);
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-month-section .month-banner h2 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  font-size: clamp(1.2rem, 2.4vw, 1.75rem);
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-month-section .month-banner span {
+  color: var(--text-subtle);
+  font-size: .72em;
+  font-weight: 500;
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-controls {
+  align-items: center;
+  gap: .5rem 0;
+  margin: 0;
+  padding: .75rem 1rem;
+}
+
+:where(html[data-kachhapa-ui="core"]) .calendar-timeline-button {
+  border-color: color-mix(in srgb, var(--accent-2) 70%, var(--border-main));
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 72%, var(--accent-2)));
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--accent) 28%, transparent);
+  font-weight: 750;
 }
 
 :where(html[data-kachhapa-ui="core"]) .calendar-topbar,
@@ -334,7 +399,19 @@
 }
 
 @media (max-width: 560px) {
+  :where(html[data-kachhapa-ui="core"]) .calendar-page {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: .5rem;
+  }
+  :where(html[data-kachhapa-ui="core"]) .calendar-page > .calendar-shell {
+    min-width: 680px;
+  }
   :where(html[data-kachhapa-ui="core"]) .calendar-setup-date {
     grid-template-columns: 1fr;
+  }
+  :where(html[data-kachhapa-ui="core"]) .calendar-page .btn,
+  :where(html[data-kachhapa-ui="core"]) .calendar-nav-btn {
+    min-height: 44px;
   }
 }

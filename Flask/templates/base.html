@@ -189,7 +189,7 @@
                     });
                     dropdown.show();
                   } else if (data.message && data.create_option) {
-                    dropdown.append('<div class="dropdown-item">No results found. <a href="/wiki/{{ campaign_name | urlencode }}/create/' + encodeURIComponent(userInput) + '">Create new page</a></div>');
+                    dropdown.append('<div class="dropdown-item">No results found. <a href="/wiki/{{ campaign_name | urlencode }}/' + encodeURIComponent(userInput) + '/create">Create new page</a></div>');
                     dropdown.show();
                   } else {
                     console.error("Unexpected response format or empty data:", data);

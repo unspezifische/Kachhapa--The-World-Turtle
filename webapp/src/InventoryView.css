@@ -19,28 +19,86 @@
   overflow: auto;
 }
 
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-dialog {
-  height: 100vh;
-  margin: 0;
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-dialog {
+  height: auto;
+  max-height: calc(100vh - 1rem);
+  max-height: calc(100dvh - 1rem);
+  margin-block: .5rem;
 }
 
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-content {
-  height: 100%;
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-content {
   display: flex;
-  flex-direction: column;
+  max-height: calc(100vh - 1rem);
+  max-height: calc(100dvh - 1rem);
+  overflow: hidden;
 }
 
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-header,
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-footer {
-  flex-shrink: 0;
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-header,
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-footer {
+  flex: 0 0 auto;
 }
 
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-body {
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-body {
+  min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
 }
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-body,
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-header,
-:where(html[data-kachhapa-ui="core"]) .modal-full-height .modal-footer {
+
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-footer {
+  max-height: min(42vh, 22rem);
+  max-height: min(42dvh, 22rem);
+  overflow-y: auto;
+}
+
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-body,
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-header,
+:where(html[data-kachhapa-ui="core"]) .inventory-item-details-modal .modal-footer {
   padding: 15px;
+}
+
+:where(html[data-kachhapa-ui="core"]) .inventory-page {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding-block: 1rem;
+}
+
+:where(html[data-kachhapa-ui="core"]) .inventory-table-wrap {
+  width: 100%;
+  min-width: 0;
+  min-height: 50vh;
+  max-height: min(700px, 70dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-main);
+  border-radius: .5rem;
+}
+
+:where(html[data-kachhapa-ui="core"]) .inventory-table-wrap .table {
+  min-width: 680px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 700px) {
+  :where(html[data-kachhapa-ui="core"]) .inventory-page {
+    padding: 12px 10px 20px;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .inventory-page h1 {
+    margin-bottom: .75rem;
+    font-size: clamp(1.7rem, 8vw, 2.3rem);
+    overflow-wrap: anywhere;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .inventory-page .row {
+    row-gap: .5rem;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .inventory-page .btn {
+    min-height: 44px;
+  }
+
+  :where(html[data-kachhapa-ui="core"]) .inventory-table-wrap {
+    max-height: none;
+  }
 }

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Button, Form, Alert } from 'react-bootstrap';
 import { newSchedule, routineForOccupation, isScheduleShape, scheduleTimeline } from './npcDraft';
 const activities = ['sleep', 'rest', 'eat', 'prepare_food', 'wash', 'work', 'study', 'socialize', 'worship', 'store_items', 'guard', 'tend_animals', 'trade', 'pass_through', 'change_clothes', 'clean', 'read'];
-export default function NpcScheduleEditor({ value, onChange, npc, occupation, locations = [], readOnly = false, warnings = [], clock = {}, onError = () => {} }) {
+export default function NpcScheduleEditor({ value, onChange, npc, occupation, locations = [], readOnly = false, warnings = [], clock = {}, onError = () => {}, onGenerate }) {
   const [json, setJson] = useState('');
   const [error, setErrorState] = useState('');
   const setError = message => { setErrorState(message); onError(message); };
@@ -25,7 +25,7 @@ export default function NpcScheduleEditor({ value, onChange, npc, occupation, lo
     <p>Campaign time · {hours}-hour day · DM only · planned activities, not automatic movement.</p>
     <div className="npc-timeline" aria-label="Daily schedule timeline">{scheduleTimeline(schedule, dayMinutes, minutes).map(segment => <div key={segment.id} style={{ left: `${segment.start / dayMinutes * 100}%`, width: `${(segment.end - segment.start) / dayMinutes * 100}%` }} title={`${segment.label}: ${segment.start}–${segment.end} campaign minutes`}>{segment.label}</div>)}</div>
     <div className="npc-inline-actions">
-      {!readOnly && <><Form.Check id="npc-schedule-enabled" label="Enable when valid and mapped" checked={!!schedule.enabled} onChange={event => set('enabled', event.target.checked)} /><Button size="sm" onClick={() => onChange(routineForOccupation(schedule, occupation, kept))}>Re-roll Routine</Button><Button size="sm" onClick={() => onChange(null)}>Remove Schedule</Button></>}
+      {!readOnly && <><Form.Check id="npc-schedule-enabled" label="Enable when valid and mapped" checked={!!schedule.enabled} onChange={event => set('enabled', event.target.checked)} /><Button size="sm" onClick={() => onGenerate ? onGenerate(schedule, kept) : onChange(routineForOccupation(schedule, occupation, kept))}>Build from occupations &amp; roles</Button><Button size="sm" onClick={() => onChange(null)}>Remove Schedule</Button></>}
       <Button size="sm" onClick={download}>Export JSON</Button>
     </div>
     {warnings.map(warning => <Alert variant="warning" key={warning}>{warning}</Alert>)}

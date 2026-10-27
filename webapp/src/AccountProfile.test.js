@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import axios from 'axios';
 import AccountProfile from './AccountProfile';
@@ -12,12 +12,14 @@ const playerCampaign = { id: 6, name: 'The Hollow', system: 'D&D', ruleset: '5e'
 const playerCharacter = { id: 20, campaignID: 6, Name: 'Mira', Class: 'Wizard' };
 const props = { headers: { Authorization: 'Bearer token', userID: 3 }, setAccountType: jest.fn(), setSelectedCampaign: jest.fn(), setCharacterName: jest.fn() };
 
-function mockDashboard({ campaigns = [dmCampaign], characters = [], preferences = {}, notes = [], calendar = { configured: false } } = {}) {
+function mockDashboard({ campaigns = [dmCampaign], characters = [], preferences = {}, notes = [], calendar = { configured: false }, friends = { friends: [], incoming_requests: [], outgoing_requests: [] }, invitations = [] } = {}) {
   axios.get.mockImplementation(url => {
     if (url === '/api/campaigns') return Promise.resolve({ data: campaigns });
     if (url === '/api/characters') return Promise.resolve({ data: characters });
     if (url === '/api/profile') return Promise.resolve({ data: { username: 'tester', real_name: 'Taylor' } });
     if (url === '/api/dashboard/preferences') return Promise.resolve({ data: preferences });
+    if (url === '/api/friends') return Promise.resolve({ data: friends });
+    if (url === '/api/campaign-invitations') return Promise.resolve({ data: invitations });
     if (url.endsWith('/quick-notes')) return Promise.resolve({ data: { notes } });
     if (url.startsWith('/api/calendar/')) return Promise.resolve({ data: calendar });
     return Promise.reject(new Error(`Unexpected request: ${url}`));
@@ -54,6 +56,16 @@ test('a direct campaign shortcut takes one click and saving the default uses its
   await waitFor(() => expect(axios.patch).toHaveBeenCalledWith('/api/campaigns/5/landing', { landing_path: '/calendar' }, expect.anything()));
   fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
   expect(screen.getByText('Calendar landing')).toBeInTheDocument();
+});
+
+test('clicking a campaign card selects it without entering the campaign', async () => {
+  mockDashboard({ campaigns: [dmCampaign, playerCampaign] });
+  renderDashboard();
+  const campaignSelect = await screen.findByLabelText('Dashboard campaign');
+  expect(campaignSelect).toHaveValue('5');
+  fireEvent.click(screen.getByRole('button', { name: 'Select campaign The Hollow' }));
+  expect(campaignSelect).toHaveValue('6');
+  expect(props.setSelectedCampaign).not.toHaveBeenCalled();
 });
 
 test('player membership without a character still opens character creation', async () => {
@@ -93,4 +105,60 @@ test('advanced Flask links require a password check and logout is available on t
   expect(screen.getByRole('link', { name: 'Open Flask Dashboard ↗' })).toHaveAttribute('href', expect.stringContaining('/dashboard/'));
   expect(screen.getByRole('link', { name: 'Open Flask Admin ↗' })).toHaveAttribute('href', expect.stringContaining('/admin/'));
   expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument();
+});
+
+test('a player opens Friends between profile and advanced, then can request and accept friends', async () => {
+  mockDashboard({ friends: {
+    friends: [{ id: 1, user: { id: 8, username: 'mira', is_online: true } }],
+    incoming_requests: [{ id: 12, user: { id: 9, username: 'orin' } }],
+    outgoing_requests: [],
+  } });
+  axios.post.mockResolvedValue({ data: { id: 13 } });
+  axios.patch.mockResolvedValue({ data: { status: 'accepted' } });
+  renderDashboard({ ...props, headers: { ...props.headers, userID: 4 } });
+  await screen.findByRole('button', { name: 'Select campaign Star Voyager' });
+  const heroButtons = within(screen.getByRole('banner')).getAllByRole('button');
+  expect(heroButtons.map(button => button.textContent).slice(0, 3)).toEqual(['User profile', 'Friends', 'Advanced']);
+  fireEvent.click(screen.getByRole('button', { name: 'Friends' }));
+  expect(await screen.findByText('@mira')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Add a friend'), { target: { value: 'newfriend' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+  await waitFor(() => expect(axios.post).toHaveBeenCalledWith('/api/friend-requests', { username: 'newfriend' }, expect.anything()));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Accept' })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+  await waitFor(() => expect(axios.patch).toHaveBeenCalledWith('/api/friend-requests/12', { action: 'accept' }, expect.anything()));
+});
+
+test('a DM cannot send friend requests and invites from the campaign card', async () => {
+  mockDashboard({ friends: { friends: [{ id: 1, user: { id: 8, username: 'mira', is_online: true } }], incoming_requests: [], outgoing_requests: [] } });
+  axios.post.mockResolvedValue({ data: { invitations: [{ id: 70 }] } });
+  renderDashboard();
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Friends' }));
+  expect(screen.queryByLabelText('Add a friend')).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog')).toHaveTextContent('choose Invite to campaign');
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Invite to campaign' }));
+  expect(screen.getByText('Invite friends to Star Voyager')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Invite' }));
+  await waitFor(() => expect(axios.post).toHaveBeenCalledWith('/api/campaigns/5/invitations', { user_ids: [8] }, expect.anything()));
+});
+
+test('a pending campaign invitation offers only compatible unassigned characters', async () => {
+  const invitation = { id: 44, inviter: { username: 'dm' }, campaign: { ...playerCampaign, rules_system: 'D&D 5e' } };
+  mockDashboard({
+    characters: [
+      { id: 31, campaignID: null, Name: 'Ready', Class: 'Rogue', system: 'D&D 5e' },
+      { id: 32, campaignID: null, Name: 'Wrong Rules', Class: 'Wizard', system: 'D&D 4e' },
+      { id: 33, campaignID: 5, Name: 'Assigned', Class: 'Fighter', system: 'D&D 5e' },
+    ],
+    invitations: [invitation],
+  });
+  renderDashboard();
+  fireEvent.click(await screen.findByRole('button', { name: 'Accept invitation' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('Ready')).toBeInTheDocument();
+  expect(within(dialog).queryByText('Wrong Rules')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('Assigned')).not.toBeInTheDocument();
 });

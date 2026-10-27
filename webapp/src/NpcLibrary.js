@@ -1,3 +1,6 @@
+import NpcVoiceTriggerEditor from './NpcVoiceTriggerEditor';
+import NpcIdentity from './NpcIdentity';
+import NpcMediaEditor from './NpcMediaEditor';
 import NpcImportMapping from './NpcImportMapping';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Modal, Form, Alert, Table } from 'react-bootstrap';
@@ -5,13 +8,14 @@ import axios from 'axios';
 import NpcCreator from './NpcCreator';
 import NpcScheduleEditor from './NpcScheduleEditor';
 import './NpcWorkflow.css';
-export default function NpcLibrary({ headers, createOpen = false, onCreateClose = () => {}, visible = true, onSaved = () => {} }) {
+export default function NpcLibrary({ headers, createOpen = false, onCreateClose = () => {}, visible = true, onSaved = () => {}, onPlace = () => {} }) {
   const [includeDisabled, setIncludeDisabled] = useState(false);
   const [legacy, setLegacy] = useState(false);
   const [items, setItems] = useState([]), [search, setSearch] = useState(''), [sort, setSort] = useState('name'), [direction, setDirection] = useState('asc');
   const [cursor, setCursor] = useState('0'), [next, setNext] = useState(null), [pages, setPages] = useState([]);
   const [selected, setSelected] = useState(null), [editing, setEditing] = useState(false), [creating, setCreating] = useState(false);
   const [error, setError] = useState(''), [resetPreview, setResetPreview] = useState(false);
+  const [presentation, setPresentation] = useState('compact');
   const [batchPage, setBatchPage] = useState(0);
   const [batch, setBatch] = useState([]), [report, setReport] = useState([]), [importOpen, setImportOpen] = useState(false), [busy, setBusy] = useState(false);
   const [columns, setColumns] = useState(() => { try { return JSON.parse(localStorage.getItem('kachhapa-npc-library-columns')) || ['name', 'source', 'creature_subtype', 'challenge']; } catch { return ['name', 'source', 'creature_subtype', 'challenge']; } });
@@ -25,7 +29,7 @@ export default function NpcLibrary({ headers, createOpen = false, onCreateClose 
   useEffect(() => { if (visible) { let active = true; load().catch(() => { if (active) setError('Could not load NPC library.'); }); return () => { active = false; }; } }, [visible, load]);
   useEffect(() => { setCursor('0'); setPages([]); }, [search, sort, direction, includeDisabled]);
   const run = async operation => { setBusy(true); setError(''); try { await operation(); } catch (err) { setError(err.response?.data?.message || 'Could not update this NPC.'); } finally { setBusy(false); } };
-  const view = npc => run(async () => { const { data } = await axios.get(`/api/npcs/${npc.id}`, { headers }); setSelected(data); setResetPreview(false); });
+  const view = npc => run(async () => { const { data } = await axios.get(`/api/npcs/${npc.id}`, { headers }); setSelected(data); setPresentation(data.combat_profile?.authoring_mode === 'class' ? 'sheet' : 'compact'); setResetPreview(false); });
   const saved = npc => { setSelected(npc); setEditing(false); setCreating(false); onCreateClose(); onSaved(npc); load().catch(() => setError('Saved; refresh the library to see the update.')); };
   const importBatch = apply => run(async () => {
     const results = [];
@@ -48,11 +52,15 @@ export default function NpcLibrary({ headers, createOpen = false, onCreateClose 
       <div className="npc-inline-actions"><Button disabled={!pages.length || busy} onClick={() => { setCursor(pages[pages.length - 1]); setPages(pages.slice(0, -1)); }}>Previous</Button><Button disabled={!next || busy} onClick={() => { setPages([...pages, cursor]); setCursor(next); }}>Next Page</Button></div>
     </section>}
     {error && !selected && !importOpen && <Alert variant="danger" role="alert">{error}</Alert>}
-    <NpcCreator show={creating || createOpen || editing} initial={editing ? selected : null} headers={headers} onClose={() => { setCreating(false); setEditing(false); onCreateClose(); }} onSaved={saved} />
+    <NpcCreator show={creating || createOpen || editing} initial={editing ? selected : null} headers={headers} onClose={() => { setCreating(false); setEditing(false); onCreateClose(); }} onSaved={saved} onPlace={onPlace} />
     <Modal show={!!selected && !editing && !creating && !createOpen} onHide={() => setSelected(null)} size="lg" className="npc-workflow-modal" backdropClassName="npc-workflow-backdrop"><Modal.Header closeButton><Modal.Title>{selected?.name}</Modal.Title></Modal.Header><Modal.Body>{error && <Alert variant="danger" role="alert">{error}</Alert>}{selected && <>
       {selected.profile_metadata?.disabled && <Alert variant="warning">Disabled in this campaign. Hidden from active NPC lists.</Alert>}
-      <p>{selected.source}{selected.original_source ? ` · Original: ${selected.original_source}` : ''}{selected.is_override ? ' · Homebrew override' : ''}</p><p>{selected.size} {selected.creature_type} ({selected.creature_subtype}) · {selected.alignment}</p><p>AC {selected.ac} · HP {selected.hp} · Speed {selected.speed}</p><p>{['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'].map(key => `${key.slice(0, 3).toUpperCase()} ${selected[key]}`).join(' · ')}</p>
-      {['skills', 'saving_throws', 'senses', 'languages', 'immunities', 'resistance', 'challenge', 'traits', 'actions', 'description'].map(key => selected[key] ? <p key={key}><strong>{key.replace(/_/g, ' ')}:</strong> {selected[key]}</p> : null)}
+      <NpcIdentity key={selected.id} npcId={selected.id} name={selected.name} headers={headers} portrait />
+      <p>{selected.source}{selected.original_source ? ` · Original: ${selected.original_source}` : ''}{selected.is_override ? ' · Homebrew override' : ''}</p>
+      {selected.combat_profile && <section className="npc-source-summary"><strong>{selected.combat_profile.authoring_mode === 'legacy' ? 'Legacy NPC stat block' : `${selected.combat_profile.authoring_mode} combat profile`}</strong><span>{selected.combat_profile.source?.name ? `Source: ${selected.combat_profile.source.name}${selected.combat_profile.source.source ? ` · ${selected.combat_profile.source.source}` : ''}` : 'Campaign-authored mechanics'} · source and overrides remain separate</span></section>}
+      {selected.combat_profile?.authoring_mode === 'class' && <div className="npc-inline-actions" role="group" aria-label="NPC presentation"><Button size="sm" variant={presentation === 'sheet' ? 'primary' : 'outline-secondary'} onClick={() => setPresentation('sheet')}>Character Sheet</Button><Button size="sm" variant={presentation === 'compact' ? 'primary' : 'outline-secondary'} onClick={() => setPresentation('compact')}>Compact Stat Block</Button></div>}
+      {selected.combat_enabled === false ? <Alert variant="info">No combat profile. Identity, occupations, roles, schedule, artwork, and voice remain available.</Alert> : presentation === 'sheet' && selected.combat_profile?.authoring_mode === 'class' ? <section className="npc-domain-card"><h3>Character progression</h3><p>Character level {selected.combat_profile.resolved?.character_level || 0}</p>{(selected.combat_profile.source?.classes || []).map(item => <p key={item.id || item.class_name}><strong>{item.class_name} {item.level}</strong>{item.subclass_name ? ` · ${item.subclass_name}` : ''}</p>)}{selected.combat_profile.resolved?.character && <details><summary>Linked character sheet data</summary><pre>{JSON.stringify(selected.combat_profile.resolved.character, null, 2)}</pre></details>}</section> : <><p>{selected.size} {selected.creature_type} ({selected.creature_subtype}) · {selected.alignment}</p><p>AC {selected.ac} · HP {selected.hp} · Speed {selected.speed}</p><p>{['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'].map(key => `${key.slice(0, 3).toUpperCase()} ${selected[key]}`).join(' · ')}</p>{['skills', 'saving_throws', 'senses', 'languages', 'immunities', 'resistance', 'challenge', 'traits', 'actions', 'description'].map(key => selected[key] ? <p key={key}><strong>{key.replace(/_/g, ' ')}:</strong> {selected[key]}</p> : null)}</>}
+      <NpcMediaEditor npc={selected} headers={headers} TriggerEditor={NpcVoiceTriggerEditor} />
       <h3>Schedule</h3><p>Planned Now: {selected.planned?.current?.activity || 'Idle / no scheduled activity'}</p><p>Next Scheduled Activity: {selected.planned?.next?.activity || 'None'}</p>{selected.planned?.reason && <Alert variant="warning">{selected.planned.reason}</Alert>}
       <NpcScheduleEditor readOnly value={selected.schedule} clock={selected.schedule_clock} warnings={selected.schedule_warnings} />
       {resetPreview && <Alert variant="warning">Restore this module’s original character and original schedule? The NPC ID and references stay the same; prior edits remain in history.<div className="npc-inline-actions"><Button disabled={busy} onClick={() => run(async () => { const { data } = await axios.post(`/api/npcs/${selected.id}/reset-override`, { expected_revision: selected.revision }, { headers }); saved(data); setResetPreview(false); })}>Restore Original</Button><Button onClick={() => setResetPreview(false)}>Keep Override</Button></div></Alert>}

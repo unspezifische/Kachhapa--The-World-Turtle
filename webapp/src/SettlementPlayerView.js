@@ -1,9 +1,10 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { settlementLamps } from './settlementStreetLighting';
-import { FALLBACK_ASSET_CATALOG, FEET_PER_SCENE_UNIT } from './settlementEditor';
+import { FALLBACK_ASSET_CATALOG } from './settlementEditor';
 import SettlementMoonPhase from './SettlementMoonPhase';
-import { createTileStore, hydrateTiles, setStoreDefaults, TILE_FEET, tileKey } from './settlementTiles';
+import { createTileStore, hydrateTiles, setStoreDefaults } from './settlementTiles';
+import { planTerrainTileBatches, streamTerrainTileBatches, terrainTileStreamKey } from './terrainTileStream';
 import './SettlementPlayerView.css';
 
 const SettlementMapEditor = lazy(() => import('./SettlementMapEditor'));
@@ -36,44 +37,45 @@ export default function SettlementPlayerView({ headers, socket }) {
   const tileCoverageRef = useRef(new Map());
   const tileFetchTimerRef = useRef(null);
   const tileFetchControllerRef = useRef(null);
+  const tileStreamKeyRef = useRef(null);
 
   const streamTerrainTiles = useCallback((camera) => {
     const bounds = camera?.terrainBounds;
     if (!campaignId || !settlementId || !bounds) return;
+    const cellFeet = Math.max(1, Number(camera.window?.cellFeet) || 16);
+    const key = terrainTileStreamKey(camera, cellFeet, settlementId);
+    if (key === tileStreamKeyRef.current) return;
+    tileStreamKeyRef.current = key;
     if (tileFetchTimerRef.current !== null) clearTimeout(tileFetchTimerRef.current);
+    tileFetchControllerRef.current?.abort();
     tileFetchTimerRef.current = setTimeout(async () => {
       tileFetchTimerRef.current = null;
-      let minX = Math.floor(bounds.minX / TILE_FEET), maxX = Math.floor(bounds.maxX / TILE_FEET);
-      let minZ = Math.floor(bounds.minY / TILE_FEET), maxZ = Math.floor(bounds.maxY / TILE_FEET);
-      if ((maxX - minX + 1) * (maxZ - minZ + 1) > 1024) {
-        const centerX = Math.floor(((camera.target?.[0] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
-        const centerZ = Math.floor(((camera.target?.[2] || 0) * FEET_PER_SCENE_UNIT) / TILE_FEET);
-        minX = centerX - 15; maxX = centerX + 16; minZ = centerZ - 15; maxZ = centerZ + 16;
-      }
-      const cellFeet = Math.max(1, Number(camera.window?.cellFeet) || 16);
-      const grid = Math.min(257, Math.max(2, Math.ceil(TILE_FEET / cellFeet) + 1));
-      let needed = false;
-      for (let z = minZ; z <= maxZ && !needed; z += 1) for (let x = minX; x <= maxX; x += 1) {
-        if ((tileCoverageRef.current.get(tileKey(x, z)) || 0) < grid) { needed = true; break; }
-      }
-      if (!needed) return;
-      tileFetchControllerRef.current?.abort();
+      const batches = planTerrainTileBatches(camera, tileCoverageRef.current, cellFeet);
+      if (!batches.length) { tileStreamKeyRef.current = null; return; }
       const controller = new AbortController();
       tileFetchControllerRef.current = controller;
       try {
-        const response = await axios.get(`/api/settlement-map/${campaignId}/terrain-tiles`, {
-          headers, signal: controller.signal,
-          params: { settlement_id: settlementId, min_x: minX, max_x: maxX,
-            min_z: minZ, max_z: maxZ, cell_feet: cellFeet },
-        });
-        if (controller.signal.aborted) return;
-        for (let z = minZ; z <= maxZ; z += 1) for (let x = minX; x <= maxX; x += 1) {
-          tileCoverageRef.current.set(tileKey(x, z), grid);
-        }
-        hydrateTiles(tileStoreRef.current, response.data.tiles || []);
-        setTileStoreVersion(value => value + 1);
+        await streamTerrainTileBatches(batches, tileCoverageRef.current, controller.signal,
+          async (batch, signal) => {
+            const response = await axios.get(`/api/settlement-map/${campaignId}/terrain-tiles`, {
+              headers, signal, params: { settlement_id: settlementId,
+                min_x: batch.min_x, max_x: batch.max_x, min_z: batch.min_z,
+                max_z: batch.max_z, cell_feet: batch.cell_feet },
+            });
+            return response.data.tiles || [];
+          }, tiles => {
+            if (tiles.length) {
+              hydrateTiles(tileStoreRef.current, tiles);
+              setTileStoreVersion(value => value + 1);
+            }
+          });
       } catch (error) {
         if (!controller.signal.aborted) console.error('Unable to stream player terrain:', error);
+      } finally {
+        if (tileFetchControllerRef.current === controller) {
+          tileFetchControllerRef.current = null;
+          tileStreamKeyRef.current = null;
+        }
       }
     }, 120);
   }, [campaignId, headers, settlementId]);
@@ -81,6 +83,7 @@ export default function SettlementPlayerView({ headers, socket }) {
   useEffect(() => () => {
     if (tileFetchTimerRef.current !== null) clearTimeout(tileFetchTimerRef.current);
     tileFetchControllerRef.current?.abort();
+    tileStreamKeyRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -93,13 +96,21 @@ export default function SettlementPlayerView({ headers, socket }) {
       return Promise.all([
       axios.get(`/api/settlement-map/${campaignId}?settlement_id=${location.id}`, { headers }),
       axios.get(`/api/settlement-simulation/${campaignId}`, { headers }),
-      axios.get(`/api/travel/${campaignId}/context`, { headers }),
+      // Travel planning is DM-only. A player can still use the read-only map
+      // when that optional party-position context is not available.
+      axios.get(`/api/travel/${campaignId}/context`, { headers }).catch(() => ({ data: { party_position: null } })),
       ]);
     }).then(([mapResponse, simulationResponse, travelResponse]) => {
       if (!active) return;
       setMap(mapResponse.data);
       tileStoreRef.current.clear();
       tileCoverageRef.current.clear();
+      if (tileFetchTimerRef.current !== null) {
+        clearTimeout(tileFetchTimerRef.current);
+        tileFetchTimerRef.current = null;
+      }
+      tileFetchControllerRef.current?.abort();
+      tileStreamKeyRef.current = null;
       setStoreDefaults(tileStoreRef.current, { seaLevelFeet: Number(mapResponse.data.environment?.sea_level_feet) || 0 });
       setTileStoreVersion(value => value + 1);
       setSettlementId(mapResponse.data.settlement_id);

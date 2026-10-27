@@ -7,8 +7,15 @@ if [[ $# -lt 1 ]]; then
 fi
 
 hostname=$1
+case "$hostname" in
+  *.local|*.lan) ;;
+  *) hostname="${hostname}.local" ;;
+esac
 shift
 skip_foundry=false
+case "$hostname" in
+  raspberrypii.local|raspberrypii.lan) skip_foundry=true ;;
+esac
 target_ip=""
 while [[ $# -gt 0 ]]; do
   case "$1" in

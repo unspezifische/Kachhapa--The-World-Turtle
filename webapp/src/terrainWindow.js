@@ -22,13 +22,13 @@ export function terrainWindowGeometry(mapData, columns, rows) {
   return { positions: mapData, indices, uvs };
 }
 
-export function createTerrainWindow(scene, mapData, columns, rows) {
+export function createTerrainWindow(scene, mapData, columns, rows, { deferNormals = false } = {}) {
   const mesh = new Mesh('terrain', scene);
   const geometry = terrainWindowGeometry(mapData, columns, rows);
   const normals = new Float32Array(mapData.length);
   const data = new VertexData();
   Object.assign(data, geometry, { normals });
-  VertexData.ComputeNormals(mapData, geometry.indices, normals);
+  if (!deferNormals) VertexData.ComputeNormals(mapData, geometry.indices, normals);
   data.applyToMesh(mesh, true);
   return {
     mesh,

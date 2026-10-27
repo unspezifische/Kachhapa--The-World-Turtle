@@ -9,8 +9,12 @@ class SettlementSimulationDateTest(unittest.TestCase):
     def setUp(self):
         self.context = app_module.app.app_context()
         self.context.push()
+        self.settlements = patch.object(app_module.WorldAtlasLocation, 'query')
+        settlements = self.settlements.start()
+        settlements.filter_by.return_value.order_by.return_value.all.return_value = []
 
     def tearDown(self):
+        self.settlements.stop()
         self.context.pop()
 
     def test_month_name_follows_calendar_date_across_month_boundary(self):

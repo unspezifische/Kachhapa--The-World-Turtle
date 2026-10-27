@@ -2074,7 +2074,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
           <h3>Spells:</h3>
             <div style={{ overflow: 'auto', height: 'calc(100% - 33px)' }}>
               {character.Spells.map((spell, index) => (
-                <p key={index}>{spell}</p>
+                <p key={spell?.id || spell?.SpellID || index}>{typeof spell === 'string' ? spell : spell?.Name || spell?.name}</p>
               ))}
             </div>
         </div>);
@@ -2222,7 +2222,7 @@ function CharacterSheet({ headers, characterName, setCharacterName }) {
 
   return (
     <>
-      <div className="character-sheet-page" style={{ height: '100vh', overflow: 'auto' }}>
+      <div className="character-sheet-page">
         <ResponsiveGridLayout
           className="layout"
           cols={{ lg: 8, md: 8, sm: 6, xs: 4, xxs: 2 }}

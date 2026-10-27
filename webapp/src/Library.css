@@ -1,0 +1,57 @@
+:where(html[data-kachhapa-ui="core"]) .library-page {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding-block: 1rem;
+}
+
+:where(html[data-kachhapa-ui="core"]) .library-scroll {
+  height: calc(100% - 3.5rem);
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+:where(html[data-kachhapa-ui="core"]) .library-toolbar {
+  align-items: center;
+  row-gap: .75rem;
+  margin-bottom: 1rem;
+}
+
+:where(html[data-kachhapa-ui="core"]) .library-filter-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .5rem;
+  min-width: 0;
+}
+
+:where(html[data-kachhapa-ui="core"]) .library-filter-controls input {
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+@media (max-width: 700px) {
+  :where(html[data-kachhapa-ui="core"]) .library-page {
+    height: auto;
+    min-height: 100%;
+    padding: 12px 10px 20px;
+  }
+  :where(html[data-kachhapa-ui="core"]) .library-scroll {
+    height: auto;
+    overflow: visible;
+  }
+  :where(html[data-kachhapa-ui="core"]) .library-toolbar > .col {
+    flex: 0 0 100%;
+  }
+  :where(html[data-kachhapa-ui="core"]) .library-filter-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  :where(html[data-kachhapa-ui="core"]) .library-page button,
+  :where(html[data-kachhapa-ui="core"]) .library-page input,
+  :where(html[data-kachhapa-ui="core"]) .library-page select {
+    min-height: 44px;
+  }
+}

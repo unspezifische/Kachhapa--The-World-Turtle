@@ -48,6 +48,11 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
   const [characters, setCharacters] = useState([]);
   const [profile, setProfile] = useState(null);
   const [preferences, setPreferences] = useState({});
+  const [friends, setFriends] = useState({ friends: [], incoming_requests: [], outgoing_requests: [] });
+  const [campaignInvitations, setCampaignInvitations] = useState([]);
+  const [friendUsername, setFriendUsername] = useState('');
+  const [selectedInvitation, setSelectedInvitation] = useState(null);
+  const [invitationBuilderOpen, setInvitationBuilderOpen] = useState(false);
   const [activeId, setActiveId] = useState(() => Number(localStorage.getItem('dashboardCampaignId')) || null);
   const [notes, setNotes] = useState([]);
   const [calendar, setCalendar] = useState(null);
@@ -61,6 +66,9 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
   const [loading, setLoading] = useState(true);
   const [createCampaignOpen, setCreateCampaignOpen] = useState(false);
   const [createCharacterOpen, setCreateCharacterOpen] = useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
+  const [inviteCampaign, setInviteCampaign] = useState(null);
+  const [invitingUserId, setInvitingUserId] = useState(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedPassword, setAdvancedPassword] = useState('');
   const [advancedUnlocked, setAdvancedUnlocked] = useState(false);
@@ -76,18 +84,40 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
       axios.get('/api/characters', { headers: apiHeaders }),
       axios.get('/api/profile', { headers: apiHeaders }),
       axios.get('/api/dashboard/preferences', { headers: apiHeaders }),
-    ]).then(([campaignResponse, characterResponse, profileResponse, preferenceResponse]) => {
+      axios.get('/api/friends', { headers: apiHeaders }),
+      axios.get('/api/campaign-invitations', { headers: apiHeaders }),
+    ]).then(([campaignResponse, characterResponse, profileResponse, preferenceResponse, friendResponse, invitationResponse]) => {
       if (!alive) return;
       const loaded = campaignResponse.data || [];
       setCampaigns(loaded);
       setCharacters(characterResponse.data || []);
       setProfile(profileResponse.data);
       setPreferences(preferenceResponse.data || {});
+      setFriends(friendResponse.data || { friends: [], incoming_requests: [], outgoing_requests: [] });
+      setCampaignInvitations(invitationResponse.data || []);
       setActiveId(current => loaded.some(item => item.id === current) ? current : loaded[0]?.id || null);
     }).catch(() => { if (alive) setError('Unable to load your dashboard. Try refreshing the page.'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [authorization, apiHeaders]);
+
+  const refreshSocial = async () => {
+    const [friendResponse, invitationResponse] = await Promise.all([
+      axios.get('/api/friends', { headers: apiHeaders }),
+      axios.get('/api/campaign-invitations', { headers: apiHeaders }),
+    ]);
+    setFriends(friendResponse.data || { friends: [], incoming_requests: [], outgoing_requests: [] });
+    setCampaignInvitations(invitationResponse.data || []);
+  };
+
+  const refreshCampaignData = async () => {
+    const [campaignResponse, characterResponse] = await Promise.all([
+      axios.get('/api/campaigns', { headers: apiHeaders }),
+      axios.get('/api/characters', { headers: apiHeaders }),
+    ]);
+    setCampaigns(campaignResponse.data || []);
+    setCharacters(characterResponse.data || []);
+  };
 
   const activeCampaign = campaigns.find(campaign => campaign.id === activeId) || null;
   const isDM = Boolean(activeCampaign && (Number(activeCampaign.dm_id) === userId || Number(activeCampaign.owner_id) === userId));
@@ -204,6 +234,81 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
     }
   };
 
+  const sendFriendRequest = async event => {
+    event.preventDefault();
+    if (!friendUsername.trim()) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await axios.post('/api/friend-requests', { username: friendUsername.trim() }, { headers: apiHeaders });
+      setFriendUsername('');
+      await refreshSocial();
+      setNotice('Friend request sent.');
+    } catch (reason) { setError(reason.response?.data?.message || 'Unable to send the friend request.'); }
+    finally { setBusy(false); }
+  };
+
+  const manageFriendRequest = async (requestId, action) => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      if (action === 'cancel') await axios.delete(`/api/friend-requests/${requestId}`, { headers: apiHeaders });
+      else await axios.patch(`/api/friend-requests/${requestId}`, { action }, { headers: apiHeaders });
+      await refreshSocial();
+      setNotice(action === 'accept' ? 'Friend request accepted.' : action === 'decline' ? 'Friend request declined.' : 'Friend request canceled.');
+    } catch (reason) { setError(reason.response?.data?.message || 'Unable to update the friend request.'); }
+    finally { setBusy(false); }
+  };
+
+  const inviteFriend = async friend => {
+    if (!inviteCampaign) return;
+    setInvitingUserId(friend.user.id); setError(''); setNotice('');
+    try {
+      await axios.post(`/api/campaigns/${inviteCampaign.id}/invitations`, {
+        user_ids: [friend.user.id],
+      }, { headers: apiHeaders });
+      setNotice(`Invitation sent to @${friend.user.username} for ${inviteCampaign.name}.`);
+    } catch (reason) {
+      setError(reason.response?.data?.message || 'Unable to send the campaign invitation.');
+    } finally { setInvitingUserId(null); }
+  };
+
+  const declineCampaignInvitation = async invitation => {
+    setBusy(true); setError('');
+    try {
+      await axios.patch(`/api/campaign-invitations/${invitation.id}`, { action: 'decline' }, { headers: apiHeaders });
+      setCampaignInvitations(current => current.filter(item => item.id !== invitation.id));
+      setSelectedInvitation(null);
+      setNotice(`Invitation to ${invitation.campaign.name} declined.`);
+    } catch (reason) { setError(reason.response?.data?.message || 'Unable to decline the campaign invitation.'); }
+    finally { setBusy(false); }
+  };
+
+  const acceptCampaignInvitation = async ({ characterId, character } = {}) => {
+    if (!selectedInvitation) return null;
+    setBusy(true); setError('');
+    try {
+      const response = await axios.patch(`/api/campaign-invitations/${selectedInvitation.id}`, {
+        action: 'accept', ...(characterId ? { character_id: characterId } : { character }),
+      }, { headers: apiHeaders });
+      await Promise.all([refreshCampaignData(), refreshSocial()]);
+      setSelectedInvitation(null);
+      setInvitationBuilderOpen(false);
+      setNotice(`You joined ${response.data.campaign.name}.`);
+      return response;
+    } catch (reason) {
+      setError(reason.response?.data?.message || 'Unable to accept the campaign invitation.');
+      throw reason;
+    } finally { setBusy(false); }
+  };
+
+  const compatibleInvitationCharacters = selectedInvitation ? characters.filter(character =>
+    character.campaignID == null && character.system === selectedInvitation.campaign.rules_system) : [];
+  const invitationHeaders = selectedInvitation ? {
+    ...headers,
+    CampaignID: selectedInvitation.campaign.id,
+    campaignID: selectedInvitation.campaign.id,
+    System: selectedInvitation.campaign.rules_system,
+  } : headers;
+
   const logOut = async () => {
     try {
       await axios.post('/api/logout', {}, { withCredentials: true });
@@ -259,6 +364,7 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
       </div>
       <div className="dashboard-hero-actions">
         <button type="button" className="dashboard-button dashboard-button-light" onClick={() => navigate('/profile')}>User profile</button>
+        <button type="button" className="dashboard-button dashboard-button-outline" onClick={() => { setInviteCampaign(null); setFriendsOpen(true); }}>Friends</button>
         <button type="button" className="dashboard-button dashboard-button-outline" onClick={openAdvanced}>Advanced</button>
         <a className="dashboard-button dashboard-button-outline" href={mtgUrl} target="_blank" rel="noopener noreferrer">MTG Sandbox ↗</a>
         <button type="button" className="dashboard-button dashboard-button-logout" onClick={logOut}>Log out</button>
@@ -270,7 +376,7 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
 
     <section className="dashboard-section dashboard-campaign-section" aria-labelledby="campaign-heading">
       <div className="dashboard-section-heading"><div><span className="dashboard-kicker">01 / YOUR WORLDS</span><h2 id="campaign-heading">Campaigns</h2></div><button type="button" className="dashboard-text-action" onClick={() => setCreateCampaignOpen(true)}>+ Create campaign</button></div>
-      {loading ? <p>Loading your campaigns…</p> : campaigns.length ? <div className="dashboard-campaign-grid" tabIndex={0} aria-label="Your campaigns">
+      {loading ? <p>Loading your campaigns…</p> : campaigns.length || campaignInvitations.length ? <div className="dashboard-campaign-grid" tabIndex={0} aria-label="Your campaigns">
         {campaigns.map(campaign => {
           const dm = Number(campaign.dm_id) === userId || Number(campaign.owner_id) === userId;
           const options = destinationsFor(campaign);
@@ -278,20 +384,30 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
           const displayedLanding = options.some(([path]) => path === storedLanding) ? storedLanding : (dm ? dmLandingPath : options[0]?.[0]);
           const selected = activeId === campaign.id;
           return <article className={`dashboard-campaign-card${selected ? ' is-selected' : ''}`} key={campaign.id}>
+            <button type="button" className="dashboard-campaign-selector" aria-label={`Select campaign ${campaign.name}`} aria-pressed={selected} onClick={() => setActiveId(campaign.id)} />
             <div className="dashboard-campaign-image" style={{ backgroundImage: `linear-gradient(90deg, rgba(10,20,30,.12), rgba(10,20,30,.72)), url("${campaign.icon || campaignFallback}")` }} aria-hidden="true" />
             <div className="dashboard-campaign-content"><div className="dashboard-card-topline"><span>{dm ? 'Dungeon Master' : 'Player'}</span><span>{campaign.system === 'D&D' ? `D&D · ${campaign.ruleset || '5e'}` : campaign.system}</span></div>
               <h3>{campaign.name}</h3>
-              <div className="dashboard-card-actions"><button type="button" className="dashboard-button dashboard-enter" aria-label={`Open campaign ${campaign.name}`} onClick={() => enterCampaign(campaign)}>Enter campaign <span aria-hidden="true">↗</span></button><a className="dashboard-button dashboard-button-secondary" href={wikiUrl(campaign)} target="_blank" rel="noopener noreferrer">Wiki ↗</a></div>
+              <div className="dashboard-card-actions"><button type="button" className="dashboard-button dashboard-enter" aria-label={`Open campaign ${campaign.name}`} onClick={() => enterCampaign(campaign)}>Enter campaign <span aria-hidden="true">↗</span></button><a className="dashboard-button dashboard-button-secondary" href={wikiUrl(campaign)} target="_blank" rel="noopener noreferrer">Wiki ↗</a>{dm && <button type="button" className="dashboard-button dashboard-button-subtle" onClick={() => { setActiveId(campaign.id); setInviteCampaign(campaign); setFriendsOpen(true); }}>Invite to campaign</button>}</div>
               <div className="dashboard-card-links">{options.filter(([path]) => path !== '/settlementManager' && path !== '/worldAtlas').slice(0, 3).map(([path, label]) => <button type="button" key={path} onClick={() => enterCampaign(campaign, path)}>{label}</button>)}</div>
               <label className="dashboard-landing-label">Open to <select aria-label={`Landing page for ${campaign.name}`} value={displayedLanding} onChange={event => saveLanding(campaign, event.target.value)}>{options.map(([path, label]) => <option key={path} value={path}>{label}</option>)}</select></label>
             </div>
           </article>;
         })}
+        {campaignInvitations.map(invitation => <article className="dashboard-campaign-card dashboard-campaign-invitation" key={`invitation-${invitation.id}`}>
+          <div className="dashboard-campaign-image" style={{ backgroundImage: `linear-gradient(90deg, rgba(10,20,30,.24), rgba(10,20,30,.84)), url("${invitation.campaign.icon || campaignFallback}")` }} aria-hidden="true" />
+          <div className="dashboard-campaign-content"><div className="dashboard-card-topline"><span>Invitation pending</span><span>{invitation.campaign.rules_system}</span></div>
+            <h3>{invitation.campaign.name}</h3>
+            <p className="dashboard-invitation-from">Invited by @{invitation.inviter?.username || 'campaign DM'}</p>
+            <div className="dashboard-card-actions"><button type="button" className="dashboard-button dashboard-enter" onClick={() => setSelectedInvitation(invitation)}>Accept invitation</button><button type="button" className="dashboard-button dashboard-button-subtle" onClick={() => declineCampaignInvitation(invitation)} disabled={busy}>Decline</button></div>
+          </div>
+        </article>)}
       </div> : <div className="dashboard-empty">Your first campaign starts here. Create one to bring characters, notes, and a world calendar together.</div>}
     </section>
 
     <div className="dashboard-context-bar"><div><span className="dashboard-kicker">02 / BETWEEN SESSIONS</span><h2>At your table</h2></div><span className="dashboard-scroll-cue">Scroll widgets for more ↓</span><label>Showing <select aria-label="Dashboard campaign" value={activeId || ''} onChange={event => setActiveId(Number(event.target.value))} disabled={!campaigns.length}>{campaigns.map(campaign => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label></div>
-    {activeCampaign ? <div className="dashboard-widget-grid" tabIndex={0} aria-label="Dashboard widgets">
+    <div className="dashboard-widget-grid" tabIndex={0} aria-label="Dashboard widgets">
+      {activeCampaign ? <>
       <section className="dashboard-widget dashboard-notes" aria-labelledby="notes-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">✎</span><h3 id="notes-heading">Quick notes</h3></div><span className="dashboard-widget-tag">Only you can see these</span></div>
         {!isDM && !activeCharacter ? <div className="dashboard-empty-inline">Create a character to keep private notes for this campaign. <button type="button" onClick={() => setCreateCharacterOpen(true)}>Create character</button></div> : <>
           <p className="dashboard-widget-intro">{isDM ? 'A private place for plans, hooks, and everything between sessions.' : `Thoughts and questions for ${characterName(activeCharacter)}.`}</p>
@@ -304,11 +420,30 @@ export default function AccountProfile({ headers, setAccountType, setSelectedCam
       </section>
       <section className="dashboard-widget dashboard-prompt" aria-labelledby="prompt-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">✦</span><h3 id="prompt-heading">{isDM ? 'Worldbuilding prompt' : 'In-character prompt'}</h3></div><button type="button" className="dashboard-text-action" onClick={() => { setPromptIndex(index => index + 1); setPromptAnswer(''); }}>Another prompt ↻</button></div><blockquote>{prompt}</blockquote><textarea aria-label="Prompt answer" placeholder="Catch your first thought…" value={promptAnswer} onChange={event => setPromptAnswer(event.target.value)} rows={3} maxLength={9000} disabled={!isDM && !activeCharacter} /><button type="button" className="dashboard-button dashboard-button-subtle" disabled={!promptAnswer.trim() || busy || (!isDM && !activeCharacter)} onClick={() => saveNote(`${prompt}\n\n${promptAnswer}`, true)}>Save answer as note</button></section>
       <section className="dashboard-widget dashboard-characters" aria-labelledby="characters-heading"><div className="dashboard-widget-head"><div><span className="dashboard-widget-symbol">♟</span><h3 id="characters-heading">Your characters</h3></div><button type="button" className="dashboard-text-action" onClick={() => setCreateCharacterOpen(true)}>+ Create</button></div>{characters.length ? <div className="dashboard-character-list">{characters.map(character => { const relatedCampaign = campaigns.find(item => item.id === character.campaignID); return <button type="button" key={character.id} disabled={!relatedCampaign} onClick={() => relatedCampaign && enterCampaign(relatedCampaign, '/characterSheet')}><span className="dashboard-character-avatar">{character.avatar?.image_url || character.icon ? <img src={character.avatar?.image_url || character.icon} alt="" /> : characterName(character).slice(0, 2).toUpperCase()}</span><span><strong>{characterName(character)}</strong><small>{relatedCampaign?.name || 'Unassigned character'}</small></span><span aria-hidden="true">↗</span></button>; })}</div> : <p className="dashboard-muted">No characters yet. Create one when you’re ready to join a story.</p>}</section>
-    </div> : null}
+      </> : null}
+    </div>
     <footer className="dashboard-footer"><span>Kachhapa</span><span>Every adventure begins between sessions.</span></footer>
 
     <Modal show={createCampaignOpen} onHide={() => setCreateCampaignOpen(false)}><Modal.Header closeButton><Modal.Title>Create campaign</Modal.Title></Modal.Header><Form onSubmit={createCampaign}><Modal.Body><Form.Group className="mb-3"><Form.Label>Name</Form.Label><Form.Control required value={campaignDraft.name} onChange={event => setCampaignDraft(current => ({ ...current, name: event.target.value }))} /></Form.Group><Form.Group className="mb-3"><Form.Label>System</Form.Label><Form.Select value={campaignDraft.system} onChange={event => setCampaignDraft(current => ({ ...current, system: event.target.value }))}><option>D&D</option></Form.Select></Form.Group><Form.Group className="mb-3"><Form.Label>Ruleset</Form.Label><Form.Select value={campaignDraft.ruleset} onChange={event => setCampaignDraft(current => ({ ...current, ruleset: event.target.value }))}>{['3.5e', '4e', '5e', '5e (2024)'].map(value => <option key={value}>{value}</option>)}</Form.Select></Form.Group><Form.Group className="mb-3"><Form.Label>Module</Form.Label><Form.Select value={campaignDraft.module} onChange={event => setCampaignDraft(current => ({ ...current, module: event.target.value }))}><option value="">None</option><option>Lost Mine of Phandelver</option><option>Waterdeep Dragon Heist</option></Form.Select></Form.Group><Form.Group className="mb-3"><Form.Label>Description</Form.Label><Form.Control as="textarea" value={campaignDraft.description} onChange={event => setCampaignDraft(current => ({ ...current, description: event.target.value }))} /></Form.Group><Form.Check type="switch" label="Set up a calendar now" checked={campaignDraft.calendar_enabled} onChange={event => setCampaignDraft(current => ({ ...current, calendar_enabled: event.target.checked }))} disabled={Boolean(campaignDraft.module)} />{campaignDraft.calendar_enabled && !campaignDraft.module && <><Form.Select className="my-2" aria-label="Calendar system" value={campaignDraft.calendar_format} onChange={event => setCampaignDraft(current => ({ ...current, calendar_format: event.target.value }))}><option value="harptos">Calendar of Harptos</option><option value="gregorian">Gregorian calendar</option></Form.Select><div className="dashboard-date-inputs"><Form.Control aria-label="Starting year" type="number" value={campaignDraft.calendar_year} onChange={event => setCampaignDraft(current => ({ ...current, calendar_year: event.target.value }))} /><Form.Control aria-label="Starting month" type="number" min="1" max="12" value={campaignDraft.calendar_month} onChange={event => setCampaignDraft(current => ({ ...current, calendar_month: event.target.value }))} /><Form.Control aria-label="Starting day" type="number" min="1" max="31" value={campaignDraft.calendar_day} onChange={event => setCampaignDraft(current => ({ ...current, calendar_day: event.target.value }))} /></div></>}</Modal.Body><Modal.Footer><button type="button" className="btn btn-secondary" onClick={() => setCreateCampaignOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>Create campaign</button></Modal.Footer></Form></Modal>
+    <Modal show={friendsOpen} onHide={() => { setFriendsOpen(false); setInviteCampaign(null); }} centered scrollable>
+      <Modal.Header closeButton><Modal.Title>{inviteCampaign ? `Invite friends to ${inviteCampaign.name}` : 'Friends'}</Modal.Title></Modal.Header>
+      <Modal.Body className="dashboard-friends-panel">
+        {!isDM && !inviteCampaign && <form className="dashboard-friend-form" onSubmit={sendFriendRequest}><label htmlFor="friend-username">Add a friend</label><div><input id="friend-username" value={friendUsername} onChange={event => setFriendUsername(event.target.value)} placeholder="Exact username" autoComplete="off" /><button type="submit" className="dashboard-button dashboard-button-primary" disabled={busy || !friendUsername.trim()}>Send request</button></div></form>}
+        {isDM && !inviteCampaign && <p className="dashboard-muted">To invite a friend, choose <strong>Invite to campaign</strong> on that campaign’s card.</p>}
+        {!!friends.incoming_requests.length && <div className="dashboard-request-group"><h4>Requests for you</h4>{friends.incoming_requests.map(item => <div className="dashboard-friend-row" key={item.id}><span className="dashboard-friend-avatar">{item.user.username.slice(0, 2).toUpperCase()}</span><strong>@{item.user.username}</strong><div><button type="button" onClick={() => manageFriendRequest(item.id, 'accept')} disabled={busy}>Accept</button><button type="button" onClick={() => manageFriendRequest(item.id, 'decline')} disabled={busy}>Decline</button></div></div>)}</div>}
+        {!!friends.outgoing_requests.length && <div className="dashboard-request-group"><h4>Sent requests</h4>{friends.outgoing_requests.map(item => <div className="dashboard-friend-row" key={item.id}><span className="dashboard-friend-avatar">{item.user.username.slice(0, 2).toUpperCase()}</span><strong>@{item.user.username}</strong><div><span className="dashboard-pending-label">Pending</span><button type="button" onClick={() => manageFriendRequest(item.id, 'cancel')} disabled={busy}>Cancel</button></div></div>)}</div>}
+        <div className="dashboard-friend-list"><h4>Your friends</h4>{friends.friends.length ? friends.friends.map(item => <div className="dashboard-friend-row" key={item.id}><span className="dashboard-friend-avatar">{item.user.username.slice(0, 2).toUpperCase()}</span><strong>@{item.user.username}</strong><small>{item.user.is_online ? 'Online' : 'Offline'}</small>{inviteCampaign && <button type="button" onClick={() => inviteFriend(item)} disabled={invitingUserId !== null}>{invitingUserId === item.user.id ? 'Inviting…' : 'Invite'}</button>}</div>) : <p className="dashboard-muted">{inviteCampaign ? 'Add friends before inviting them to this campaign.' : 'No friends yet.'}</p>}</div>
+      </Modal.Body>
+    </Modal>
     <CreateCharacterModal show={createCharacterOpen} setShow={setCreateCharacterOpen} onHide={finishCharacterCreation} headers={characterHeaders} />
+    <Modal show={!!selectedInvitation && !invitationBuilderOpen} onHide={() => setSelectedInvitation(null)} centered>
+      <Modal.Header closeButton><Modal.Title>Join {selectedInvitation?.campaign.name}</Modal.Title></Modal.Header>
+      <Modal.Body><p>Choose an unassigned {selectedInvitation?.campaign.rules_system} character, or create a new one for this campaign.</p>
+        {compatibleInvitationCharacters.length ? <div className="dashboard-invitation-characters">{compatibleInvitationCharacters.map(character => <button type="button" key={character.id} onClick={() => acceptCampaignInvitation({ characterId: character.id })} disabled={busy}><strong>{characterName(character)}</strong><small>{character.Class || 'Adventurer'} · {character.system}</small></button>)}</div> : <div className="dashboard-empty-inline">You do not have an unassigned compatible character yet.</div>}
+      </Modal.Body>
+      <Modal.Footer><button type="button" className="btn btn-outline-danger" onClick={() => declineCampaignInvitation(selectedInvitation)} disabled={busy}>Decline invitation</button><button type="button" className="btn btn-primary" onClick={() => setInvitationBuilderOpen(true)} disabled={busy}>Create new character</button></Modal.Footer>
+    </Modal>
+    <CreateCharacterModal show={invitationBuilderOpen} setShow={setInvitationBuilderOpen} onHide={() => setInvitationBuilderOpen(false)} headers={invitationHeaders} onSubmitCharacter={character => acceptCampaignInvitation({ character })} />
     <Modal show={advancedOpen} onHide={() => setAdvancedOpen(false)} centered>
       <Modal.Header closeButton><Modal.Title>Advanced access</Modal.Title></Modal.Header>
       <Modal.Body>

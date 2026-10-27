@@ -127,7 +127,7 @@ printf 'Nginx names: %s, app.%s, tools.%s, mtg.%s, maps.%s\n' \
 
 echo "==> 1) Install base packages"
 ssh -tt "$DESTINATION" "sudo apt update && sudo apt install -y \
-  nginx curl rsync ffmpeg python3-venv python3-pip python3-dev build-essential pkg-config \
+  nginx curl rsync file ffmpeg python3-venv python3-pip python3-dev build-essential pkg-config \
   libpq-dev libssl-dev libffi-dev python3-setuptools \
   cargo rustc \
   postgresql postgresql-contrib \
@@ -141,6 +141,7 @@ ssh -tt "$DESTINATION" "sudo hostnamectl set-hostname $TARGET_HOST_SHORT && sudo
 
 echo "==> 2.5) Configure narrowly scoped passwordless publishing"
 scripts/configure-publish-sudo.sh "$TARGET_HOSTNAME"
+ssh "$DESTINATION" "sudo -n /usr/local/sbin/kachhapa-deploy-root runtime-deps"
 
 echo "==> Configure Avahi hostname aliases for LAN access"
 ssh -tt "$DESTINATION" "sudo bash -lc '

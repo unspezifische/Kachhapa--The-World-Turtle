@@ -23,6 +23,7 @@ CHECK_ONLY=false
 USE_DOCKER=false
 SKIP_FOUNDRY_CHECK=false
 SKIP_TOOLS_TRANSFER=false
+TOOLS_TRANSFERRED=false
 CURRENT_STEP="initialization"
 RENDERED_NGINX_CONFIG=""
 PUBLISH_KACHHAPA_BUILD_DIR=""
@@ -39,15 +40,22 @@ With no deployment selection, all components are selected.
 qualified name like raspberrypii.local or raspberrypii.lan.
 --tailscale-ip uses the IP for SSH and route probes while --hostname remains
 the Nginx virtual host name. Use --hostname raspberrypii for the dev Pi.
---catalog transfers bestiary/adventure JSON and imports them into PostgreSQL.
-It requires --kachhapa, whose backup and migrations run first.
---socket-fix installs only the Socket.IO systemd override and Nginx config;
-it does not transfer app files, build the frontend, or run migrations.
+--catalog explicitly selects the bestiary/adventure/spell PostgreSQL import.
+Every bare-metal --kachhapa publish includes it automatically, after backup and migrations.
+Kachhapa publishes require one Alembic head, upgrade to it, and verify the
+version and schema before activating the frontend or restarting services.
+The publisher never stamps a database automatically.
+--socket-fix repairs both Kachhapa and MTG Socket.IO service configurations,
+ensures MTG's gevent dependencies, and updates Nginx. It does not transfer app
+files, build the frontend, or run migrations.
 --skip-foundry-check omits the Foundry VTT route probe for hosts that do not
 run Foundry. All other route checks still run.
+The raspberrypii development profile skips Foundry verification by default.
 --skip-tools-transfer applies Nginx without resyncing the existing 5etools site.
 Nginx is rendered for NAME plus app.NAME, tools.NAME, mtg.NAME, and maps.NAME.
-Publishing is offline-safe when requirements files are unchanged. Existing
+Publishing verifies system tools and installed Python requirements; missing
+dependencies are installed (Internet access is needed for missing packages).
+Satisfied, unchanged requirements are checked without an index. Existing
 installations must run scripts/configure-publish-sudo.sh NAME once before
 their first fully noninteractive publish.
 
@@ -125,7 +133,7 @@ while [[ $# -gt 0 ]]; do
     --nginx) DEPLOY_NGINX=true ;;
     --modules) DEPLOY_MODULES=true ;;
     --docker) USE_DOCKER=true ;;
-    --skip-foundry-check) SKIP_FOUNDRY_CHECK=true ;;
+    --skip-foundry-check|--skip-foundry) SKIP_FOUNDRY_CHECK=true ;;
     --skip-tools-transfer) SKIP_TOOLS_TRANSFER=true ;;
     --tailscale-ip)
       shift
@@ -178,6 +186,12 @@ if ! $DEPLOY_KACHHAPA && ! $DEPLOY_MTG && ! $DEPLOY_NGINX && ! $DEPLOY_MODULES &
     DEPLOY_NGINX=true
     DEPLOY_MODULES=true
   fi
+fi
+
+# The shared creature/spell/adventure catalog is part of Kachhapa's database.
+# Every bare-metal Kachhapa publish validates, transfers, and idempotently upserts it.
+if $DEPLOY_KACHHAPA && ! $USE_DOCKER; then
+  DEPLOY_CATALOG=true
 fi
 
 $DEPLOY_CATALOG && ! $DEPLOY_KACHHAPA && fail "--catalog requires --kachhapa so database backup and migrations run first."
@@ -239,50 +253,54 @@ for filename in sys.argv[1:]:
 PY
 }
 
-# validate_alembic_graph() {
-#   local migrations_versions_path="${1:-Flask/migrations/versions}"
-#   python3 - "$migrations_versions_path" <<'PY'
-# import ast
-# import sys
-# from pathlib import Path
+validate_alembic_graph() {
+  local migrations_versions_path="${1:-Flask/migrations/versions}"
+  python3 - "$migrations_versions_path" <<'PY'
+import ast
+import sys
+from pathlib import Path
 
-# migrations_path = Path(sys.argv[1])
-# revisions = {}
-# dependencies = set()
+migrations_path = Path(sys.argv[1])
+revisions = {}
+dependencies = set()
 
-# for migration_path in sorted(migrations_path.glob("*.py")):
-#     tree = ast.parse(migration_path.read_text(), filename=str(migration_path))
-#     values = {}
-#     for node in tree.body:
-#         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-#             continue
-#         target = node.targets[0]
-#         if isinstance(target, ast.Name) and target.id in {"revision", "down_revision"}:
-#             values[target.id] = ast.literal_eval(node.value)
-#     revision = values.get("revision")
-#     if not revision:
-#         raise SystemExit(f"{migration_path}: missing revision identifier")
-#     if revision in revisions:
-#         raise SystemExit(f"Duplicate Alembic revision {revision}: {revisions[revision]} and {migration_path}")
-#     revisions[revision] = migration_path
-#     down_revision = values.get("down_revision")
-#     if isinstance(down_revision, str):
-#         dependencies.add(down_revision)
-#     elif down_revision:
-#         dependencies.update(down_revision)
+for migration_path in sorted(migrations_path.glob("*.py")):
+    tree = ast.parse(migration_path.read_text(), filename=str(migration_path))
+    values = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and target.id in {"revision", "down_revision"}:
+            values[target.id] = ast.literal_eval(node.value)
+    revision = values.get("revision")
+    if not revision:
+        raise SystemExit(f"{migration_path}: missing revision identifier")
+    if revision in revisions:
+        raise SystemExit(f"Duplicate Alembic revision {revision}: {revisions[revision]} and {migration_path}")
+    revisions[revision] = migration_path
+    down_revision = values.get("down_revision")
+    if isinstance(down_revision, str):
+        dependencies.add(down_revision)
+    elif down_revision:
+        dependencies.update(down_revision)
 
-# missing = sorted(dependencies.difference(revisions))
-# if missing:
-#     raise SystemExit(f"Alembic migration graph references missing revision(s): {', '.join(missing)}")
+missing = sorted(dependencies.difference(revisions))
+if missing:
+    raise SystemExit(f"Alembic migration graph references missing revision(s): {', '.join(missing)}")
 
-# heads = sorted(set(revisions).difference(dependencies))
-# if not heads:
-#     raise SystemExit("Alembic migration graph has no head revision")
-# print(f"Alembic migration head{'s' if len(heads) != 1 else ''}: {', '.join(heads)}")
-# if len(heads) > 1:
-#     print("Multiple migration branches detected; deployment will apply all heads.")
-# PY
-# }
+heads = sorted(set(revisions).difference(dependencies))
+if not heads:
+    raise SystemExit("Alembic migration graph has no head revision")
+if len(heads) > 1:
+    raise SystemExit(
+        "Alembic migration graph has multiple heads: "
+        + ", ".join(heads)
+        + ". Create and review a merge migration before publishing."
+    )
+print(f"Alembic migration head: {heads[0]}")
+PY
+}
 
 validate_nginx_structure() {
   local config_path=$1
@@ -329,6 +347,8 @@ local_preflight() {
   bash -n "$0"
 
   if $DEPLOY_SOCKET_FIX; then
+    require_path MtG-webapp/backend/mtg-backend.service
+    python3 scripts/check-mtg-socket-config.py
     require_path kachhapa-backend.service
     require_path kachhapa-socket-worker.conf
     require_path scripts/check-socket-deployment-config.py
@@ -347,7 +367,7 @@ local_preflight() {
     require_command npm
     for path in \
       Flask/requirements.txt Flask/app.py \
-      Flask/templates Flask/media/modules kachhapa-backend.service \
+      Flask/templates Flask/media/modules kachhapa-backend.service kachhapa-sound-worker.service \
       webapp/package.json webapp/package-lock.json webapp/src webapp/public; do
       require_path "$path"
     done
@@ -362,16 +382,24 @@ local_preflight() {
     validate_python_syntax Flask/app.py
     validate_python_syntax Flask/module_templates.py
     [[ ! -f Flask/extract_dnd_pdf.py ]] || validate_python_syntax Flask/extract_dnd_pdf.py
-    # validate_alembic_graph
+    validate_alembic_graph
     validate_service_file kachhapa-backend.service
     grep -q '/venv/bin/gunicorn' kachhapa-backend.service ||
       fail "kachhapa-backend.service does not launch Gunicorn from the Kachhapa virtualenv."
+    validate_service_file kachhapa-sound-worker.service
+    grep -q '/venv/bin/flask --app app process-sound-uploads' kachhapa-sound-worker.service ||
+      fail "kachhapa-sound-worker.service does not launch the durable sound worker."
+    grep -q '^Nice=10$' kachhapa-sound-worker.service ||
+      fail "kachhapa-sound-worker.service must remain low priority on the Pi."
     require_path scripts/check-socket-deployment-config.py
+    require_path scripts/check-sound-upload-deployment.py
     # Render even when Nginx is not selected: a later Nginx deploy must retain
     # the same socket routing contract as this backend service.
     prepare_rendered_nginx
     python3 scripts/check-socket-deployment-config.py \
       kachhapa-backend.service "$RENDERED_NGINX_CONFIG"
+    python3 scripts/check-sound-upload-deployment.py \
+      kachhapa-sound-worker.service "$RENDERED_NGINX_CONFIG" docker-compose.yaml
   fi
 
 
@@ -381,7 +409,7 @@ local_preflight() {
   fi
 
   if $DEPLOY_CATALOG; then
-    for path in 5etools-src/data/adventures.json 5etools-src/data/adventure 5etools-src/data/bestiary Flask/import_5etools_catalog.py; do
+    for path in 5etools-src/data/adventures.json 5etools-src/data/adventure 5etools-src/data/bestiary 5etools-src/data/spells Flask/import_5etools_catalog.py; do
       require_path "$path"
     done
     python3 Flask/import_5etools_catalog.py --preview
@@ -392,11 +420,14 @@ local_preflight() {
     for path in \
       MtG-webapp/backend/requirements.txt MtG-webapp/backend/run.py \
       MtG-webapp/backend/app MtG-webapp/backend/scripts MtG-webapp/data \
+      MtG-webapp/data/AllPrintings.sqlite \
       MtG-webapp/backend/mtg-backend.service MtG-webapp/frontend/package.json \
       MtG-webapp/frontend/package-lock.json MtG-webapp/frontend/src \
       MtG-webapp/frontend/public; do
       require_path "$path"
     done
+    [[ -s MtG-webapp/data/AllPrintings.sqlite ]] ||
+      fail "MTG catalog source is empty: MtG-webapp/data/AllPrintings.sqlite"
     validate_python_syntax MtG-webapp/backend/run.py
     validate_service_file MtG-webapp/backend/mtg-backend.service
     python3 scripts/check-mtg-socket-config.py
@@ -404,6 +435,8 @@ local_preflight() {
       fail "MtG-webapp/backend/requirements.txt must pin gunicorn."
     grep -q '/venv/bin/gunicorn' MtG-webapp/backend/mtg-backend.service ||
       fail "mtg-backend.service does not launch Gunicorn from the MTG virtualenv."
+    grep -Fq 'Environment="KACHHAPA_AUTH_URL=http://127.0.0.1"' MtG-webapp/backend/mtg-backend.service ||
+      fail "mtg-backend.service must validate Kachhapa sessions through local Nginx."
   fi
 
   if $DEPLOY_NGINX; then
@@ -414,6 +447,8 @@ local_preflight() {
     validate_nginx_structure "$RENDERED_NGINX_CONFIG" "$TARGET_HOSTNAME"
     python3 scripts/check-socket-deployment-config.py \
       kachhapa-backend.service "$RENDERED_NGINX_CONFIG"
+    python3 scripts/check-sound-upload-deployment.py \
+      kachhapa-sound-worker.service "$RENDERED_NGINX_CONFIG" docker-compose.yaml
     echo "==> Rendered Nginx names for $TARGET_HOSTNAME"
   fi
 }
@@ -451,7 +486,7 @@ remote_preflight() {
   require_command rsync
 
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$DESTINATION" "bash -s" -- \
-    "$DEPLOY_KACHHAPA" "$DEPLOY_MTG" "$DEPLOY_NGINX" "$KACHHAPA_ROOT" "$MTG_ROOT" "$TARGET_HOSTNAME" "$DEPLOY_SOCKET_FIX" <<'REMOTE'
+    "$DEPLOY_KACHHAPA" "$DEPLOY_MTG" "$DEPLOY_NGINX" "$KACHHAPA_ROOT" "$MTG_ROOT" "$TARGET_HOSTNAME" "$DEPLOY_SOCKET_FIX" "$TARGET_HOST_SHORT" "$TAILSCALE_IP" <<'REMOTE'
 set -Eeuo pipefail
 deploy_kachhapa=$1
 deploy_mtg=$2
@@ -460,6 +495,15 @@ kachhapa_root=$4
 mtg_root=$5
 target_hostname=$6
 deploy_socket_fix=$7
+target_host_short=$8
+# SSH does not preserve a trailing empty argument in every invocation form.
+# Publishing by hostname therefore legitimately arrives with only eight args.
+tailscale_ip=${9:-}
+
+repair_command="scripts/configure-publish-sudo.sh $target_host_short"
+if [[ -n "$tailscale_ip" ]]; then
+  repair_command="$repair_command --tailscale-ip $tailscale_ip"
+fi
 
 for command_name in sudo systemctl cmp; do
   command -v "$command_name" >/dev/null || {
@@ -470,8 +514,33 @@ done
 
 if ! sudo -n /usr/local/sbin/kachhapa-deploy-root check; then
   echo "Passwordless publish helper is not configured." >&2
-  echo "Run once from the project directory: scripts/configure-publish-sudo.sh $target_hostname" >&2
+  echo "sudo -n is intentionally non-interactive, so it cannot prompt for a password." >&2
+  echo "Run once from the project directory (this command will prompt): $repair_command" >&2
   exit 1
+fi
+
+if "$deploy_kachhapa" && ! sudo -n /usr/local/sbin/kachhapa-deploy-root capabilities 2>/dev/null | grep -Fxq sound-worker; then
+  echo "The Pi's publish helper predates the sound-worker deployment operation." >&2
+  echo "Running the old helper as root cannot add an operation it does not contain." >&2
+  echo "Refresh the helper and its sudo rule once (this command will prompt): $repair_command" >&2
+  exit 1
+fi
+
+if ! sudo -n /usr/local/sbin/kachhapa-deploy-root capabilities 2>/dev/null | grep -Fxq runtime-deps; then
+  echo "The Pi's publish helper predates runtime dependency checks." >&2
+  echo "Refresh it once: $repair_command" >&2
+  exit 1
+fi
+sudo -n /usr/local/sbin/kachhapa-deploy-root runtime-deps
+
+if "$deploy_mtg" || "$deploy_socket_fix"; then
+  if ! sudo -n /usr/local/sbin/kachhapa-deploy-root capabilities | grep -Fxq mtg-service; then
+    echo "The Pi's publish helper predates MTG service configuration updates." >&2
+    echo "Refresh it once: $repair_command" >&2
+    exit 1
+  fi
+  test -x "$mtg_root/venv/bin/python" ||
+    { echo "Missing MTG virtualenv: $mtg_root/venv" >&2; exit 1; }
 fi
 
 if "$deploy_kachhapa" || "$deploy_socket_fix"; then
@@ -513,10 +582,25 @@ REMOTE
 }
 
 deploy_socket_fix() {
+  CURRENT_STEP="MTG Socket.IO dependencies"
+  ssh "$DESTINATION" "bash -s" -- "$MTG_ROOT" <<'REMOTE'
+set -Eeuo pipefail
+python_bin="$1/venv/bin/python"
+if ! "$python_bin" -c 'import gevent.monkey; import geventwebsocket'; then
+  "$python_bin" -m pip install --disable-pip-version-check 'gevent==24.10.3' 'gevent-websocket==0.10.1'
+fi
+REMOTE
+  deploy_mtg_service
   CURRENT_STEP="Socket.IO service override"
   scp kachhapa-socket-worker.conf "$DESTINATION:/home/ijohnson/kachhapa-socket-worker.conf.new"
   ssh "$DESTINATION" "sudo -n /usr/local/sbin/kachhapa-deploy-root socket-service"
   deploy_nginx
+}
+
+deploy_mtg_service() {
+  CURRENT_STEP="MTG Socket.IO service configuration"
+  scp MtG-webapp/backend/mtg-backend.service "$DESTINATION:/home/ijohnson/mtg-backend.service.new"
+  ssh "$DESTINATION" "sudo -n /usr/local/sbin/kachhapa-deploy-root mtg-service"
 }
 
 deploy_tools() {
@@ -525,17 +609,23 @@ deploy_tools() {
   ssh "$DESTINATION" "mkdir -p /home/ijohnson/5etools-src"
   rsync -avz --delete --exclude='.git/' 5etools-src/ \
     "$DESTINATION:/home/ijohnson/5etools-src/"
+  TOOLS_TRANSFERRED=true
 }
 
 deploy_catalog() {
-  CURRENT_STEP="5etools catalog data transfer"
-  echo "==> Transferring bestiary and adventure JSON"
-  ssh "$DESTINATION" "mkdir -p /home/ijohnson/5etools-src/data/adventure /home/ijohnson/5etools-src/data/bestiary"
-  rsync -avz 5etools-src/data/adventures.json "$DESTINATION:/home/ijohnson/5etools-src/data/"
-  rsync -avz 5etools-src/data/adventure/ "$DESTINATION:/home/ijohnson/5etools-src/data/adventure/"
-  rsync -avz 5etools-src/data/bestiary/ "$DESTINATION:/home/ijohnson/5etools-src/data/bestiary/"
+  if $TOOLS_TRANSFERRED; then
+    echo "==> Reusing catalog JSON from the completed 5etools site transfer"
+  else
+    CURRENT_STEP="5etools catalog data transfer"
+    echo "==> Transferring bestiary, adventure, and spell JSON"
+    ssh "$DESTINATION" "mkdir -p /home/ijohnson/5etools-src/data/adventure /home/ijohnson/5etools-src/data/bestiary /home/ijohnson/5etools-src/data/spells"
+    rsync -avz 5etools-src/data/adventures.json "$DESTINATION:/home/ijohnson/5etools-src/data/"
+    rsync -avz 5etools-src/data/adventure/ "$DESTINATION:/home/ijohnson/5etools-src/data/adventure/"
+    rsync -avz 5etools-src/data/bestiary/ "$DESTINATION:/home/ijohnson/5etools-src/data/bestiary/"
+    rsync -avz 5etools-src/data/spells/ "$DESTINATION:/home/ijohnson/5etools-src/data/spells/"
+  fi
   CURRENT_STEP="5etools catalog database import"
-  echo "==> Importing creature and adventure catalog"
+  echo "==> Importing creature, adventure, and spell catalog"
   ssh "$DESTINATION" "cd '$KACHHAPA_ROOT/Flask' && '$KACHHAPA_ROOT/venv/bin/python' import_5etools_catalog.py --data-dir /home/ijohnson/5etools-src/data --commit"
 }
 
@@ -566,6 +656,48 @@ REMOTE
   trap - RETURN
 }
 
+migrate_kachhapa_database() {
+  CURRENT_STEP="Kachhapa database migration"
+  echo "==> Applying and verifying the Kachhapa database migration head"
+  ssh "$DESTINATION" "bash -s" -- "$KACHHAPA_ROOT" <<'REMOTE'
+set -Eeuo pipefail
+root=$1
+cd "$root/Flask"
+flask_bin="$root/venv/bin/flask"
+
+mapfile -t migration_heads < <("$flask_bin" db heads | awk '$2 == "(head)" {print $1}')
+if [[ ${#migration_heads[@]} -ne 1 ]]; then
+  echo "Database migration refused: the deployed Alembic graph has ${#migration_heads[@]} heads." >&2
+  "$flask_bin" db heads >&2 || true
+  echo "Create and review an Alembic merge migration, then publish again." >&2
+  echo "Do not use 'flask db stamp' as a substitute for applying schema changes; stamping only changes Alembic bookkeeping." >&2
+  exit 1
+fi
+
+expected_head=${migration_heads[0]}
+echo "Expected Alembic head: $expected_head"
+"$flask_bin" db upgrade head
+
+mapfile -t current_heads < <("$flask_bin" db current | awk '$2 == "(head)" {print $1}')
+if [[ ${#current_heads[@]} -ne 1 || "${current_heads[0]:-}" != "$expected_head" ]]; then
+  echo "Database migration verification failed: the database is not at the deployed head $expected_head." >&2
+  echo "Current database revision(s):" >&2
+  "$flask_bin" db current >&2 || true
+  exit 1
+fi
+
+if ! "$flask_bin" db check; then
+  echo "Database schema verification failed after reaching Alembic head $expected_head." >&2
+  echo "The version table and actual schema disagree, or a model change has no migration." >&2
+  echo "The publish has stopped before frontend activation and service restart." >&2
+  echo "Repair or add the migration; do not stamp the head unless the schema was independently verified." >&2
+  exit 1
+fi
+
+echo "Database migration verified at Alembic head $expected_head."
+REMOTE
+}
+
 deploy_kachhapa() {
   CURRENT_STEP="Kachhapa file transfer"
   echo "==> Deploying Kachhapa"
@@ -585,21 +717,21 @@ set -Eeuo pipefail
 root=$1
 current="$root/Flask/requirements.txt"
 candidate="$current.new"
-if [[ -f "$current" ]] && cmp -s "$candidate" "$current"; then
+if [[ -f "$current" ]] && cmp -s "$candidate" "$current" &&
+   "$root/venv/bin/python" -m pip install --disable-pip-version-check --dry-run --no-index -r "$candidate"; then
   rm -f "$candidate"
-  echo "Kachhapa requirements unchanged; skipping pip install."
+  echo "Kachhapa requirements unchanged and installed; skipping pip install."
 else
-  echo "Kachhapa requirements changed; installing dependencies."
+  echo "Kachhapa requirements changed or incomplete; installing dependencies."
   "$root/venv/bin/python" -m pip install --disable-pip-version-check -r "$candidate"
   mv "$candidate" "$current"
 fi
+"$root/venv/bin/python" -m pip check
 REMOTE
 
   backup_kachhapa_database
 
-  CURRENT_STEP="Kachhapa database migration"
-  echo "==> Applying all Kachhapa database migration heads"
-  ssh "$DESTINATION" "cd $KACHHAPA_ROOT/Flask && source $KACHHAPA_ROOT/venv/bin/activate && flask db upgrade heads"
+  migrate_kachhapa_database
 
   CURRENT_STEP="Kachhapa frontend deployment"
   ssh "$DESTINATION" "mkdir -p '$KACHHAPA_ROOT/webapp/build.next'"
@@ -654,6 +786,10 @@ fi
 REMOTE
     fail "Kachhapa backend restart failed; the previous frontend was restored."
   fi
+
+  CURRENT_STEP="Kachhapa sound worker installation"
+  scp kachhapa-sound-worker.service "$DESTINATION:/home/ijohnson/kachhapa-sound-worker.service.new"
+  ssh "$DESTINATION" "sudo -n /usr/local/sbin/kachhapa-deploy-root sound-worker"
 }
 
 deploy_mtg() {
@@ -668,6 +804,10 @@ deploy_mtg() {
   rsync -avz MtG-webapp/data/ "$DESTINATION:$MTG_ROOT/data/"
   rsync -avz --delete MtG-webapp/frontend/build/ "$DESTINATION:$MTG_ROOT/frontend/build/"
 
+  CURRENT_STEP="MTG catalog source verification"
+  ssh "$DESTINATION" "test -s '$MTG_ROOT/data/AllPrintings.sqlite'" ||
+    fail "The deployed MTG catalog source is missing or empty: $MTG_ROOT/data/AllPrintings.sqlite"
+
   CURRENT_STEP="MTG frontend artifact verification"
   ssh "$DESTINATION" "test -r '$MTG_ROOT/frontend/build/index.html' && test -s '$MTG_ROOT/frontend/build/index.html'" ||
     fail "The deployed MTG frontend is missing a readable, non-empty build/index.html."
@@ -679,26 +819,59 @@ set -Eeuo pipefail
 root=$1
 current="$root/backend/requirements.txt"
 candidate="$current.new"
-if [[ -f "$current" ]] && cmp -s "$candidate" "$current"; then
+if [[ -f "$current" ]] && cmp -s "$candidate" "$current" &&
+   "$root/venv/bin/python" -m pip install --disable-pip-version-check --dry-run --no-index -r "$candidate"; then
   rm -f "$candidate"
-  echo "MTG requirements unchanged; skipping pip install."
+  echo "MTG requirements unchanged and installed; skipping pip install."
 else
-  echo "MTG requirements changed; installing dependencies."
+  echo "MTG requirements changed or incomplete; installing dependencies."
   "$root/venv/bin/python" -m pip install --disable-pip-version-check -r "$candidate"
   mv "$candidate" "$current"
 fi
+"$root/venv/bin/python" -m pip check
 REMOTE
 
   CURRENT_STEP="MTG database setup"
   ssh "$DESTINATION" "sudo -n /usr/local/sbin/kachhapa-deploy-root mtg-db"
-  ssh "$DESTINATION" "cd '$MTG_ROOT/backend' && DATABASE_URL='postgresql+psycopg2://admin:admin@127.0.0.1:5432/mtg_sandbox' PG_RAW_URL='postgresql://admin:admin@127.0.0.1:5432/mtg_sandbox' '$MTG_ROOT/venv/bin/python' -c 'from run import initialize_database; initialize_database()'"
 
+  CURRENT_STEP="MTG authentication upstream check"
+  ssh "$DESTINATION" "status=\$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1/api/session); [[ \"\$status\" == 200 || \"\$status\" == 401 ]]" ||
+    fail "Kachhapa session validation is unavailable through local Nginx."
+
+  # Alembic must own schema changes. initialize_database() calls db.create_all(),
+  # so running it first would create new model tables before their migration.
   CURRENT_STEP="MTG database migration"
   echo "==> Applying MTG database migration heads"
   ssh "$DESTINATION" "cd '$MTG_ROOT/backend' && FLASK_APP='app:create_app' DATABASE_URL='postgresql+psycopg2://admin:admin@127.0.0.1:5432/mtg_sandbox' PG_RAW_URL='postgresql://admin:admin@127.0.0.1:5432/mtg_sandbox' '$MTG_ROOT/venv/bin/flask' db upgrade heads"
 
+  CURRENT_STEP="MTG post-migration database initialization"
+  ssh "$DESTINATION" "cd '$MTG_ROOT/backend' && DATABASE_URL='postgresql+psycopg2://admin:admin@127.0.0.1:5432/mtg_sandbox' PG_RAW_URL='postgresql://admin:admin@127.0.0.1:5432/mtg_sandbox' '$MTG_ROOT/venv/bin/python' -c 'from run import initialize_database; initialize_database()'"
+
+  CURRENT_STEP="MTG card catalog import"
+  echo "==> Populating the MTG card catalog when empty"
+  ssh "$DESTINATION" "bash -s" -- "$MTG_ROOT" <<'REMOTE'
+set -Eeuo pipefail
+root=$1
+card_count=$(PGPASSWORD=admin psql \
+  --host=127.0.0.1 \
+  --username=admin \
+  --dbname=mtg_sandbox \
+  --tuples-only \
+  --no-align \
+  --command='SELECT COUNT(*) FROM "mtgCore".cards;')
+
+if [[ "$card_count" -eq 0 ]]; then
+  cd "$root/backend"
+  PG_RAW_URL='postgresql://admin:admin@127.0.0.1:5432/mtg_sandbox' \
+  MTGJSON_SQLITE_PATH="$root/data/AllPrintings.sqlite" \
+    "$root/venv/bin/python" scripts/importAllPrintings.py
+else
+  echo "MTG card catalog already contains $card_count cards; skipping the empty-catalog import."
+fi
+REMOTE
+
   CURRENT_STEP="MTG service restart"
-  ssh "$DESTINATION" "sudo -n /usr/local/sbin/kachhapa-deploy-root restart $MTG_SERVICE"
+  deploy_mtg_service
 
   CURRENT_STEP="MTG service health check"
   ssh "$DESTINATION" "for attempt in {1..15}; do curl --fail --silent http://127.0.0.1:5050/api/health >/dev/null 2>&1 && exit 0; sleep 2; done; echo 'mtg-backend.service did not answer on port 5050 after 30 seconds' >&2; exit 1"
@@ -714,9 +887,7 @@ deploy_modules() {
   ssh "$DESTINATION" "test -r '$KACHHAPA_ROOT/Flask/modules/README.md' && test -s '$KACHHAPA_ROOT/Flask/modules/README.md'" ||
     fail "The deployed module bundle is missing a readable, non-empty modules/README.md."
 
-  CURRENT_STEP="Module database migration"
-  echo "==> Ensuring campaign module tables exist"
-  ssh "$DESTINATION" "cd '$KACHHAPA_ROOT/Flask' && source '$KACHHAPA_ROOT/venv/bin/activate' && flask db upgrade heads"
+  migrate_kachhapa_database
 
   CURRENT_STEP="Module import command verification"
   ssh "$DESTINATION" "cd '$KACHHAPA_ROOT/Flask' && source '$KACHHAPA_ROOT/venv/bin/activate' && flask import-module --help >/dev/null" ||
@@ -753,13 +924,13 @@ docker_preflight() {
 deploy_kachhapa_docker() {
   CURRENT_STEP="Docker Kachhapa build"
   echo "==> Rebuilding the local Kachhapa containers"
-  docker_compose up -d --build flask webapp
+  docker_compose up -d --build flask sound-worker webapp
 
   CURRENT_STEP="Docker Kachhapa health check"
   local attempt
   for attempt in $(seq 1 15); do
-    docker_service_running flask && docker_service_running webapp && break
-    [[ "$attempt" -eq 15 ]] && fail "flask/webapp containers did not reach a running state."
+    docker_service_running flask && docker_service_running sound-worker && docker_service_running webapp && break
+    [[ "$attempt" -eq 15 ]] && fail "flask/sound-worker/webapp containers did not reach a running state."
     sleep 2
   done
 
@@ -808,11 +979,13 @@ fi
 remote_preflight
 $DEPLOY_SOCKET_FIX && deploy_socket_fix
 $DEPLOY_KACHHAPA && deploy_kachhapa
+if $DEPLOY_NGINX && ! $SKIP_TOOLS_TRANSFER; then
+  deploy_tools
+fi
 $DEPLOY_CATALOG && deploy_catalog
 $DEPLOY_MTG && deploy_mtg
 $DEPLOY_MODULES && deploy_modules
 if $DEPLOY_NGINX; then
-  $SKIP_TOOLS_TRANSFER || deploy_tools
   deploy_nginx
 fi
 

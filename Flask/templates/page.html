@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 
 {% block content %}
-<button class="btn btn-primary float-right" onclick="window.location.href = window.location.pathname + '/edit'">
-  Edit
-</button>
+{% if can_edit %}
+  <button class="btn btn-primary float-right" onclick="window.location.href = window.location.pathname + '/edit'">
+    Edit
+  </button>
+{% endif %}
 <button class="btn btn-secondary float-right" onclick="toggleSpoilers()">Toggle Spoilers</button>
 
 <div style="clear:both;"></div>

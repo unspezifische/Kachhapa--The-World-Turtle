@@ -28,3 +28,13 @@ test('module reset previews its impact and submits the current revision',async()
   fireEvent.click(screen.getByText('Restore Original'));
   await waitFor(()=>expect(axios.post).toHaveBeenCalledWith('/api/npcs/7/reset-override',{expected_revision:2},{headers}));
 });
+test('class combat profiles default to a character-sheet presentation with compact fallback',async()=>{
+  const classNpc={...npc,combat_enabled:true,combat_profile:{authoring_mode:'class',source:{kind:'character_progression',classes:[{id:1,class_name:'Wizard',subclass_name:'Evocation',level:18}]},resolved:{character_level:18,character:{Name:'Elion'}}}};
+  axios.get.mockImplementation(url=>Promise.resolve({data:url==='/api/npcs'?{items:[classNpc],next_cursor:null}:url==='/api/npcs/7'?classNpc:url.includes('generation')?{ancestries:[],occupations:[]}:url.includes('schedule-locations')?{locations:[]}:[]}));
+  render(<NpcLibrary headers={headers}/>);
+  fireEvent.click(await screen.findByText('View NPC'));
+  expect(await screen.findByText('Character progression')).toBeInTheDocument();
+  expect(screen.getByText('Wizard 18')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('Compact Stat Block'));
+  expect(screen.getAllByText(/AC/).some(element=>element.textContent.includes('HP'))).toBe(true);
+});

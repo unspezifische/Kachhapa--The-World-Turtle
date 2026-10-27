@@ -1,7 +1,63 @@
 import React, { useState } from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import BlueprintLevels from './BlueprintLevels';
-import { wallPolyline } from './buildingBlueprint';
+import { arcFromThreePoints, wallPolyline } from './buildingBlueprint';
+
+test('repairing wall connections is a single undoable edit including door placement', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({ id: 'repair', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{ id: 'ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 0, y: 10 }],
+        walls: [{ id: 'divider', type: 'line', start: { x: 10, y: 0.5 }, end: { x: 10, y: 9.5 } }],
+        openings: [{ id: 'door', kind: 'door', wall_id: 'divider', distance_from_start: 4, width: 3, height: 7 }],
+      }] });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} />;
+  }
+  render(<Harness />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  const before = JSON.parse(JSON.stringify(current.levels[0]));
+  const repair = screen.getByRole('button', { name: 'Repair Wall Connections' });
+  expect(screen.getByLabelText('Selected element settings')).toContainElement(repair);
+  fireEvent.click(repair);
+  expect(current.levels[0].walls[0].start.y).toBe(0);
+  expect(current.levels[0].walls[0].end.y).toBe(10);
+  expect(current.levels[0].openings[0].distance_from_start).toBe(4.5);
+  expect(current.levels[0].rooms).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+  expect(current.levels[0].walls).toEqual(before.walls);
+  expect(current.levels[0].openings).toEqual(before.openings);
+});
+
+test('new interior wall connections take priority over right angle and grid snapping', () => {
+  const originalPoint = SVGElement.prototype.createSVGPoint;
+  const originalMatrix = SVGElement.prototype.getScreenCTM;
+  SVGElement.prototype.createSVGPoint = function () { return { x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } }; };
+  SVGElement.prototype.getScreenCTM = () => ({ inverse: () => ({}) });
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({ id: 'snap', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{ id: 'ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 0, y: 10 }] }] });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} />;
+  }
+  try {
+    render(<Harness />);
+    fireEvent.click(screen.getByText('Edit floor plan & walls'));
+    fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'wall' } });
+    const canvas = screen.getByLabelText('Floor plan tracing canvas');
+    fireEvent.click(canvas, { clientX: 8, clientY: -0.5 });
+    expect(screen.getByLabelText('Connected wall endpoint')).toBeInTheDocument();
+    fireEvent.click(canvas, { clientX: 9, clientY: -9.5 });
+    expect(current.levels[0].walls[0]).toMatchObject({ start: { x: 8, y: 0 }, end: { x: 9, y: 10 } });
+    expect(current.levels[0].rooms).toHaveLength(2);
+  } finally {
+    SVGElement.prototype.createSVGPoint = originalPoint;
+    SVGElement.prototype.getScreenCTM = originalMatrix;
+  }
+});
 
 test('level construction controls change floors and apply a material to every exterior wall', () => {
   let current;
@@ -37,6 +93,68 @@ test('opening the editor automatically identifies enclosed rooms', () => {
   expect(current.levels[0].rooms[0]).toMatchObject({ boundary_source: 'auto', boundary_locked: false });
 });
 
+test('a selected room can change the thickness of every boundary wall from the side panel', () => {
+  const originalCreateSvgPoint = SVGElement.prototype.createSVGPoint;
+  const originalGetScreenCtm = SVGElement.prototype.getScreenCTM;
+  SVGElement.prototype.createSVGPoint = function () {
+    return { x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } };
+  };
+  SVGElement.prototype.getScreenCTM = () => ({ inverse: () => ({}) });
+  const center = { x: 10, y: 10 };
+  const radius = 10;
+  const circleArcs = Array.from({ length: 4 }, (_, index) => {
+    const startAngle = index * Math.PI / 2;
+    const endAngle = (index + 1) * Math.PI / 2;
+    const pointAt = radians => ({
+      x: center.x + Math.cos(radians) * radius,
+      y: center.y + Math.sin(radians) * radius,
+    });
+    return arcFromThreePoints(
+      pointAt(startAngle),
+      pointAt(endAngle),
+      pointAt((startAngle + endAngle) / 2),
+      { id: `tower-arc-${index + 1}`, thickness: 0.5 }
+    );
+  });
+  const roomRegion = circleArcs.flatMap(wall => wallPolyline(wall, 1).slice(0, -1));
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'room-wall-thickness', name: 'Round Tower', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{
+        id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+        corners: circleArcs.map(wall => wall.start),
+        outline: circleArcs,
+        rooms: [{
+          id: 'tower-room', name: 'Tower room', purpose: 'Other', boundary_source: 'auto', boundary_locked: false,
+          region: roomRegion,
+        }],
+      }],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+
+  try {
+    render(<Harness />);
+    fireEvent.click(screen.getByText('Edit floor plan & walls'));
+    fireEvent.click(screen.getByRole('button', { name: 'select' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select room Tower room' }));
+
+    expect(screen.getByLabelText('Room wall thickness (ft)')).toHaveValue(0.5);
+    expect(screen.getByText('Applies to all 4 wall segments around this room.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Room wall thickness (ft)'), { target: { value: '1.25' } });
+
+    expect(current.levels[0].outline).toHaveLength(4);
+    expect(current.levels[0].outline.every(wall => wall.thickness === 1.25)).toBe(true);
+  } finally {
+    if (originalCreateSvgPoint) SVGElement.prototype.createSVGPoint = originalCreateSvgPoint;
+    else delete SVGElement.prototype.createSVGPoint;
+    if (originalGetScreenCtm) SVGElement.prototype.getScreenCTM = originalGetScreenCtm;
+    else delete SVGElement.prototype.getScreenCTM;
+  }
+});
+
 test('levels, image upload and alignment changes are attached to the chosen floor', async () => {
   let current;
   const upload = jest.fn().mockResolvedValue({ image_url: '/test-plan.png', width_feet: 40, height_feet: 30, x: 0, y: 0, rotation: 0, opacity: 0.6 });
@@ -51,7 +169,8 @@ test('levels, image upload and alignment changes are attached to the chosen floo
   fireEvent.click(screen.getByText('Add above'));
   expect(current.levels).toHaveLength(2);
   fireEvent.click(screen.getByText('Edit floor plan & walls'));
-  expect(screen.getByLabelText('Snap walls and footprint edges to 90°')).toBeChecked();
+  expect(screen.getByLabelText('Snap walls and footprint edges to the building grid (90°)')).toBeChecked();
+  expect(screen.getByText(/real-world rotation is applied in the 3D scene/)).toBeInTheDocument();
   const input = screen.getByLabelText('Upload floor image');
   fireEvent.change(input, { target: { files: [new File(['image'], 'manor.png', { type: 'image/png' })] } });
   expect(await screen.findByLabelText('Image width (ft)')).toBeInTheDocument();
@@ -60,6 +179,79 @@ test('levels, image upload and alignment changes are attached to the chosen floo
   expect(current.levels[1].floor_map.width_feet).toBe(45);
   expect(current.levels[0].floor_map).toBeUndefined();
   expect(upload.mock.calls[0][1].id).toBe(current.levels[1].id);
+});
+
+test('a selected middle level can be deleted and restored without renumbering survivors', () => {
+  let current;
+  const removeReferences = jest.fn();
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'gap-tower', name: 'Gap Tower', coordinate_space: 'local', x: 0, y: 0,
+      visible_level_id: 'two', levels: [
+        { id: 'one', name: 'Level 1', level_number: 1, elevation_feet: 10, floor_height: 10,
+          corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }] },
+        { id: 'two', name: 'Level 2', level_number: 2, elevation_feet: 20, floor_height: 10,
+          corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }],
+          floor_map: { image_url: '/two.png' }, rooms: [{ id: 'room', region: [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 4 }] }] },
+        { id: 'three', name: 'Level 3', level_number: 3, elevation_feet: 30, floor_height: 10,
+          corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }] },
+      ],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding}
+      onDeleteLevelReferences={removeReferences} uploadImage={jest.fn()} />;
+  }
+  render(<Harness />);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete Level 3' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('Rooms1');
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(current.levels).toHaveLength(3);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Delete Level 3' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Delete and leave empty' }));
+  expect(removeReferences).toHaveBeenCalledWith('two');
+  expect(current.levels.map(level => level.id)).toEqual(['one', 'three']);
+  expect(current.visible_level_id).toBe('one');
+  expect(screen.getByRole('button', { name: 'Add Level 3' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add Level 3' }));
+  expect(current.levels.map(level => level.level_number)).toEqual([1, 2, 3]);
+  expect(current.levels[1].id).not.toBe('two');
+  expect(current.levels[1].floor_map).toBeUndefined();
+});
+
+test('a level can be deleted while collapsing the upper floors into its place', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'collapse-tower', name: 'Collapse Tower', coordinate_space: 'local', x: 0, y: 0,
+      visible_level_id: 'two', levels: [
+        { id: 'one', name: 'Level 2', level_number: 1, elevation_feet: 10, floor_height: 10 },
+        { id: 'two', name: 'Level 3', level_number: 2, elevation_feet: 20, floor_height: 10 },
+        { id: 'three', name: 'Level 4', level_number: 3, elevation_feet: 30, floor_height: 10 },
+      ],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+
+  render(<Harness />);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete Level 3' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('Moves 1 upper level down 10 ft');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete and collapse' }));
+
+  expect(current.levels.map(level => [level.id, level.level_number, level.elevation_feet, level.name])).toEqual([
+    ['one', 1, 10, 'Level 2'], ['three', 2, 20, 'Level 3'],
+  ]);
+  expect(screen.queryByRole('button', { name: 'Add Level 3' })).not.toBeInTheDocument();
+});
+
+test('the final remaining level cannot be deleted', () => {
+  render(<BlueprintLevels building={{ id: 'one-floor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [{ id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }] }] }}
+  onChange={jest.fn()} uploadImage={jest.fn()} />);
+  expect(screen.getByRole('button', { name: 'Delete Level 1' })).toBeDisabled();
 });
 
 test('the floor-plan action follows the Levels heading before level settings', () => {
@@ -74,6 +266,34 @@ test('the floor-plan action follows the Levels heading before level settings', (
   const elements = Array.from(container.querySelector('.blueprint-levels').children);
   expect(elements.slice(0, 3).map(element => element.tagName)).toEqual(['H3', 'BUTTON', 'LABEL']);
   expect(elements[1]).toHaveTextContent('Edit floor plan & walls');
+});
+
+test('levels can be switched without leaving the floor-plan editor', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'switchable', name: 'Switchable House', coordinate_space: 'local', x: 0, y: 0,
+      visible_level_id: 'ground',
+      levels: [
+        { id: 'ground', name: 'Ground Level', level_number: 0, elevation_feet: 0, floor_height: 10,
+          corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }] },
+        { id: 'upper', name: 'Level 1', level_number: 1, elevation_feet: 10, floor_height: 10,
+          corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }] },
+      ],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+
+  render(<Harness />);
+  fireEvent.click(screen.getByRole('button', { name: 'Edit floor plan & walls' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('Switchable House · Level 1');
+
+  fireEvent.change(screen.getByLabelText('Editing level'), { target: { value: 'upper' } });
+
+  expect(current.visible_level_id).toBe('upper');
+  expect(screen.getByRole('dialog')).toHaveTextContent('Switchable House · Level 2');
+  expect(screen.getByLabelText('Editing level')).toHaveValue('upper');
 });
 
 test('new building draft exposes Arc and Circle footprint tools before saving', () => {
@@ -160,7 +380,7 @@ test('image placement numeric fields and sliders stay synchronized', () => {
   expect(screen.getByLabelText('Horizontal center (ft) slider')).toHaveValue('12');
 });
 
-test('active tool settings stay next to the drawing tools and Done editing is prominent', () => {
+test('active tool settings stay in the right side panel and Done editing is prominent', () => {
   const building = {
     id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
     levels: [{
@@ -173,9 +393,98 @@ test('active tool settings stay next to the drawing tools and Done editing is pr
   fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'fireplace' } });
   const settings = screen.getByLabelText('fireplace tool settings');
   expect(settings).toContainElement(screen.getByLabelText('New chimney width (ft)'));
-  expect(document.querySelector('.blueprint-workspace-main')).toContainElement(settings);
+  expect(document.querySelector('.blueprint-selection-panel')).toContainElement(settings);
+  expect(document.querySelector('.blueprint-workspace-main')).not.toContainElement(settings);
   expect(screen.getByRole('button', { name: 'Done editing' })).toHaveClass('blueprint-done-action');
   expect(screen.getByText('Changes save as you work')).toBeInTheDocument();
+});
+
+test('the floor plan editor defaults back to Select each time it opens', () => {
+  const building = {
+    id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [{
+      id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }],
+    }],
+  };
+  render(<BlueprintLevels building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
+
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  expect(screen.getByRole('button', { name: 'select' })).toHaveAttribute('aria-pressed', 'true');
+
+  fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'wall' } });
+  expect(screen.getByLabelText('Structure tool')).toHaveValue('wall');
+  fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  expect(screen.getByRole('button', { name: 'select' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByLabelText('Structure tool')).toHaveValue('');
+});
+
+test('assigning a room purpose applies contextual access defaults', () => {
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'inn', name: 'The Copper Kettle', business_type: 'tavern', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{
+        id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }],
+      }],
+    });
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+
+  render(<Harness />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  fireEvent.click(screen.getByRole('button', { name: 'Select room New Room' }));
+
+  fireEvent.change(screen.getByLabelText('Room purpose'), { target: { value: 'Bedroom' } });
+  expect(screen.getByLabelText('Room access')).toHaveValue('residents');
+
+  fireEvent.change(screen.getByLabelText('Room purpose'), { target: { value: 'Kitchen' } });
+  expect(screen.getByLabelText('Room access')).toHaveValue('staff');
+
+  fireEvent.change(screen.getByLabelText('Room access'), { target: { value: 'restricted' } });
+  fireEvent.change(screen.getByLabelText('Room purpose'), { target: { value: 'Store Room' } });
+  expect(screen.getByLabelText('Room access')).toHaveValue('restricted');
+});
+
+test('new and redrawn room boundaries are defined by selected walls', () => {
+  const line = (id, x1, y1, x2, y2) => ({ id, type: 'line', start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.5 });
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'wall-room', name: 'Wall Room', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{
+        id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 0, y: 10 }],
+        outline: [
+          line('south', 0, 0, 20, 0), line('east', 20, 0, 20, 10),
+          line('north', 20, 10, 0, 10), line('west', 0, 10, 0, 0),
+        ],
+      }],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+
+  render(<Harness />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  fireEvent.click(screen.getByRole('button', { name: 'Rooms' }));
+  ['south', 'east', 'north', 'west'].forEach(id =>
+    fireEvent.click(screen.getByRole('button', { name: `Room boundary wall ${id}` })));
+
+  expect(screen.getByText(/4 walls selected · Closed room boundary ready/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Finish Room' }));
+  const linkedRoom = current.levels[0].rooms.find(room => room.boundary_source === 'walls');
+  expect(linkedRoom.boundary_wall_ids).toEqual(['south', 'east', 'north', 'west']);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Redraw boundary' }));
+  const south = screen.getByRole('button', { name: 'Room boundary wall south' });
+  expect(south).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(south);
+  expect(screen.getByRole('button', { name: 'Finish Room Boundary' })).toBeDisabled();
+  fireEvent.click(south);
+  expect(screen.getByRole('button', { name: 'Finish Room Boundary' })).toBeEnabled();
 });
 
 test('menu bar groups opening tools and keeps an in-settings type selector', () => {
@@ -211,6 +520,26 @@ test('landing controls expose one linked slider per flight', () => {
   expect(screen.getByLabelText('Flight 1 share')).toHaveValue('24.5');
   expect(screen.getByLabelText('Flight 2 share')).toHaveValue('24.5');
   expect(screen.getByLabelText('Flight 3 share')).toHaveValue('51');
+  expect(screen.getByText(/Flight percentages place each landing/)).toBeInTheDocument();
+});
+
+test('new stair landings default to the connected stair width', () => {
+  const building = {
+    id: 'b', name: 'Manor', coordinate_space: 'local', x: 0, y: 0,
+    levels: [{ id: 'ground', name: 'Ground floor', elevation_feet: 0, floor_height: 10,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }] }],
+  };
+  render(<BlueprintLevels building={building} onChange={jest.fn()} uploadImage={jest.fn()} />);
+  fireEvent.click(screen.getByText('Edit floor plan & walls'));
+  fireEvent.change(screen.getByLabelText('Vertical tool'), { target: { value: 'stairs' } });
+  fireEvent.change(screen.getByLabelText('Stair shape'), { target: { value: 'landing' } });
+  expect(screen.getByLabelText('Stair width (ft)')).toHaveValue(3);
+  expect(screen.getByLabelText('Landing depth (ft)')).toHaveValue(3);
+  fireEvent.change(screen.getByLabelText('Stair width (ft)'), { target: { value: '5' } });
+  expect(screen.getByLabelText('Landing depth (ft)')).toHaveValue(5);
+  fireEvent.change(screen.getByLabelText('Landing depth (ft)'), { target: { value: '6' } });
+  fireEvent.change(screen.getByLabelText('Stair width (ft)'), { target: { value: '4' } });
+  expect(screen.getByLabelText('Landing depth (ft)')).toHaveValue(6);
 });
 
 test('Arc and Circle tools create curved wall and footprint geometry', () => {
@@ -253,6 +582,7 @@ test('Arc and Circle tools create curved wall and footprint geometry', () => {
     render(<Harness />);
     fireEvent.click(screen.getByText('Edit floor plan & walls'));
     fireEvent.change(screen.getByLabelText('New wall thickness (ft)'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Structure tool'), { target: { value: 'wall' } });
     const canvas = screen.getByLabelText('Floor plan tracing canvas');
     fireEvent.click(screen.getByRole('button', { name: 'Arc' }));
     fireEvent.click(canvas, { clientX: 5, clientY: -5 });
@@ -352,6 +682,7 @@ test('exposed areas offer explicit building-level roof creation and visibility t
   expect(current.roofs || []).toHaveLength(0);
   expect(screen.getByText('1 exposed area detected below this level.')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Create Roof From Exposed Area' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use new roof' }));
 
   expect(current.roofs).toHaveLength(1);
   expect(current.roofs[0]).toMatchObject({
@@ -365,6 +696,102 @@ test('exposed areas offer explicit building-level roof creation and visibility t
   fireEvent.click(screen.getByLabelText('Show roofs'));
   expect(current.show_roofs).toBe(false);
   expect(current.roofs).toHaveLength(1);
+});
+
+test('an automatic roof promotes on edit and can be suppressed and restored without duplication', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'auto-roof', name: 'House', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{ id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }] }],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+  render(<Harness />);
+  fireEvent.click(screen.getByRole('button', { name: /Level 1 main roof · Automatic/ }));
+  fireEvent.change(screen.getByLabelText('Roof type'), { target: { value: 'hip' } });
+  expect(current.roofs).toHaveLength(1);
+  expect(current.roofs[0]).toMatchObject({ id: 'automatic-ground-0', type: 'hip' });
+  expect(current.suppressed_automatic_roof_ids).toEqual(['automatic-ground-0']);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete Level 1 main roof roof' }));
+  expect(current.roofs).toHaveLength(0);
+  expect(current.suppressed_automatic_roof_ids).toEqual(['automatic-ground-0']);
+  fireEvent.click(screen.getByRole('button', { name: /Restore Level 1 main roof/ }));
+  expect(current.suppressed_automatic_roof_ids).toEqual([]);
+  expect(screen.getByRole('button', { name: /Level 1 main roof · Automatic/ })).toBeInTheDocument();
+});
+
+test('a substantially overlapping roof asks whether to keep the existing or new version', () => {
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({
+      id: 'roof-conflict', name: 'House', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{ id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }] }],
+    });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+  render(<Harness />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create from level footprint' }));
+  expect(screen.getByRole('dialog', { name: 'Roof footprint conflict' })).toBeInTheDocument();
+  expect(screen.getAllByText('Level 1 main roof · Automatic')).toHaveLength(2);
+  expect(current.roofs || []).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Keep existing' }));
+  expect(current.roofs || []).toHaveLength(0);
+  expect(screen.getByRole('button', { name: /Level 1 main roof · Automatic/ })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create from level footprint' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use new roof' }));
+  expect(current.roofs).toHaveLength(1);
+  expect(current.suppressed_automatic_roof_ids).toEqual(['automatic-ground-0']);
+  expect(screen.queryByRole('button', { name: /Level 1 main roof · Automatic/ })).not.toBeInTheDocument();
+});
+
+test('automatic roof geometry supports hole editing with apply and cancel', async () => {
+  const originalCreateSvgPoint = SVGElement.prototype.createSVGPoint;
+  const originalGetScreenCtm = SVGElement.prototype.getScreenCTM;
+  SVGElement.prototype.createSVGPoint = function () {
+    return { x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } };
+  };
+  SVGElement.prototype.getScreenCTM = () => ({ inverse: () => ({}) });
+  let current;
+  function Harness() {
+    const [building, setBuilding] = useState({ id: 'roof-geometry', name: 'House', coordinate_space: 'local', x: 0, y: 0,
+      levels: [{ id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 10,
+        corners: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }] }] });
+    current = building;
+    return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
+  }
+  try {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: /Level 1 main roof · Automatic/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit footprint & holes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add hole' }));
+    const canvas = screen.getByLabelText('Floor plan tracing canvas');
+    fireEvent.click(canvas, { clientX: 5, clientY: -5 });
+    fireEvent.click(canvas, { clientX: 10, clientY: -5 });
+    fireEvent.click(canvas, { clientX: 7, clientY: -10 });
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Roof Polygon' }));
+    expect(current.roofs).toHaveLength(1);
+    expect(current.roofs[0].holes[0]).toHaveLength(3);
+
+    const originalFootprint = current.roofs[0].footprint;
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit footprint & holes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Redraw selected ring' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel roof geometry' }));
+    expect(current.roofs[0].footprint).toEqual(originalFootprint);
+  } finally {
+    if (originalCreateSvgPoint) SVGElement.prototype.createSVGPoint = originalCreateSvgPoint;
+    else delete SVGElement.prototype.createSVGPoint;
+    if (originalGetScreenCtm) SVGElement.prototype.getScreenCTM = originalGetScreenCtm;
+    else delete SVGElement.prototype.getScreenCTM;
+  }
 });
 
 test('custom roofs can be traced and stored independently from levels', () => {
@@ -410,6 +837,7 @@ test('custom roofs can be traced and stored independently from levels', () => {
     fireEvent.click(canvas, { clientX: 20, clientY: -2 });
     fireEvent.click(canvas, { clientX: 20, clientY: -20 });
     fireEvent.click(screen.getByRole('button', { name: 'Finish Roof Polygon' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use new roof' }));
 
     expect(current.roofs).toHaveLength(1);
     expect(current.roofs[0]).toMatchObject({
@@ -436,9 +864,13 @@ test('the Roof tool finishes a styled polygon without a roof template', () => {
   SVGElement.prototype.getScreenCTM = () => ({ inverse: () => ({}) });
   let current;
   function Harness() {
-    const [building, setBuilding] = useState({ id: 'b', name: 'Manor', coordinate_space: 'local',
-      levels: [{ id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 10,
-        corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }] }] });
+    const [building, setBuilding] = useState({ id: 'b', name: 'Manor', coordinate_space: 'local', visible_level_id: 'upper',
+      levels: [
+        { id: 'ground', name: 'Ground', elevation_feet: 0, floor_height: 10,
+          corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }] },
+        { id: 'upper', name: 'Upper', elevation_feet: 10, floor_height: 10,
+          corners: [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 20 }] },
+      ] });
     current = building;
     return <BlueprintLevels building={building} onChange={setBuilding} uploadImage={jest.fn()} />;
   }
@@ -453,7 +885,9 @@ test('the Roof tool finishes a styled polygon without a roof template', () => {
     fireEvent.click(canvas, { clientX: 10, clientY: 0 });
     fireEvent.click(canvas, { clientX: 10, clientY: -10 });
     fireEvent.click(screen.getByRole('button', { name: 'Finish Roof Polygon' }));
-    expect(current.roofs[0]).toMatchObject({ type: 'shed', pitch: 20 });
+    expect(current.roofs[0]).toMatchObject({
+      type: 'shed', pitch: 20, support_level_id: 'ground', visibility_level_id: 'upper',
+    });
     expect(current.roofs[0].footprint.map(point => [point.x, Math.abs(point.y)]))
       .toEqual([[0, 0], [10, 0], [10, 10]]);
   } finally {

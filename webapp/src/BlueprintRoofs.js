@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 import {
   BLUEPRINT_ROOF_TYPES,
+  automaticRoofFootprints,
   blueprintId,
   levelAbove,
   levelBelow,
@@ -48,16 +49,22 @@ export default function BlueprintRoofs({
   exposedAreas = [],
   onChange,
   onDrawCustom,
+  onEditGeometry,
 }) {
   const [newRoofType, setNewRoofType] = useState('gable');
   const [sourceLevelId, setSourceLevelId] = useState(level.id);
   const [selectedRoofId, setSelectedRoofId] = useState(null);
-  const roofs = useMemo(() => building.roofs || [], [building.roofs]);
+  const authoredRoofs = useMemo(() => building.roofs || [], [building.roofs]);
+  const allAutomaticRoofs = useMemo(() => automaticRoofFootprints({
+    ...building,
+    suppressed_automatic_roof_ids: [],
+  }), [building]);
+  const suppressedIds = building.suppressed_automatic_roof_ids || [];
+  const automaticRoofs = allAutomaticRoofs.filter(roof => !suppressedIds.includes(roof.id));
+  const roofs = useMemo(() => [...authoredRoofs, ...automaticRoofs], [authoredRoofs, automaticRoofs]);
   const selectedRoof = roofs.find(roof => roof.id === selectedRoofId);
   useEffect(() => {
-    if (roofs.length && !roofs.some(roof => roof.id === selectedRoofId)) {
-      setSelectedRoofId(roofs[roofs.length - 1].id);
-    }
+    if (selectedRoofId && !roofs.some(roof => roof.id === selectedRoofId)) setSelectedRoofId(null);
   }, [roofs, selectedRoofId]);
   const lowerLevel = levelBelow(building, level);
   const sourceLevel = building.levels.find(item => item.id === sourceLevelId) || level;
@@ -71,7 +78,7 @@ export default function BlueprintRoofs({
 
   const addRoofs = newRoofs => {
     if (!newRoofs.length) return;
-    commitRoofs([...roofs, ...newRoofs]);
+    commitRoofs([...authoredRoofs, ...newRoofs]);
     setSelectedRoofId(newRoofs[newRoofs.length - 1].id);
   };
 
@@ -111,22 +118,38 @@ export default function BlueprintRoofs({
   };
 
   const beginCustomRoof = () => {
+    const support = lowerLevel || level;
     const template = roofTemplate({
       type: newRoofType,
-      support: level,
-      visibility: roofVisibilityLevel(level),
+      support,
+      visibility: lowerLevel ? level : roofVisibilityLevel(level),
       footprint: [],
     });
     setSelectedRoofId(template.id);
     onDrawCustom(template);
   };
 
-  const updateRoof = change =>
-    commitRoofs(roofs.map(roof =>
-      roof.id === selectedRoof.id
-        ? { ...roof, ...change }
-        : roof
-    ));
+  const promoteRoof = roof => ({ ...roof, automatic: undefined });
+  const updateRoof = change => {
+    if (selectedRoof.automatic) {
+      commitRoofs([...authoredRoofs, { ...promoteRoof(selectedRoof), ...change }]);
+      return;
+    }
+    commitRoofs(authoredRoofs.map(roof => roof.id === selectedRoof.id ? { ...roof, ...change } : roof));
+  };
+
+  const removeRoof = roof => {
+    const nextAuthored = authoredRoofs.filter(item => item.id !== roof.id);
+    const automaticId = roof.automatic || roof.id.startsWith('automatic-') ? roof.id : null;
+    onChange({
+      ...building,
+      roofs: nextAuthored,
+      suppressed_automatic_roof_ids: automaticId
+        ? [...new Set([...suppressedIds, automaticId])]
+        : suppressedIds,
+    });
+    if (selectedRoofId === roof.id) setSelectedRoofId(null);
+  };
 
   const numberField = (label, key, min, max, step = 0.5) => (
     <label key={key}>
@@ -215,13 +238,12 @@ export default function BlueprintRoofs({
                 aria-pressed={selectedRoofId === roof.id}
                 onClick={() => setSelectedRoofId(roof.id)}
               >
-                {roof.name || ROOF_LABELS[roof.type]}
+                {roof.name || ROOF_LABELS[roof.type]}{roof.automatic ? ' · Automatic' : ''}
               </button>
               <button
                 aria-label={`Delete ${roof.name || ROOF_LABELS[roof.type]} roof`}
                 onClick={() => {
-                  commitRoofs(roofs.filter(item => item.id !== roof.id));
-                  if (selectedRoofId === roof.id) setSelectedRoofId(null);
+                  removeRoof(roof);
                 }}
               >
                 Delete
@@ -233,6 +255,7 @@ export default function BlueprintRoofs({
 
       {selectedRoof && (
         <div className="blueprint-roof-properties">
+          {selectedRoof.automatic && <p>This roof is generated from the building footprint. Your first change will make it a saved custom roof.</p>}
           <label>
             Roof type
             <select value={selectedRoof.type} onChange={event => updateRoof({ type: event.target.value })}>
@@ -260,7 +283,8 @@ export default function BlueprintRoofs({
           {numberField('Overhang (ft)', 'overhang', 0, 20, 0.5)}
           {numberField('Thickness (ft)', 'thickness', 0.1, 10, 0.1)}
           {numberField('Elevation offset (ft)', 'elevation_offset', -100, 100, 0.5)}
-          {numberField('Rotation (°)', 'rotation', -360, 360, 1)}
+          {['gable', 'shed'].includes(selectedRoof.type) &&
+            numberField('Orientation offset (°)', 'rotation', -360, 360, 1)}
 
           <label>
             Finish
@@ -272,8 +296,22 @@ export default function BlueprintRoofs({
           {selectedRoof.type === 'shed' && numberField('High-edge / slope direction (°)', 'slope_direction', -360, 360, 1)}
           {selectedRoof.type === 'gable' && numberField('Ridge direction (°)', 'ridge_direction', -360, 360, 1)}
           {selectedRoof.type === 'mansard' && numberField('Mansard break (ft)', 'mansard_break', 0.1, 100, 0.5)}
+          <button type="button" onClick={() => onEditGeometry?.(promoteRoof(selectedRoof))}>
+            Edit footprint &amp; holes
+          </button>
         </div>
       )}
+
+      {suppressedIds.length > 0 && <div className="blueprint-roof-list" aria-label="Removed automatic roofs">
+        <strong>Removed automatic roofs</strong>
+        {suppressedIds.map(id => {
+          const roof = allAutomaticRoofs.find(item => item.id === id);
+          return <button key={id} type="button" onClick={() => onChange({
+            ...building,
+            suppressed_automatic_roof_ids: suppressedIds.filter(item => item !== id),
+          })}>Restore {roof?.name || id}</button>;
+        })}
+      </div>}
     </section>
   );
 }

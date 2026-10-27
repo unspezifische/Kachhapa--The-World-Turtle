@@ -1,9 +1,10 @@
 import NpcLibrary from './NpcLibrary';
 import SessionManagement from './SessionManagement';
+import EncounterBuilder from './EncounterBuilder';
 import useSessionManagement from './useSessionManagement';
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Modal, Form, ListGroup } from 'react-bootstrap';
+import { Alert, Button, Modal, Form, ListGroup } from 'react-bootstrap';
 import { Table, InputGroup, FormControl } from 'react-bootstrap';
 import { Row, Col } from 'react-bootstrap';
 
@@ -120,6 +121,8 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
   const [selectedLootBox, setSelectedLootBox] = useState({ items: [] });
   const [viewLootBoxModal, setViewLootBoxModal] = useState(false);
   const [editingLootBoxId, setEditingLootBoxId] = useState(null);
+  const [lootBoxSaving, setLootBoxSaving] = useState(false);
+  const [lootBoxSaveError, setLootBoxSaveError] = useState('');
 
   const [inventory, setInventory] = useState([]);
   const [viewPlayerInventoryModal, setViewPlayerInventoryModal] = useState(false);
@@ -135,6 +138,7 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
     setLootBoxName('');
     setLootBoxModuleKey('');
     setSelectedItems([]);
+    setLootBoxSaveError('');
     axios
       .get('/api/items', { headers: headers })
       .then(response => {
@@ -146,7 +150,13 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
   };
 
   const handleItemClick = item => {
-    setSelectedItems(prevItems => [...prevItems, { ...item, quantity: 1 }]);
+    setSelectedItems(prevItems => {
+      const existing = prevItems.find(candidate => candidate.id === item.id);
+      if (!existing) return [...prevItems, { ...item, quantity: 1 }];
+      return prevItems.map(candidate => candidate.id === item.id
+        ? {...candidate, quantity:Number(candidate.quantity || 0) + 1}
+        : candidate);
+    });
   };
 
   const handleItemQuantityChange = (itemId, quantity) => {
@@ -166,47 +176,41 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
     setSelectedItems(prevItems => prevItems.filter(i => i.id !== item.id));
   };
 
-  const handleLootBoxClick = lootBox => {
+  const handleLootBoxClick = async lootBox => {
     if (lootBox.editable === false) return;
-    // fetchPlayers();
-    setSelectedItems(lootBox.items);
+    setLootBoxSaveError('');
     setLootBoxName(lootBox.name);
     setLootBoxModuleKey(lootBox.module_key || '');
-    setEditingLootBoxId(lootBox.id); // Remember which loot box we are editing
-    setLootBoxModalOpen(true);
+    setEditingLootBoxId(lootBox.id);
+    try {
+      const response = Array.isArray(lootBox.items)
+        ? {data:lootBox}
+        : await axios.get(`/api/lootboxes/${lootBox.id}`, {headers});
+      setSelectedItems(response.data.items || []);
+      setLootBoxModalOpen(true);
+    } catch (requestError) {
+      setLootBoxSaveError(requestError.response?.data?.message || 'That loot box could not be opened for editing.');
+    }
   };
 
-  const handleSaveLootBox = () => {
-    const items = selectedItems.map(item => ({ id: item.id, quantity: item.quantity }));
-
-    if (editingLootBoxId === null) {
-      // If we are not currently editing a loot box, create a new one
-      axios
-        .post('/api/lootboxes', { name: lootBoxName, items: items, module_key: lootBoxModuleKey || null }, { headers: headers })
-        .then(response => {
-          console.log(response.data.message);
-          setLootBoxModalOpen(false);
-          setLootBoxName('');
-          setLootBoxModuleKey('');
-          setSelectedItems([]);
-          fetchLootBoxes(); // Fetch the updated list of loot boxes
-        })
-        .catch(error => console.error('Error saving loot box:', error));
-    } else {
-      // If we are editing a loot box, update it
-      axios
-        .put(`/api/lootboxes/${editingLootBoxId}`, { name: lootBoxName, items: items, module_key: lootBoxModuleKey || null }, { headers: headers })
-        .then(response => {
-          console.log(response.data.message);
-          setLootBoxModalOpen(false);
-          setLootBoxName('');
-          setLootBoxModuleKey('');
-          setSelectedItems([]);
-          setEditingLootBoxId(null); // Clear the editing state
-          fetchLootBoxes(); // Fetch the updated list of loot boxes
-        })
-        .catch(error => console.error('Error updating loot box:', error));
-    }
+  const handleSaveLootBox = async () => {
+    const name = lootBoxName.trim();
+    if (!name) { setLootBoxSaveError('Enter a name before saving the loot box.'); return; }
+    const payload = {name, items:selectedItems.map(item => ({id:item.id,quantity:Number(item.quantity || 1)})), module_key:lootBoxModuleKey || null};
+    setLootBoxSaving(true);
+    setLootBoxSaveError('');
+    try {
+      if (editingLootBoxId === null) await axios.post('/api/lootboxes', payload, {headers});
+      else await axios.put(`/api/lootboxes/${editingLootBoxId}`, payload, {headers});
+      setLootBoxModalOpen(false);
+      setLootBoxName('');
+      setLootBoxModuleKey('');
+      setSelectedItems([]);
+      setEditingLootBoxId(null);
+      fetchLootBoxes();
+    } catch (requestError) {
+      setLootBoxSaveError(requestError.response?.data?.message || 'The loot box could not be saved. Please try again.');
+    } finally { setLootBoxSaving(false); }
   };
 
   const viewLootBox = (lootBox) => {
@@ -290,6 +294,9 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
 
   // Random Tables to Roll On
   const [randomTables, setRandomTables] = useState([]);
+  const [encounterPresets, setEncounterPresets] = useState([]);
+  const [encounterRoll, setEncounterRoll] = useState(null);
+  const [encounterTableError, setEncounterTableError] = useState('');
   const [randomTableData, setRandomTableData] = useState({
     name: '',
     description: '',
@@ -320,8 +327,22 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
       });
   };
 
+  const fetchEncounterPresets = () => {
+    axios.get('/api/encounter-presets', { headers: headers })
+      .then(response => setEncounterPresets(response.data || []))
+      .catch(error => setEncounterTableError(error.response?.data?.message || 'Random encounter tables could not be loaded.'));
+  };
+
+  const rollEncounterPreset = (preset) => {
+    setEncounterTableError('');
+    axios.post('/api/encounter-presets/roll', { preset_id: preset.id }, { headers: headers })
+      .then(response => setEncounterRoll({ ...response.data, tableName: preset.name }))
+      .catch(error => setEncounterTableError(error.response?.data?.message || 'That random encounter could not be rolled.'));
+  };
+
   const handleShowRandomTables = () => {
     fetchRandomTables();
+    fetchEncounterPresets();
     setCurrentContent('Random Tables');
   }
 
@@ -483,7 +504,7 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
         {
           id: 'encounterBuilder',
           label: 'Encounter Builder',
-          description: 'Build a roster, collect initiative, and run combat turn by turn.',
+          description: 'Create reusable encounters from creatures and named campaign NPCs.',
           icon: <SportsKabaddiIcon fontSize="small" />,
         },
         {
@@ -658,6 +679,34 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
 
   const renderRandomTables = () => (
     <>
+      <section className="dmtools-random-encounters" aria-labelledby="random-encounter-tables-heading">
+        <div className="dmtools-section-heading">
+          <div><h3 id="random-encounter-tables-heading">Random Encounter Tables</h3><p>Roll the same environment tables available in Encounter Builder.</p></div>
+        </div>
+        {encounterTableError && <Alert variant="danger">{encounterTableError}</Alert>}
+        <div className="dmtools-table-shell">
+          <Table striped bordered hover className="dmtools-table">
+            <thead><tr><th>Environment</th><th>Level</th><th>Source</th><th style={{ width: '120px' }}>Roll</th></tr></thead>
+            <tbody>
+              {encounterPresets.length === 0 ? <tr><td colSpan={4} className="dmtools-empty-cell">No environment encounter tables are available for this campaign.</td></tr> : encounterPresets.map(preset => (
+                <tr key={preset.id}>
+                  <td>{preset.name}</td>
+                  <td>{preset.min_level || preset.max_level ? `${preset.min_level || 1}–${preset.max_level || '+'}` : 'Any'}</td>
+                  <td>{preset.source}</td>
+                  <td><Button size="sm" onClick={() => rollEncounterPreset(preset)}>Roll</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
+        {encounterRoll && <Alert variant="info" className="dmtools-encounter-result" role="status">
+          <strong>{encounterRoll.tableName} result</strong>
+          <p>{encounterRoll.notes}</p>
+          {encounterRoll.participants?.length > 0 && <ul>{encounterRoll.participants.map((participant, index) => <li key={`${participant.id || participant.name}-${index}`}>{participant.quantity || 1} × {participant.name}</li>)}</ul>}
+        </Alert>}
+      </section>
+
+      <div className="dmtools-section-heading"><div><h3>Campaign Roll Tables</h3><p>Create and manage reusable campaign-specific tables.</p></div></div>
       <div className="dmtools-section-actions">
         <Button onClick={openCreateTableModal}>Add a Roll Table</Button>
       </div>
@@ -736,8 +785,9 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
         return renderPlayerInventories();
       case 'sessionManagement':
       case 'initiative':
+        return <SessionManagement api={sessionApi} headers={headers} initialTab="Run Session" />;
       case 'encounterBuilder':
-        return <SessionManagement api={sessionApi} headers={headers} initialTab={currentContent === 'sessionManagement' ? 'Run Session' : 'Encounters'} />;
+        return <EncounterBuilder api={sessionApi} headers={headers} />;
       case 'npcCards':
         return renderNpcCards();
       case 'randomTables':
@@ -818,7 +868,7 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
 
           <div className="dmtools-workspace-body">
             {renderWorkspaceBody()}
-      <NpcLibrary headers={headers} visible={currentContent === 'npcCards'} />
+      <NpcLibrary headers={headers} visible={currentContent === 'npcCards'} onPlace={(npc, settlementId) => navigate(`/settlementManager?tool=npcs&settlement_id=${encodeURIComponent(settlementId)}&place_npc=${encodeURIComponent(npc.id)}`)} />
           </div>
         </section>
       </div>
@@ -829,6 +879,7 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
           <Modal.Title>{editingLootBoxId === null ? 'Create Loot Box' : 'Edit Loot Box'}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
+          {lootBoxSaveError && <Alert variant="danger" role="alert">{lootBoxSaveError}</Alert>}
           <Row>
             <Col>
               <InputGroup className="mb-3">
@@ -905,7 +956,7 @@ function DMTools({ headers, socket, characterName, accountType, onSoundWorkspace
           </Row>
         </Modal.Body>
         <Modal.Footer>
-          <Button onClick={handleSaveLootBox}>Save</Button>
+          <Button onClick={handleSaveLootBox} disabled={lootBoxSaving}>{lootBoxSaving ? 'Saving…' : 'Save'}</Button>
         </Modal.Footer>
       </Modal>
 

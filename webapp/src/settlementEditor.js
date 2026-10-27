@@ -1580,7 +1580,8 @@ export function createBlueprintBuilding(point) {
       {
         floor_height: 10,
         id: 'ground',
-        name: 'Ground floor',
+        name: 'Level 1',
+        level_number: 0,
         elevation_feet: 0,
         corners: [{ x: 0, y: 0 }],
         doors: [],

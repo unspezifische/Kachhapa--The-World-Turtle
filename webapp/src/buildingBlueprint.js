@@ -94,14 +94,22 @@ const normalizeVector = (x, y) => {
   };
 };
 
-const shiftPoint = (point, building) =>
-  building.coordinate_space === 'local'
-    ? { ...point }
-    : {
-      ...point,
-      x: point.x - building.x,
-      y: point.y - building.y,
-    };
+const shiftPoint = (point, building) => {
+  if (building.coordinate_space === 'local') return { ...point };
+  const x = point.x - (Number(building.x) || 0);
+  const y = point.y - (Number(building.y) || 0);
+  const rotation = Number(building.rotation) || 0;
+  const localX = x * Math.cos(rotation) + y * Math.sin(rotation);
+  const localY = -x * Math.sin(rotation) + y * Math.cos(rotation);
+  return {
+    ...point,
+    // Legacy plans stored points in settlement/world coordinates. Remove the
+    // structure's placement rotation as they are migrated into the local plan
+    // used by the level editor. Babylon reapplies this rotation to the root.
+    x: Math.abs(localX) < 1e-9 ? 0 : localX,
+    y: Math.abs(localY) < 1e-9 ? 0 : localY,
+  };
+};
 
 export function pointInPolygon(point, polygon) {
   let inside = false;
@@ -726,6 +734,7 @@ export function automaticRoofFootprints(building) {
     .filter(level => level.elevation_feet >= 0 && openCorners(level).length >= 3)
     .sort((a, b) => a.elevation_feet - b.elevation_feet);
   const roofs = building.roofs || [];
+  const suppressed = new Set(building.suppressed_automatic_roof_ids || []);
   const center = ring => ({
     x: ring.reduce((total, point) => total + point.x, 0) / ring.length,
     y: ring.reduce((total, point) => total + point.y, 0) / ring.length,
@@ -740,8 +749,10 @@ export function automaticRoofFootprints(building) {
 
     return areas.filter(area => area.footprint.length >= 3).flatMap((area, areaIndex) => {
       const areaCenter = center(area.footprint);
-      if (roofs.some(roof => roof.support_level_id === level.id &&
-        pointInPolygon(areaCenter, roof.footprint || []))) return [];
+      if (roofs.some(roof => roofFootprintOverlapRatio(roof, {
+        support_level_id: level.id,
+        footprint: area.footprint,
+      }) >= 0.8)) return [];
       const points = area.footprint;
       const bounds = points.reduce((value, point) => ({
         minX: Math.min(value.minX, point.x), maxX: Math.max(value.maxX, point.x),
@@ -750,8 +761,11 @@ export function automaticRoofFootprints(building) {
       const skyHoles = (level.floor_voids || [])
         .filter(item => item.kind === 'open_to_sky' && item.points?.length >= 3 && pointInPolygon(item.points[0], area.footprint))
         .map(item => item.points);
+      const automaticId = `automatic-${level.id}-${areaIndex}`;
+      if (suppressed.has(automaticId)) return [];
       return [{
-        id: `automatic-${level.id}-${areaIndex}`,
+        id: automaticId,
+        automatic: true,
         name: `${level.name} ${upper ? 'lean-to' : 'main'} roof`,
         type: upper ? 'shed' : 'gable',
         support_level_id: level.id,
@@ -770,6 +784,42 @@ export function automaticRoofFootprints(building) {
       }];
     });
   });
+}
+
+function polygonArea(points = []) {
+  return Math.abs(points.reduce((total, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return total + point.x * next.y - next.x * point.y;
+  }, 0) / 2);
+}
+
+export function roofFootprintOverlapRatio(left, right) {
+  if (!left || !right || left.support_level_id !== right.support_level_id) return 0;
+  const leftPoints = left.footprint || [];
+  const rightPoints = right.footprint || [];
+  if (leftPoints.length < 3 || rightPoints.length < 3) return 0;
+  const closeRing = points => [
+    ...points.map(point => [point.x, point.y]),
+    [points[0].x, points[0].y],
+  ];
+  try {
+    const intersection = polygonClipping.intersection(
+      [[closeRing(leftPoints)]],
+      [[closeRing(rightPoints)]]
+    );
+    const intersectionArea = intersection.reduce((multiTotal, polygon) =>
+      multiTotal + polygon.reduce((polygonTotal, ring, index) => {
+        const points = ring.slice(0, -1).map(([x, y]) => ({ x, y }));
+        const area = polygonArea(points);
+        return polygonTotal + (index === 0 ? area : -area);
+      }, 0), 0);
+    return intersectionArea / Math.max(0.0001, Math.min(
+      polygonArea(leftPoints),
+      polygonArea(rightPoints)
+    ));
+  } catch {
+    return 0;
+  }
 }
 
 export function normalizeRoof(roof, building, levels = building.levels || []) {
@@ -885,6 +935,21 @@ export function isRoofVisible(building, roof) {
     return visibilityLevel.elevation_feet <= selectedLevel?.elevation_feet;
   }
   return true;
+}
+
+export function roofBaseElevation(building, roof) {
+  const support = building.levels?.find(level => level.id === roof.support_level_id);
+  if (!support) return null;
+  const visibility = building.levels?.find(level => level.id === roof.visibility_level_id);
+  const attachedLevel = visibility && visibility.id !== support.id &&
+    Number(visibility.elevation_feet) >= Number(support.elevation_feet)
+    ? visibility
+    : null;
+  const levelElevation = attachedLevel
+    ? Number(attachedLevel.elevation_feet) || 0
+    : (Number(support.elevation_feet) || 0) + (Number(support.floor_height) || 0);
+  return levelElevation + (Number(building.foundation_height_feet) || 0) +
+    (Number(roof.elevation_offset) || 0);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1365,24 +1430,45 @@ export function stairGeometry(
         flight <
         landingCount
       ) {
+        const incomingDirection = direction;
         direction +=
           turn;
 
-        const landingEnd = {
-          x:
-            current.x +
-            Math.cos(
-              direction
-            ) *
-            stair.landing_depth,
-
-          y:
-            current.y +
-            Math.sin(
-              direction
-            ) *
-            stair.landing_depth,
+        const incoming = {
+          x: Math.cos(incomingDirection),
+          y: Math.sin(incomingDirection),
         };
+        const across = { x: -incoming.y, y: incoming.x };
+        const outgoing = {
+          x: Math.cos(direction),
+          y: Math.sin(direction),
+        };
+        const halfDepth = stair.landing_depth / 2;
+        const halfWidth = stair.width / 2;
+        const landingCenter = {
+          x: current.x + incoming.x * halfDepth,
+          y: current.y + incoming.y * halfDepth,
+        };
+        const alongIncoming = Math.abs(outgoing.x * incoming.x + outgoing.y * incoming.y);
+        const alongAcross = Math.abs(outgoing.x * across.x + outgoing.y * across.y);
+        const distanceToEdge = Math.min(
+          alongIncoming > 1e-6 ? halfDepth / alongIncoming : Infinity,
+          alongAcross > 1e-6 ? halfWidth / alongAcross : Infinity
+        );
+        const landingEnd = {
+          x: landingCenter.x + outgoing.x * distanceToEdge,
+          y: landingCenter.y + outgoing.y * distanceToEdge,
+        };
+        const landingFootprint = [
+          { x: landingCenter.x - incoming.x * halfDepth - across.x * halfWidth,
+            y: landingCenter.y - incoming.y * halfDepth - across.y * halfWidth },
+          { x: landingCenter.x + incoming.x * halfDepth - across.x * halfWidth,
+            y: landingCenter.y + incoming.y * halfDepth - across.y * halfWidth },
+          { x: landingCenter.x + incoming.x * halfDepth + across.x * halfWidth,
+            y: landingCenter.y + incoming.y * halfDepth + across.y * halfWidth },
+          { x: landingCenter.x - incoming.x * halfDepth + across.x * halfWidth,
+            y: landingCenter.y - incoming.y * halfDepth + across.y * halfWidth },
+        ];
 
         segments.push({
           kind:
@@ -1402,6 +1488,12 @@ export function stairGeometry(
 
           rise_end:
             rise,
+
+          center: landingCenter,
+          footprint: landingFootprint,
+          depth: stair.landing_depth,
+          width: stair.width,
+          direction: incomingDirection,
         });
 
         current =
@@ -1841,10 +1933,20 @@ export function cloneOutline(
   };
 }
 
-function nearestPointOnWall(
+export function nearestPointOnWall(
   wall,
   point
 ) {
+  const arc = arcGeometry(wall);
+  if (arc) {
+    const angle = Math.atan2(point.y - wall.center.y, point.x - wall.center.x);
+    const traveled = positiveAngle(arc.sweep < 0 ? arc.startAngle - angle : angle - arc.startAngle);
+    const distance = traveled <= Math.abs(arc.sweep) + 1e-9
+      ? traveled * arc.radius
+      : pointDistance(point, wall.start) <= pointDistance(point, wall.end) ? 0 : wallLength(wall);
+    const projected = wallPointAtDistance(wall, distance);
+    return { wall, point: projected, error: pointDistance(point, projected), distance_from_start: distance };
+  }
   const polyline =
     wallPolyline(
       wall,
@@ -2887,9 +2989,8 @@ export function normalizeBlueprint(building) {
     Number(building.foundation_height_feet) || 0
   );
 
-  const levels = (
-    building.levels || []
-  ).map(
+  const numberedLevels = inferLevelNumbers(building.levels || []);
+  const levels = numberedLevels.map(
     (
       rawLevel,
       levelIndex
@@ -3201,13 +3302,11 @@ export function normalizeBlueprint(building) {
         id:
           levelId,
 
+        level_number:
+          rawLevel.level_number,
+
         name:
-          rawLevel.name ||
-          (
-            levelIndex
-              ? `Level ${levelIndex}`
-              : 'Ground floor'
-          ),
+          normalizedLevelName(rawLevel.name, rawLevel.level_number),
 
         floor_height:
           floorHeight,
@@ -3252,6 +3351,9 @@ export function normalizeBlueprint(building) {
           room && typeof room === 'object'
             ? {
               ...room,
+              region: Array.isArray(room.region)
+                ? room.region.map(point => shiftPoint(point, building))
+                : room.region,
               floor_material: room.floor_material
                 ? constructionFinish(room.floor_material, FLOOR_FINISHES)
                 : null,
@@ -3285,6 +3387,11 @@ export function normalizeBlueprint(building) {
 
     show_roofs:
       building.show_roofs !== false,
+
+    suppressed_automatic_roof_ids:
+      Array.isArray(building.suppressed_automatic_roof_ids)
+        ? [...new Set(building.suppressed_automatic_roof_ids.filter(Boolean))]
+        : [],
 
     foundation_height_feet:
       foundationHeight,
@@ -3348,12 +3455,9 @@ export function addBuildingLevel(
       b.elevation_feet
   );
 
-  const source =
-    direction > 0
-      ? sorted[
-      sorted.length - 1
-      ]
-      : sorted[0];
+  const source = [...sorted].sort((a, b) => direction > 0
+    ? b.level_number - a.level_number
+    : a.level_number - b.level_number)[0];
 
   if (!source) return next;
 
@@ -3366,6 +3470,13 @@ export function addBuildingLevel(
 
   const id =
     blueprintId();
+
+  const existingNumbers = sorted.map(item => item.level_number);
+  const highestNumber = Math.max(...existingNumbers);
+  const lowestNumber = Math.min(...existingNumbers);
+  const levelNumber = direction > 0
+    ? (highestNumber >= 0 ? highestNumber + 1 : 0)
+    : (lowestNumber < 0 ? lowestNumber - 1 : -1);
 
   const outline =
     source.outline.map(
@@ -3394,20 +3505,9 @@ export function addBuildingLevel(
   const level = {
     id,
 
-    name:
-      elevation < 0
-        ? `Basement ${sorted.filter(
-          item =>
-            item.elevation_feet <
-            0
-        ).length + 1
-        }`
-        : `Level ${sorted.filter(
-          item =>
-            item.elevation_feet >=
-            0
-        ).length
-        }`,
+    name: defaultLevelName(levelNumber),
+
+    level_number: levelNumber,
 
     elevation_feet:
       elevation,
@@ -3444,6 +3544,7 @@ export function addBuildingLevel(
     platforms: [],
     fireplaces: [],
     connectors: [],
+    rooms: [],
   };
 
   return {
@@ -3463,6 +3564,219 @@ export function addBuildingLevel(
         a.elevation_feet -
         b.elevation_feet
     ),
+  };
+}
+
+const parsedLevelNumber = name => {
+  const value = String(name || '').trim();
+  if (/^ground(?: floor)?$/i.test(value)) return 0;
+  const levelMatch = value.match(/^level\s+(\d+)$/i);
+  if (levelMatch) return Number(levelMatch[1]);
+  const basementMatch = value.match(/^basement\s+(\d+)$/i);
+  if (basementMatch) return -Number(basementMatch[1]);
+  return null;
+};
+
+export const defaultLevelName = levelNumber => {
+  return levelNumber < 0 ? `Basement ${Math.abs(levelNumber)}` : `Level ${levelNumber + 1}`;
+};
+
+const normalizedLevelName = (name, levelNumber) => {
+  const value = String(name || '').trim();
+  const legacyDefault = levelNumber === 0
+    ? /^(?:ground(?: floor| level)?)$/i.test(value)
+    : value === (levelNumber < 0 ? `Basement ${Math.abs(levelNumber)}` : `Level ${levelNumber}`);
+  return !value || legacyDefault ? defaultLevelName(levelNumber) : value;
+};
+
+export function inferLevelNumbers(levels = []) {
+  const sorted = levels.map((level, originalIndex) => ({ level, originalIndex }))
+    .sort((a, b) => (Number(a.level.elevation_feet) || 0) - (Number(b.level.elevation_feet) || 0) || a.originalIndex - b.originalIndex);
+  const groundIndex = Math.max(0, sorted.findIndex(({ level }) =>
+    level.level_number === 0 || parsedLevelNumber(level.name) === 0 || Number(level.elevation_feet) === 0));
+  let previous = -Infinity;
+  const numbered = sorted.map(({ level }, index) => {
+    const explicit = Number.isInteger(level.level_number) ? level.level_number : parsedLevelNumber(level.name);
+    const fallback = index - groundIndex;
+    const levelNumber = Math.max(Number.isInteger(explicit) ? explicit : fallback, previous + 1);
+    previous = levelNumber;
+    return { ...level, level_number: levelNumber };
+  });
+  const byReference = new Map(numbered.map((level, index) => [sorted[index].originalIndex, level]));
+  return levels.map((level, index) => byReference.get(index) || level);
+}
+
+export function missingLevelNumbers(building) {
+  const levels = normalizeBlueprint(building).levels;
+  if (levels.length < 2) return [];
+  const used = new Set(levels.map(level => level.level_number));
+  const min = Math.min(...used);
+  const max = Math.max(...used);
+  return Array.from({ length: max - min + 1 }, (_, index) => min + index)
+    .filter(levelNumber => !used.has(levelNumber));
+}
+
+const cloneLevelShell = (source, levelNumber, elevation, floorHeight) => {
+  const id = blueprintId();
+  const outline = (source.outline || []).map((wall, index) => ({
+    id: `${id}-outline-${index}`,
+    type: wall.type,
+    start: { ...wall.start },
+    end: { ...wall.end },
+    center: wall.center ? { ...wall.center } : undefined,
+    clockwise: wall.clockwise,
+    thickness: wall.thickness,
+    material: source.exterior_material,
+  }));
+  return {
+    id,
+    name: defaultLevelName(levelNumber),
+    level_number: levelNumber,
+    elevation_feet: elevation,
+    floor_height: floorHeight,
+    exterior_wall_thickness: source.exterior_wall_thickness,
+    interior_wall_thickness: source.interior_wall_thickness,
+    exterior_material: source.exterior_material,
+    interior_material: source.interior_material,
+    floor_material: source.floor_material,
+    corners: (source.corners || []).map(point => ({ ...point })),
+    outline,
+    walls: [], openings: [], doors: [], windows: [], stairs: [], hatches: [], ladders: [],
+    floor_voids: [], platforms: [], fireplaces: [], connectors: [], rooms: [],
+  };
+};
+
+export function insertMissingBuildingLevel(building, levelNumber) {
+  const next = normalizeBlueprint(building);
+  if (!missingLevelNumbers(next).includes(levelNumber)) return next;
+  const lower = [...next.levels].filter(level => level.level_number < levelNumber)
+    .sort((a, b) => b.level_number - a.level_number)[0];
+  const upper = [...next.levels].filter(level => level.level_number > levelNumber)
+    .sort((a, b) => a.level_number - b.level_number)[0];
+  if (!lower || !upper) return next;
+  const numberSpan = upper.level_number - lower.level_number;
+  const elevationSpan = upper.elevation_feet - lower.elevation_feet;
+  if (numberSpan <= 1 || elevationSpan <= 0) return next;
+  const interval = elevationSpan / numberSpan;
+  const elevation = lower.elevation_feet + interval * (levelNumber - lower.level_number);
+  const level = cloneLevelShell(lower, levelNumber, elevation, interval);
+  return {
+    ...next,
+    visible_level_id: level.id,
+    level_view: 'level',
+    levels: [...next.levels, level].sort((a, b) => a.elevation_feet - b.elevation_feet),
+  };
+}
+
+const explicitTargetIs = (item, levelId) =>
+  item?.target_level_id === levelId || item?.connects_to_level_id === levelId || item?.to_level_id === levelId;
+
+const stairArrivesAt = (source, stair, target) => explicitTargetIs(stair, target.id) ||
+  Math.abs(source.elevation_feet + normalizeStair(stair, source.floor_height).total_rise_feet - target.elevation_feet) < 0.01;
+
+const ladderArrivesAt = (source, ladder, target) => explicitTargetIs(ladder, target.id) ||
+  Math.abs(source.elevation_feet + source.floor_height - target.elevation_feet) < 0.01;
+
+export function levelDeletionImpact(building, levelId) {
+  const next = normalizeBlueprint(building);
+  const target = next.levels.find(level => level.id === levelId);
+  if (!target) return null;
+  const upperLevels = next.levels.filter(level => level.level_number > target.level_number)
+    .sort((a, b) => a.level_number - b.level_number);
+  const nearestUpper = upperLevels[0];
+  const inboundVerticals = next.levels.filter(level => level.id !== levelId).reduce((total, source) => total +
+    (source.stairs || []).filter(stair => stairArrivesAt(source, stair, target)).length +
+    (source.ladders || []).filter(ladder => ladderArrivesAt(source, ladder, target)).length +
+    (source.connectors || []).filter(connector => explicitTargetIs(connector, target.id)).length, 0);
+  return {
+    level_id: target.id,
+    level_name: target.name,
+    walls: (target.outline || []).length + (target.walls || []).length,
+    openings: (target.openings || []).length,
+    rooms: (target.rooms || []).length,
+    stairs: (target.stairs || []).length + (target.hatches || []).length +
+      (target.ladders || []).length + (target.connectors || []).length + inboundVerticals,
+    floor_images: target.floor_map ? 1 : 0,
+    roofs: (next.roofs || []).filter(roof => roof.support_level_id === target.id || roof.visibility_level_id === target.id).length,
+    chimneys: (next.chimneys || []).filter(chimney => chimney.base_level_id === target.id || chimney.top_level_id === target.id).length,
+    upper_levels: upperLevels.length,
+    collapse_level_slots: nearestUpper ? nearestUpper.level_number - target.level_number : 0,
+    collapse_elevation_feet: nearestUpper ? nearestUpper.elevation_feet - target.elevation_feet : 0,
+  };
+}
+
+export function deleteBuildingLevel(building, levelId, { collapseUpperLevels = false } = {}) {
+  const next = normalizeBlueprint(building);
+  if (next.levels.length <= 1) return next;
+  const target = next.levels.find(level => level.id === levelId);
+  if (!target) return next;
+  let levels = next.levels.filter(level => level.id !== target.id).map(source => ({
+    ...source,
+    stairs: (source.stairs || []).filter(stair => !stairArrivesAt(source, stair, target)),
+    ladders: (source.ladders || []).filter(ladder => !ladderArrivesAt(source, ladder, target)),
+    connectors: (source.connectors || []).filter(connector => !explicitTargetIs(connector, target.id)),
+  }));
+  const byId = id => levels.find(level => level.id === id);
+  const nearestAbove = elevation => [...levels].filter(level => level.elevation_feet > elevation)
+    .sort((a, b) => a.elevation_feet - b.elevation_feet)[0];
+  const nearestBelow = elevation => [...levels].filter(level => level.elevation_feet < elevation)
+    .sort((a, b) => b.elevation_feet - a.elevation_feet)[0];
+  const roofs = (next.roofs || []).filter(roof => roof.support_level_id !== target.id).map(roof => {
+    if (roof.visibility_level_id !== target.id) return roof;
+    const support = byId(roof.support_level_id);
+    const visibility = support && (nearestAbove(support.elevation_feet) || support);
+    return { ...roof, visibility_level_id: visibility?.id || roof.support_level_id };
+  });
+  const removedChimneyIds = new Set();
+  const originalLevels = [...next.levels].sort((a, b) => a.elevation_feet - b.elevation_feet);
+  const chimneys = (next.chimneys || []).flatMap(chimney => {
+    const oldBase = originalLevels.find(level => level.id === chimney.base_level_id) || originalLevels[0];
+    const oldTop = chimney.top_level_id
+      ? originalLevels.find(level => level.id === chimney.top_level_id) || originalLevels[originalLevels.length - 1]
+      : originalLevels[originalLevels.length - 1];
+    const candidates = levels.filter(level => level.elevation_feet >= oldBase.elevation_feet && level.elevation_feet <= oldTop.elevation_feet)
+      .sort((a, b) => a.elevation_feet - b.elevation_feet);
+    if (!candidates.length) {
+      removedChimneyIds.add(chimney.id);
+      return [];
+    }
+    return [{
+      ...chimney,
+      base_level_id: chimney.base_level_id === target.id ? candidates[0].id : chimney.base_level_id,
+      top_level_id: chimney.top_level_id === target.id ? candidates[candidates.length - 1].id : chimney.top_level_id,
+    }];
+  });
+  if (removedChimneyIds.size) {
+    levels = levels.map(level => ({ ...level, fireplaces: (level.fireplaces || []).map(fireplace =>
+      removedChimneyIds.has(fireplace.chimney_id) ? { ...fireplace, chimney_id: null } : fireplace) }));
+  }
+  if (collapseUpperLevels) {
+    const nearestUpper = [...levels].filter(level => level.level_number > target.level_number)
+      .sort((a, b) => a.level_number - b.level_number)[0];
+    if (nearestUpper) {
+      const levelShift = nearestUpper.level_number - target.level_number;
+      const elevationShift = nearestUpper.elevation_feet - target.elevation_feet;
+      levels = levels.map(level => {
+        if (level.level_number < nearestUpper.level_number) return level;
+        const levelNumber = level.level_number - levelShift;
+        return {
+          ...level,
+          level_number: levelNumber,
+          elevation_feet: level.elevation_feet - elevationShift,
+          name: level.name === defaultLevelName(level.level_number)
+            ? defaultLevelName(levelNumber)
+            : level.name,
+        };
+      });
+    }
+  }
+  const selected = nearestBelow(target.elevation_feet) || nearestAbove(target.elevation_feet) || levels[0];
+  return {
+    ...next,
+    levels,
+    roofs,
+    chimneys,
+    visible_level_id: selected.id,
   };
 }
 

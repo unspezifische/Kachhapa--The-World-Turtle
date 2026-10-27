@@ -1,4 +1,5 @@
 import { pointInPolygon } from './buildingBlueprint';
+import { buildWallTopology } from './wallTopology';
 import { structurePointToWorld, structureWorldElevation } from './settlementProperties';
 
 export const ROOM_PURPOSES = {
@@ -22,6 +23,46 @@ export const ROOM_PURPOSES = {
   Other: [],
 };
 
+const BUSINESS_PRIVATE_ROOM_PURPOSES = new Set([
+  'Kitchen',
+  'Study / Office',
+  'Workshop',
+  'Store Room',
+  'Cellar',
+  'Stable',
+]);
+
+export function defaultRoomAccessPolicy(purpose = 'Other', building = {}) {
+  if (['Bedroom', 'Dormitory'].includes(purpose)) return 'residents';
+  if (purpose === 'Guardroom') return 'staff';
+  const isBusiness = Boolean(building.business_type || building.business_id || building.business?.id);
+  if (BUSINESS_PRIVATE_ROOM_PURPOSES.has(purpose)) return isBusiness ? 'staff' : 'residents';
+  return 'public';
+}
+
+export function defaultsForRoomPurpose(room, purpose, building = {}) {
+  const previousDefault = defaultRoomAccessPolicy(room?.purpose, building);
+  const accessWasCustomized = Boolean(room?.access_policy) && room.access_policy !== previousDefault;
+  return {
+    purpose,
+    activity_capabilities: [...(ROOM_PURPOSES[purpose] || [])],
+    access_policy: accessWasCustomized
+      ? room.access_policy
+      : defaultRoomAccessPolicy(purpose, building),
+  };
+}
+
+export function roomBoundaryFromWalls(walls = [], wallIds = [], tolerance = 0.1) {
+  if (!wallIds.length) return { region: null, error: 'Select the walls enclosing a room.' };
+  if (wallIds.some(id => !walls.some(wall => String(wall.id) === String(id)))) return { region: null, error: 'One or more selected boundary walls are missing.' };
+  const { faces } = buildWallTopology(walls, tolerance);
+  const complete = faces.filter(face => wallIds.every(id => face.wallIds.some(wallId => String(wallId) === String(id))) &&
+    face.edgeWallIds.every(ids => ids.some(id => wallIds.some(selected => String(selected) === String(id)))));
+  if (!complete.length) return { region: null, error: 'Selected walls must connect to form one closed room.' };
+  if (complete.length > 1) return { region: null, error: 'Selected walls enclose more than one room. Remove walls until one room remains.' };
+  return { region: complete[0].region, error: null };
+}
+
 export function createRoom(building, level, region, purpose = 'Other') {
   const points = region.map(point => ({ x: Number(point.x), y: Number(point.y) }));
   return {
@@ -31,7 +72,7 @@ export function createRoom(building, level, region, purpose = 'Other') {
     name: purpose === 'Other' ? 'New Room' : purpose,
     purpose,
     activity_capabilities: [...(ROOM_PURPOSES[purpose] || [])],
-    access_policy: 'public',
+    access_policy: defaultRoomAccessPolicy(purpose, building),
     occupancy_limit: null,
     floor_material: null,
     region: points,

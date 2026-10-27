@@ -29,6 +29,57 @@ export function boundarySegmentLength(boundary, index) {
   return start && end ? Math.hypot(end.x - start.x, end.y - start.y) : 0;
 }
 
+export function nearestBoundaryPlacement(boundary, point) {
+  let best = null;
+  (boundary?.segments || []).forEach((segment, index) => {
+    if (['none', 'linked_structure_wall'].includes(segment.treatment || 'none') || segment.arc) return;
+    const [start, end] = boundarySegmentEnds(boundary, index);
+    if (!start || !end) return;
+    const dx = end.x - start.x, dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 0.0001) return;
+    const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+    const projected = { x: start.x + dx * t, y: start.y + dy * t };
+    const distance = Math.hypot(point.x - projected.x, point.y - projected.y);
+    const candidate = { index, segment, offset: Math.sqrt(lengthSquared) * t, point: projected, distance };
+    if (!best || candidate.distance < best.distance) best = candidate;
+  });
+  return best;
+}
+
+export function moveBoundaryOpening(boundary, openingId, point) {
+  const sourceIndex = (boundary?.segments || []).findIndex(segment =>
+    (segment.openings || []).some(opening => opening.id === openingId));
+  if (sourceIndex < 0) return { boundary, error: 'Opening was not found.' };
+  const opening = boundary.segments[sourceIndex].openings.find(item => item.id === openingId);
+  const placement = nearestBoundaryPlacement(boundary, point);
+  if (!placement) return { boundary, error: 'Choose a wall, fence, or hedge segment.' };
+  const length = boundarySegmentLength(boundary, placement.index);
+  const width = Number(opening.width) || 1;
+  const offsetAlongSegment = Math.max(0, Math.min(length - width, placement.offset - width / 2));
+  const nextOpening = { ...opening, offsetAlongSegment };
+  const withoutOpening = {
+    ...boundary,
+    segments: boundary.segments.map(segment => ({
+      ...segment,
+      openings: (segment.openings || []).filter(item => item.id !== openingId),
+    })),
+  };
+  const error = validateBoundaryOpening(withoutOpening, placement.index, nextOpening);
+  if (error) return { boundary, error };
+  return {
+    boundary: {
+      ...withoutOpening,
+      segments: withoutOpening.segments.map((segment, index) => index === placement.index
+        ? { ...segment, openings: [...(segment.openings || []), nextOpening] }
+        : segment),
+    },
+    segmentIndex: placement.index,
+    opening: nextOpening,
+    error: null,
+  };
+}
+
 export function validateBoundaryOpening(boundary, index, opening, omitId = null) {
   const segment = boundary?.segments?.[index];
   if (!segment || segment.arc) return 'Openings on curved property segments are not supported yet.';

@@ -42,6 +42,8 @@ import {
   platformEdgeMode,
   levelAbove,
   BLUEPRINT_ROOF_TYPES,
+  automaticRoofFootprints,
+  roofFootprintOverlapRatio,
   addSkyCourtyard,
   moveSkyCourtyardVertex,
   removeSkyCourtyard,
@@ -50,11 +52,17 @@ import {
   normalizeFlightShares,
   redistributeFlightShares,
   resizeFlightShares,
+  defaultLevelName,
+  missingLevelNumbers,
+  insertMissingBuildingLevel,
+  levelDeletionImpact,
+  deleteBuildingLevel,
 } from './buildingBlueprint';
 
 import BlueprintRoofs from './BlueprintRoofs';
-import { createRoom, ROOM_PURPOSES } from './settlementRooms';
+import { createRoom, defaultsForRoomPurpose, roomBoundaryFromWalls, ROOM_PURPOSES } from './settlementRooms';
 import { detectRooms, reconcileDetectedRooms } from './roomDetection';
+import { wallConnectionDiagnostics, repairWallConnections } from './wallTopology';
 
 import './BlueprintLevels.css';
 
@@ -92,28 +100,48 @@ export default function BlueprintLevels({
   building: source,
   onChange,
   uploadImage,
+  onDeleteLevelReferences,
   drafting = false,
+  initialOpen = false,
+  initialSelection = null,
+  onEditorClose,
+  onEditorOpenChange,
 }) {
-  const building = normalizeBlueprint(source);
+  const normalizedBuilding = normalizeBlueprint(source);
+  const building = initialSelection?.level_id
+    ? { ...normalizedBuilding, visible_level_id: initialSelection.level_id }
+    : normalizedBuilding;
   const level = building.levels.find(
     item => item.id === building.visible_level_id
   ) || building.levels[0];
 
-  const [open, setOpen] = useState(false);
-  const [tool, setTool] = useState(drafting ? 'footprint' : 'wall');
+  const [open, setOpen] = useState(Boolean(initialOpen));
+  useEffect(() => {
+    onEditorOpenChange?.(open);
+    return () => {
+      if (open) onEditorOpenChange?.(false);
+    };
+  }, [open, onEditorOpenChange]);
+  const [tool, setTool] = useState(drafting ? 'footprint' : 'select');
   const [draft, setDraft] = useState([]);
   const [imagePlacementOpen, setImagePlacementOpen] = useState(false);
   const [imagePlacementPinned, setImagePlacementPinned] = useState(false);
   const [roofDraftTemplate, setRoofDraftTemplate] = useState(null);
+  const [roofDraftHoles, setRoofDraftHoles] = useState([]);
+  const [roofRingTarget, setRoofRingTarget] = useState('outer');
+  const [dragRoofVertex, setDragRoofVertex] = useState(null);
   const [roofStyle, setRoofStyle] = useState('gable');
   const [roofPitch, setRoofPitch] = useState(30);
   const [roofSlopeDirection, setRoofSlopeDirection] = useState(90);
   const [roofOverhang, setRoofOverhang] = useState(2);
+  const [roofConflict, setRoofConflict] = useState(null);
   const [calibrationPoints, setCalibrationPoints] = useState([]);
   const [calibrationDistance, setCalibrationDistance] = useState(5);
   const [history, setHistory] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [deleteLevelImpact, setDeleteLevelImpact] = useState(null);
+  const [missingLevelNumber, setMissingLevelNumber] = useState('');
 
   const [angle, setAngle] = useState(0);
   const [width, setWidth] = useState(3);
@@ -121,6 +149,8 @@ export default function BlueprintLevels({
   const [segmentMode, setSegmentMode] = useState('line');
   const [arcDraft, setArcDraft] = useState([]);
   const [arcPointerPoint, setArcPointerPoint] = useState(null);
+  const [connectionMarker, setConnectionMarker] = useState(null);
+  const [connectionRepairChoices, setConnectionRepairChoices] = useState({});
   const [draftArcs, setDraftArcs] = useState([]);
 
   const [stairShape, setStairShape] = useState('straight');
@@ -130,7 +160,7 @@ export default function BlueprintLevels({
   const [stairLandingCount, setStairLandingCount] = useState(1);
   const [stairFlightShares, setStairFlightShares] = useState([50, 50]);
   const [activeStairFlight, setActiveStairFlight] = useState(null);
-  const [stairLandingDepth, setStairLandingDepth] = useState(4);
+  const [stairLandingDepth, setStairLandingDepth] = useState(3);
   const [stairTurnDegrees, setStairTurnDegrees] = useState(90);
   const [stairCurveRadius, setStairCurveRadius] = useState(8);
   const [stairCurveDegrees, setStairCurveDegrees] = useState(90);
@@ -162,9 +192,12 @@ export default function BlueprintLevels({
   const [hingeSide, setHingeSide] = useState('left');
   const [swingSide, setSwingSide] = useState('inward');
 
-  const [selection, setSelection] = useState(null);
+  const [selection, setSelection] = useState(initialSelection?.element_id
+    ? { kind: initialSelection.element_kind === 'opening' ? 'opening' : initialSelection.element_kind, id: initialSelection.element_id }
+    : null);
   const [roomDetectionWarnings, setRoomDetectionWarnings] = useState([]);
   const [roomRedrawId, setRoomRedrawId] = useState(null);
+  const [roomBoundaryWallIds, setRoomBoundaryWallIds] = useState([]);
   const [openingsDrawerOpen, setOpeningsDrawerOpen] = useState(false);
   const openingsMenuRef = useRef(null);
   const [curveWallId, setCurveWallId] = useState(null);
@@ -180,6 +213,17 @@ export default function BlueprintLevels({
   const [dragPlatformVertex, setDragPlatformVertex] = useState(null);
   const [dragOutlineVertex, setDragOutlineVertex] = useState(null);
   const [dragRoomVertex, setDragRoomVertex] = useState(null);
+  const levelNumberGaps = missingLevelNumbers(building);
+  const insertableLevelGaps = levelNumberGaps.filter(levelNumber => {
+    const lower = building.levels.filter(item => item.level_number < levelNumber)
+      .sort((a, b) => b.level_number - a.level_number)[0];
+    const upper = building.levels.filter(item => item.level_number > levelNumber)
+      .sort((a, b) => a.level_number - b.level_number)[0];
+    return lower && upper && upper.elevation_feet > lower.elevation_feet;
+  });
+  const selectedMissingLevelNumber = insertableLevelGaps.includes(Number(missingLevelNumber))
+    ? Number(missingLevelNumber)
+    : insertableLevelGaps[0];
 
   useEffect(() => {
     if (!openingsDrawerOpen) return undefined;
@@ -199,6 +243,8 @@ export default function BlueprintLevels({
   if (!level) return null;
 
   const allWalls = blueprintWalls(level);
+  const connectionGaps = wallConnectionDiagnostics(allWalls);
+  const roomBoundary = roomBoundaryFromWalls(allWalls, roomBoundaryWallIds);
   const belowLevel = levelBelow(building, level);
   const exposedAreas = belowLevel
     ? exposedRoofFootprints(belowLevel, level)
@@ -1455,6 +1501,18 @@ export default function BlueprintLevels({
       return;
     }
 
+    if (tool === 'room' || tool === 'room-redraw') {
+      const nearest = nearestWall(level, p);
+      if (!nearest || nearest.error > Math.max(3, (nearest.wall.thickness || 0.5) / 2 + 1.5)) {
+        setError('Click an existing wall to add or remove it from the room boundary.');
+        return;
+      }
+      setRoomBoundaryWallIds(current => current.includes(nearest.wall.id)
+        ? current.filter(id => id !== nearest.wall.id)
+        : [...current, nearest.wall.id]);
+      return;
+    }
+
     const snapReferencePoint = candidate => {
       const result = snapPointToOutline(candidate, allWalls, 2);
       return result.snapped ? result.point : candidate;
@@ -1654,9 +1712,7 @@ export default function BlueprintLevels({
       tool === 'footprint' ||
       tool === 'open-below' ||
       tool === 'open-sky' ||
-      tool === 'platform' ||
-      tool === 'room' ||
-      tool === 'room-redraw'
+      tool === 'platform'
     ) {
       let draftPoint = p;
       let snappedBelow = false;
@@ -1702,13 +1758,17 @@ export default function BlueprintLevels({
     }
 
     if (tool === 'roof') {
-      setDraft(current => [...current, p]);
+      if (roofRingTarget === 'outer') setDraft(current => [...current, p]);
+      else setRoofDraftHoles(current => current.map((ring, index) =>
+        index === roofRingTarget ? [...ring, p] : ring));
       return;
     }
 
     if (tool === 'wall') {
       if (!draft.length) {
-        setDraft([p]);
+        const snapped = snapPointToOutline(p, allWalls, 2);
+        setDraft([snapped.snapped ? snapped.point : p]);
+        setConnectionMarker(snapped.snapped ? snapped.point : null);
         return;
       }
 
@@ -1726,9 +1786,10 @@ export default function BlueprintLevels({
                 nextWallId(),
               type: 'line',
               start: draft[0],
-              end: snapWallAngles
-                ? snapPointToRightAngle(draft[0], p)
-                : p,
+              end: (() => {
+                const snapped = snapPointToOutline(p, allWalls, 2);
+                return snapped.snapped ? snapped.point : snapWallAngles ? snapPointToRightAngle(draft[0], p) : p;
+              })(),
               thickness:
                 wallThickness,
               material:
@@ -2137,6 +2198,13 @@ export default function BlueprintLevels({
     setError('');
     setSelection(null);
     setCurveWallId(null);
+    setArcDraft([]);
+    setDraftArcs([]);
+    setRoomBoundaryWallIds([]);
+    setRoofDraftTemplate(null);
+    setRoofDraftHoles([]);
+    setRoofRingTarget('outer');
+    if (open) setTool('select');
   };
 
   const upload =
@@ -2362,6 +2430,7 @@ export default function BlueprintLevels({
     setCalibrationPoints([]);
     setArcDraft([]);
     setDraftArcs([]);
+    setRoomBoundaryWallIds([]);
     setSegmentMode('line');
     setError('');
     setCurveWallId(null);
@@ -2380,13 +2449,42 @@ export default function BlueprintLevels({
     setArcPointerPoint(null);
   };
 
+  const requestRoofChange = nextBuilding => {
+    const currentAuthoredIds = new Set((building.roofs || []).map(roof => roof.id));
+    const automaticRoofs = automaticRoofFootprints(building);
+    const automaticIds = new Set(automaticRoofs.map(roof => roof.id));
+    const currentRoofs = [...(building.roofs || []), ...automaticRoofs];
+    const addedRoofs = (nextBuilding.roofs || []).filter(roof => !currentAuthoredIds.has(roof.id));
+    const promotedAutomaticIds = addedRoofs
+      .filter(roof => automaticIds.has(roof.id))
+      .map(roof => roof.id);
+    const normalizedBuilding = promotedAutomaticIds.length ? {
+      ...nextBuilding,
+      suppressed_automatic_roof_ids: [...new Set([
+        ...(nextBuilding.suppressed_automatic_roof_ids || []),
+        ...promotedAutomaticIds,
+      ])],
+    } : nextBuilding;
+    const conflicts = addedRoofs.flatMap(newRoof => currentRoofs
+      .filter(existingRoof => existingRoof.id !== newRoof.id &&
+        roofFootprintOverlapRatio(existingRoof, newRoof) >= 0.8)
+      .map(existingRoof => ({ existingRoof, newRoof })));
+
+    if (conflicts.length) {
+      setRoofConflict({ nextBuilding: normalizedBuilding, conflicts });
+      return;
+    }
+    onChange(normalizedBuilding);
+  };
+
   const finishRoof = () => {
     if (draft.length < 3) return;
+    const supportLevel = belowLevel || level;
     const template = roofDraftTemplate || {
       id: blueprintId(),
       name: `${level.name} custom footprint roof`,
-      support_level_id: level.id,
-      visibility_level_id: (levelAbove(building, level) || level).id,
+      support_level_id: supportLevel.id,
+      visibility_level_id: belowLevel ? level.id : (levelAbove(building, level) || level).id,
       material: 'shingles',
       thickness: 0.5,
       elevation_offset: 0,
@@ -2399,9 +2497,18 @@ export default function BlueprintLevels({
       slope_direction: roofSlopeDirection,
       overhang: roofOverhang,
       footprint: draft.map(point => ({ ...point })),
+      holes: roofDraftHoles.filter(ring => ring.length >= 3).map(ring => ring.map(point => ({ ...point }))),
     };
-    onChange({ ...building, roofs: [...building.roofs, roof] });
+    const exists = building.roofs.some(item => item.id === roof.id);
+    requestRoofChange({
+      ...building,
+      roofs: exists
+        ? building.roofs.map(item => item.id === roof.id ? roof : item)
+        : [...building.roofs, roof],
+    });
     setRoofDraftTemplate(null);
+    setRoofDraftHoles([]);
+    setRoofRingTarget('outer');
     setDraft([]);
     setTool('select');
   };
@@ -2616,31 +2723,82 @@ export default function BlueprintLevels({
     if (selection.kind === 'room') {
       const updateRoom = changes => updateLevel({ rooms: (level.rooms || []).map(room =>
         room.id === selected.id ? { ...room, ...changes } : room) });
+      const roomBoundary = selected.region || [];
+      const boundaryWalls = allWalls.filter(wall => {
+        const points = wallPolyline(wall, 1);
+        return points.slice(0, -1).some((start, index) => {
+          const end = points[index + 1];
+          const midpoint = {
+            x: (start.x + end.x) / 2,
+            y: (start.y + end.y) / 2,
+          };
+          return roomBoundary.some((boundaryStart, boundaryIndex) =>
+            distanceToSegment(
+              midpoint,
+              boundaryStart,
+              roomBoundary[(boundaryIndex + 1) % roomBoundary.length]
+            ) <= 0.15);
+        });
+      });
+      const boundaryThicknesses = [...new Set(boundaryWalls.map(wall => wall.thickness))];
+      const roomWallThickness = boundaryThicknesses.length === 1 ? boundaryThicknesses[0] : '';
+      const updateBoundaryWallThickness = thickness => {
+        const boundaryIds = new Set(boundaryWalls.map(wall => wall.id));
+        updateLevel({
+          outline: level.outline.map(wall => boundaryIds.has(wall.id) ? { ...wall, thickness } : wall),
+          walls: level.walls.map(wall => boundaryIds.has(wall.id) ? { ...wall, thickness } : wall),
+        });
+      };
       return <>
         <h3>Selected room</h3>
         <label>Name<input aria-label="Room name" value={selected.name || ''} onChange={event => updateRoom({ name: event.target.value })} /></label>
         <label>Purpose<select aria-label="Room purpose" value={selected.purpose || 'Other'} onChange={event => {
           const purpose = event.target.value;
-          updateRoom({ purpose, activity_capabilities: [...(ROOM_PURPOSES[purpose] || [])] });
+          updateRoom(defaultsForRoomPurpose(selected, purpose, building));
         }}>{Object.keys(ROOM_PURPOSES).map(purpose => <option key={purpose} value={purpose}>{purpose}</option>)}</select></label>
         <label>Capabilities<input aria-label="Room capabilities" value={(selected.activity_capabilities || []).join(', ')} onChange={event => updateRoom({ activity_capabilities: event.target.value.split(',').map(value => value.trim()).filter(Boolean) })} /></label>
         <label>Access<select aria-label="Room access" value={selected.access_policy || 'public'} onChange={event => updateRoom({ access_policy: event.target.value })}>
-          {['public', 'residents', 'staff', 'restricted', 'custom'].map(policy => <option key={policy} value={policy}>{policy}</option>)}
+          <option value="public">Public</option>
+          <option value="residents">Residents only</option>
+          <option value="staff">Staff only</option>
+          <option value="restricted">Restricted</option>
+          <option value="custom">Custom</option>
         </select></label>
         <label>Occupancy limit<input aria-label="Room occupancy limit" type="number" min="1" value={selected.occupancy_limit ?? ''} onChange={event => updateRoom({ occupancy_limit: event.target.value === '' ? null : Math.max(1, Number(event.target.value) || 1) })} /></label>
         <label>Floor material<select aria-label="Room floor material" value={selected.floor_material || ''} onChange={event => updateRoom({ floor_material: event.target.value || null })}>
           <option value="">Use level floor material</option>
           {FLOOR_FINISHES.map(finish => <option key={finish} value={finish}>{finishLabel(finish)}</option>)}
         </select></label>
-        <p>{selected.boundary_locked ? 'Boundary is manually locked.' : 'Boundary follows automatic wall detection.'}</p>
+        {boundaryWalls.length > 0 && <>
+          {numberField(
+            'Room wall thickness (ft)',
+            roomWallThickness,
+            updateBoundaryWallThickness,
+            0.1,
+            20,
+            0.1
+          )}
+          <p>
+            Applies to all {boundaryWalls.length} wall {boundaryWalls.length === 1 ? 'segment' : 'segments'} around this room.
+            {boundaryThicknesses.length > 1 ? ' The boundary currently uses mixed thicknesses.' : ''}
+          </p>
+        </>}
+        <p>{selected.boundary_wall_ids?.length
+          ? `Boundary follows ${selected.boundary_wall_ids.length} selected walls.`
+          : selected.boundary_locked ? 'Boundary is manually locked.' : 'Boundary follows automatic wall detection.'}</p>
         {selected.detection_warning && <p role="alert">{selected.detection_warning}</p>}
         <button type="button" onClick={() => {
-          setRoomRedrawId(selected.id);
           chooseTool('room-redraw');
+          setRoomRedrawId(selected.id);
+          setRoomBoundaryWallIds(boundaryWalls.map(wall => wall.id));
           setSelection({ kind: 'room', id: selected.id });
         }}>Redraw boundary</button>
         {selected.boundary_locked && <button type="button" onClick={() => {
           const unlocked = { ...selected, boundary_locked: false, boundary_source: 'auto', detection_warning: null };
+          // Keep the selected wall IDs for this reconciliation pass so the
+          // detector compares against the live wall-derived outline instead of
+          // a potentially stale cached polygon. Successful automatic matches
+          // discard the links in reconcileDetectedRooms.
           const candidate = { ...level, rooms: (level.rooms || []).map(room => room.id === selected.id ? unlocked : room) };
           updateLevel({ rooms: reconcileRoomsForLevel(candidate) });
         }}>Use automatic boundary</button>}
@@ -3109,6 +3267,10 @@ export default function BlueprintLevels({
                   selected.flight_shares,
                   flight_shares => updateSelection({ flight_shares })
                 )}
+
+                <p>
+                  Flight percentages place each landing and control how much stair run and rise occurs on either side.
+                </p>
 
                 {numberField(
                   'Landing depth (ft)',
@@ -3653,7 +3815,10 @@ export default function BlueprintLevels({
         {numberField(
           'Stair width (ft)',
           width,
-          setWidth,
+          value => {
+            setStairLandingDepth(current => Math.abs(current - width) < 0.001 ? value : current);
+            setWidth(value);
+          },
           1,
           20,
           0.5
@@ -3714,6 +3879,10 @@ export default function BlueprintLevels({
               )}
 
               {flightShareFields(stairFlightShares, setStairFlightShares)}
+
+              <p>
+                Flight percentages place each landing and control how much stair run and rise occurs on either side.
+              </p>
 
               {numberField(
                 'Landing depth (ft)',
@@ -3897,6 +4066,7 @@ export default function BlueprintLevels({
       )}
     </>
   );
+  const hasActiveToolControls = activeToolControls.props.children.some(Boolean);
 
   return (
     <section className="blueprint-levels">
@@ -3912,7 +4082,7 @@ export default function BlueprintLevels({
           setHistory([]);
           setDraft([]);
           setSelection(null);
-          if (drafting) setTool('footprint');
+          setTool(drafting ? 'footprint' : 'select');
           const rooms = drafting ? level.rooms : reconcileRoomsForLevel(level);
           onChange({
             ...building,
@@ -3942,7 +4112,7 @@ export default function BlueprintLevels({
               key={item.id}
               value={item.id}
             >
-              {item.name} · {item.elevation_feet} ft
+              {defaultLevelName(item.level_number)}{item.name !== defaultLevelName(item.level_number) ? ` — ${item.name}` : ''} · {item.elevation_feet} ft
             </option>
           ))}
         </select>
@@ -4008,6 +4178,34 @@ export default function BlueprintLevels({
         </button>
       </div>
 
+      {!!insertableLevelGaps.length && <div className="blueprint-level-gap-controls">
+        {insertableLevelGaps.length > 1 && <label>
+          Missing level
+          <select aria-label="Missing level" value={selectedMissingLevelNumber}
+            onChange={event => setMissingLevelNumber(event.target.value)}>
+            {insertableLevelGaps.map(levelNumber => <option key={levelNumber} value={levelNumber}>
+              {defaultLevelName(levelNumber)}
+            </option>)}
+          </select>
+        </label>}
+        <button type="button" onClick={() => onChange(insertMissingBuildingLevel(
+          building,
+          selectedMissingLevelNumber
+        ))}>
+          Add {defaultLevelName(selectedMissingLevelNumber)}
+        </button>
+      </div>}
+
+      {levelNumberGaps.length > insertableLevelGaps.length && <p className="blueprint-level-warning" role="status">
+        Some missing levels cannot be restored until their surrounding elevations are ordered from low to high.
+      </p>}
+
+      <button type="button" className="blueprint-delete-level"
+        disabled={building.levels.length <= 1 || busy}
+        onClick={() => setDeleteLevelImpact(levelDeletionImpact(building, level.id))}>
+        Delete {level.name}
+      </button>
+
       {numberField(
         'Foundation height (ft)',
         building.foundation_height_feet,
@@ -4039,7 +4237,7 @@ export default function BlueprintLevels({
         building={building}
         level={level}
         exposedAreas={exposedAreas}
-        onChange={onChange}
+        onChange={requestRoofChange}
         onDrawCustom={template => {
           fit();
           setRoofDraftTemplate(template);
@@ -4050,6 +4248,8 @@ export default function BlueprintLevels({
           setOpen(true);
           setHistory([]);
           setDraft([]);
+          setRoofDraftHoles([]);
+          setRoofRingTarget('outer');
           setSelection(null);
           setTool('roof');
           const rooms = reconcileRoomsForLevel(level);
@@ -4057,6 +4257,22 @@ export default function BlueprintLevels({
             ...building,
             levels: building.levels.map(item => item.id === level.id ? { ...item, rooms } : item),
           });
+        }}
+        onEditGeometry={template => {
+          const support = building.levels.find(item => item.id === template.support_level_id) || level;
+          if (support.id !== level.id) updateBuilding({ visible_level_id: support.id }, false);
+          fit();
+          setRoofDraftTemplate(template);
+          setRoofStyle(template.type);
+          setRoofPitch(template.pitch);
+          setRoofSlopeDirection(template.slope_direction);
+          setRoofOverhang(template.overhang);
+          setDraft((template.footprint || []).map(point => ({ ...point })));
+          setRoofDraftHoles((template.holes || []).map(ring => ring.map(point => ({ ...point }))));
+          setRoofRingTarget('outer');
+          setSelection(null);
+          setTool('roof');
+          setOpen(true);
         }}
       />
 
@@ -4069,6 +4285,7 @@ export default function BlueprintLevels({
             setRoofDraftTemplate(null);
             setDraft([]);
             setTool('select');
+            onEditorClose?.();
           }
         }}
         onKeyDownCapture={
@@ -4108,6 +4325,21 @@ export default function BlueprintLevels({
                   Delete selected
                 </button>
               </div>
+
+              <label className="blueprint-editor-level-switcher">
+                Editing level
+
+                <select
+                  value={level.id}
+                  onChange={event => chooseLevel(event.target.value)}
+                >
+                  {building.levels.map(item => (
+                    <option key={item.id} value={item.id}>
+                      {defaultLevelName(item.level_number)}{item.name !== defaultLevelName(item.level_number) ? ` — ${item.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               <div className="blueprint-tools" aria-label="Room detection review">
                 <span>{(level.rooms || []).length} rooms · automatic detection on wall changes</span>
@@ -4205,8 +4437,11 @@ export default function BlueprintLevels({
                   }
                 />
 
-                Snap walls and footprint edges to 90°
+                Snap walls and footprint edges to the building grid (90°)
               </label>
+              <p className="blueprint-hint">
+                The level editor stays aligned to the building grid. The structure's real-world rotation is applied in the 3D scene.
+              </p>
 
               {belowLevel && (
                 <>
@@ -4479,6 +4714,11 @@ export default function BlueprintLevels({
                 <button disabled={busy} aria-pressed={tool === 'roof'} onClick={() => chooseTool('roof')}>Roof</button>
               </div>
 
+              {['room', 'room-redraw'].includes(tool) && <div className="blueprint-room-boundary-status" role="status">
+                {roomBoundaryWallIds.length} walls selected · {roomBoundary.error || 'Closed room boundary ready'}
+                {roomBoundaryWallIds.length > 0 && <button type="button" onClick={() => setRoomBoundaryWallIds([])}>Clear selected walls</button>}
+              </div>}
+
               {['footprint', 'wall'].includes(tool) && (
                 <div className="blueprint-tools blueprint-segment-modes" role="group" aria-label={`${tool} segment mode`}>
                   {['line', 'arc', 'curve'].map(mode => (
@@ -4525,27 +4765,36 @@ export default function BlueprintLevels({
                 </div>
               )}
 
-              {activeToolControls.props.children.filter(Boolean).length > 0 && (
-                <section
-                  className="blueprint-active-tool-controls"
-                  aria-label={`${tool} tool settings`}
-                >
-                  <div className="blueprint-active-tool-heading">
-                    <span>Tool settings</span>
-                    <strong>{tool === 'double-door' ? 'Double door' : tool}</strong>
-                  </div>
-                  <div className="blueprint-active-tool-fields">
-                    {activeToolControls}
-                  </div>
-                </section>
-              )}
-
               {tool === 'roof' && (
                 <div className="blueprint-roof-draft-action">
-                  <span>{draft.length} roof corners selected</span>
+                  <span>{roofDraftTemplate ? 'Editing roof geometry' : 'Drawing roof'} · {draft.length} outer corners</span>
+                  <label>Editing ring
+                    <select aria-label="Roof geometry ring" value={roofRingTarget}
+                      onChange={event => setRoofRingTarget(event.target.value === 'outer' ? 'outer' : Number(event.target.value))}>
+                      <option value="outer">Outer footprint</option>
+                      {roofDraftHoles.map((_, index) => <option key={index} value={index}>Hole {index + 1}</option>)}
+                    </select>
+                  </label>
+                  <button type="button" onClick={() => {
+                    setRoofDraftHoles(current => [...current, []]);
+                    setRoofRingTarget(roofDraftHoles.length);
+                  }}>Add hole</button>
+                  {roofRingTarget !== 'outer' && <button type="button" onClick={() => {
+                    setRoofDraftHoles(current => current.filter((_, index) => index !== roofRingTarget));
+                    setRoofRingTarget('outer');
+                  }}>Remove selected hole</button>}
+                  <button type="button" onClick={() => {
+                    if (roofRingTarget === 'outer') setDraft([]);
+                    else setRoofDraftHoles(current => current.map((ring, index) => index === roofRingTarget ? [] : ring));
+                  }}>Redraw selected ring</button>
                   <button type="button" disabled={draft.length < 3} onClick={finishRoof}>
-                    Finish Roof Polygon
+                    {roofDraftTemplate && building.roofs.some(item => item.id === roofDraftTemplate.id)
+                      ? 'Apply roof geometry'
+                      : 'Finish Roof Polygon'}
                   </button>
+                  {roofDraftTemplate && <button type="button" onClick={() => {
+                    setRoofDraftTemplate(null); setRoofDraftHoles([]); setDraft([]); setTool('select');
+                  }}>Cancel roof geometry</button>}
                 </div>
               )}
 
@@ -4596,8 +4845,8 @@ export default function BlueprintLevels({
 
                                   : tool === 'room' || tool === 'room-redraw'
                                     ? tool === 'room-redraw'
-                                      ? 'Trace the corrected room boundary, then choose Finish Room Boundary.'
-                                      : 'Trace a room, then choose Finish Room. Assign its purpose and capabilities after selecting it.'
+                                      ? 'Select the walls that enclose the corrected room, then choose Finish Room Boundary. Click a selected wall again to remove it.'
+                                      : 'Select the walls that enclose the room, then choose Finish Room. Click a selected wall again to remove it.'
 
                                   : tool === 'roof'
                                     ? 'Trace the custom roof footprint, then choose Finish Roof Polygon.'
@@ -4669,6 +4918,10 @@ export default function BlueprintLevels({
                 onPointerMove={event => {
                   const p =
                     point(event);
+                  if (tool === 'wall') {
+                    const connection = snapPointToOutline(p, allWalls, 2);
+                    setConnectionMarker(connection.snapped ? connection.point : null);
+                  }
 
                   if (
                     ['footprint', 'wall'].includes(tool) &&
@@ -4703,6 +4956,7 @@ export default function BlueprintLevels({
                       2
                     );
                     const nextPoint = snapped.snapped ? snapped.point : rawPoint;
+                    setConnectionMarker(snapped.snapped ? snapped.point : null);
 
                     if (!dragOutlineVertex.historyRecorded) {
                       setHistory(current => [
@@ -4779,6 +5033,17 @@ export default function BlueprintLevels({
                         }
                         : room),
                     }, false);
+                    return;
+                  }
+
+                  if (dragRoofVertex) {
+                    if (dragRoofVertex.ring === 'outer') {
+                      setDraft(points => points.map((vertex, index) => index === dragRoofVertex.index ? p : vertex));
+                    } else {
+                      setRoofDraftHoles(rings => rings.map((ring, ringIndex) => ringIndex === dragRoofVertex.ring
+                        ? ring.map((vertex, index) => index === dragRoofVertex.index ? p : vertex)
+                        : ring));
+                    }
                     return;
                   }
 
@@ -4984,6 +5249,7 @@ export default function BlueprintLevels({
                     updateLevel({ rooms: reconcileRoomsForLevel(level) }, false);
                   }
                   setDragRoomVertex(null);
+                  setDragRoofVertex(null);
                 }}
                 onPointerCancel={() => {
                   setDrag(null);
@@ -4994,6 +5260,7 @@ export default function BlueprintLevels({
                   setDragPlatformVertex(null);
                   setDragOutlineVertex(null);
                   setDragRoomVertex(null);
+                  setDragRoofVertex(null);
                 }}
               >
                 <defs>
@@ -5011,6 +5278,7 @@ export default function BlueprintLevels({
                     />
                   </pattern>
                 </defs>
+
 
                 <rect
                   x={view[0]}
@@ -5066,6 +5334,23 @@ export default function BlueprintLevels({
                       x2={calibrationPoints[1].x} y2={calibrationPoints[1].y}
                       stroke="#ffe08a" strokeDasharray="0.8 0.4" pointerEvents="none" />
                   )}
+                  {tool === 'roof' && draft.length >= 2 && <polygon
+                    points={draft.map(point => `${point.x},${point.y}`).join(' ')}
+                    fill="rgba(255,224,138,.18)" stroke="#ffe08a" strokeWidth="0.6"
+                    strokeDasharray={draft.length >= 3 ? undefined : '1 0.6'}
+                  />}
+                  {tool === 'roof' && roofDraftHoles.map((ring, ringIndex) => <g key={`roof-hole-${ringIndex}`}>
+                    {ring.length >= 2 && <polygon points={ring.map(point => `${point.x},${point.y}`).join(' ')}
+                      fill="rgba(20,32,28,.72)" stroke="#ff6b62" strokeWidth="0.55" />}
+                    {ring.map((vertex, index) => <circle key={index} cx={vertex.x} cy={vertex.y} r="0.8"
+                      fill={roofRingTarget === ringIndex ? '#ff6b62' : '#ffe08a'} stroke="#14201c" strokeWidth="0.25"
+                      role="button" aria-label={`Move roof hole ${ringIndex + 1} corner ${index + 1}`}
+                      onPointerDown={event => { event.stopPropagation(); setRoofRingTarget(ringIndex); setDragRoofVertex({ ring: ringIndex, index }); }} />)}
+                  </g>)}
+                  {tool === 'roof' && draft.map((vertex, index) => <circle key={`roof-outer-${index}`}
+                    cx={vertex.x} cy={vertex.y} r="0.8" fill={roofRingTarget === 'outer' ? '#ffe08a' : '#efb465'}
+                    stroke="#14201c" strokeWidth="0.25" role="button" aria-label={`Move roof footprint corner ${index + 1}`}
+                    onPointerDown={event => { event.stopPropagation(); setRoofRingTarget('outer'); setDragRoofVertex({ ring: 'outer', index }); }} />)}
                   {exposedAreas.map((area, index) => {
                     const path = [area.footprint, ...area.holes]
                       .map(ring => `${ring.map((point, pointIndex) =>
@@ -5511,6 +5796,8 @@ export default function BlueprintLevels({
                         fill={selectedRoom ? 'rgba(255,224,138,.20)' : 'rgba(117,195,230,.13)'}
                         stroke={selectedRoom ? '#ffe08a' : '#ff6b62'}
                         strokeDasharray={room.boundary_locked ? '0.7 0.4' : undefined}
+                        role="button"
+                        aria-label={`Select room ${room.name || room.id}`}
                         onClick={event => { if (tool === 'select') { event.stopPropagation(); setSelection({ kind: 'room', id: room.id }); } }}
                       />
                       {selectedRoom && tool === 'select' && (room.region || []).map((vertex, index) => <circle
@@ -5579,6 +5866,10 @@ export default function BlueprintLevels({
                       selectedWall &&
                       level.outline.some(item => item.id === wall.id);
 
+                    const selectedRoomBoundaryWall =
+                      ['room', 'room-redraw'].includes(tool) &&
+                      roomBoundaryWallIds.includes(wall.id);
+
                     return (
                       <g key={wall.id}>
                         <polyline
@@ -5591,12 +5882,16 @@ export default function BlueprintLevels({
                               .join(' ')
                           }
                           stroke={
-                            selectedWall
+                            selectedRoomBoundaryWall
+                              ? '#ff6b62'
+                              : selectedWall
                               ? '#ffe08a'
                               : '#e7d6ae'
                           }
                           strokeWidth={
-                            selectedWall
+                            selectedRoomBoundaryWall
+                              ? Math.max(1.2, wall.thickness * 0.65)
+                              : selectedWall
                               ? Math.max(
                                 0.8,
                                 wall.thickness *
@@ -5608,6 +5903,17 @@ export default function BlueprintLevels({
                                 0.28
                               )
                           }
+                          role={['room', 'room-redraw'].includes(tool) ? 'button' : undefined}
+                          aria-label={['room', 'room-redraw'].includes(tool) ? `Room boundary wall ${wall.id}` : undefined}
+                          aria-pressed={['room', 'room-redraw'].includes(tool) ? selectedRoomBoundaryWall : undefined}
+                          style={['room', 'room-redraw'].includes(tool) ? { cursor: 'pointer' } : undefined}
+                          onClick={['room', 'room-redraw'].includes(tool) ? event => {
+                            event.stopPropagation();
+                            setError('');
+                            setRoomBoundaryWallIds(current => current.includes(wall.id)
+                              ? current.filter(id => id !== wall.id)
+                              : [...current, wall.id]);
+                          } : undefined}
                         />
 
                         {selectedWall && [
@@ -5721,42 +6027,26 @@ export default function BlueprintLevels({
                                   ? '#ffd27d'
                                   : '#efb465';
 
-                            return (
+                            return segment.kind === 'landing' && segment.footprint ? (
+                              <polygon
+                                key={index}
+                                points={segment.footprint.map(point => `${point.x},${point.y}`).join(' ')}
+                                fill={color}
+                                fillOpacity="0.55"
+                                stroke={color}
+                                strokeWidth="0.35"
+                              />
+                            ) : (
                               <line
-                                key={
-                                  index
-                                }
-                                x1={
-                                  segment.start.x
-                                }
-                                y1={
-                                  segment.start.y
-                                }
-                                x2={
-                                  segment.end.x
-                                }
-                                y2={
-                                  segment.end.y
-                                }
-                                stroke={
-                                  color
-                                }
-                                strokeWidth={
-                                  activeFlightSegment
-                                    ? Math.max(1.4, stair.width * 0.7)
-                                    : segment.kind ===
-                                    'landing'
-                                    ? Math.max(
-                                      1,
-                                      stair.width *
-                                      0.65
-                                    )
-                                    : Math.max(
-                                      1,
-                                      stair.width *
-                                      0.4
-                                    )
-                                }
+                                key={index}
+                                x1={segment.start.x}
+                                y1={segment.start.y}
+                                x2={segment.end.x}
+                                y2={segment.end.y}
+                                stroke={color}
+                                strokeWidth={activeFlightSegment
+                                  ? Math.max(1.4, stair.width * 0.7)
+                                  : Math.max(1, stair.width * 0.4)}
                               />
                             );
                           }
@@ -6045,8 +6335,6 @@ export default function BlueprintLevels({
                     tool ===
                     'open-below' ||
                     tool === 'open-sky' ||
-                    tool === 'room' ||
-                    tool === 'room-redraw' ||
                     tool ===
                     'platform' ||
                     tool === 'roof' ||
@@ -6127,6 +6415,12 @@ export default function BlueprintLevels({
                         fill="#ffe08a"
                       />
                     )}
+                </g>
+                <g pointerEvents="none" aria-label="Wall connection markers">
+                  {connectionGaps.map(gap => <circle key={`${gap.wallId}:${gap.endpoint}`} cx={gap.point.x} cy={-gap.point.y} r="0.45" fill="none" stroke="#ff805d" strokeWidth="0.18">
+                    <title>{`Wall ${gap.wallId} ${gap.endpoint}: ${gap.distance.toFixed(2)} ft gap`}</title>
+                  </circle>)}
+                  {connectionMarker && <circle cx={connectionMarker.x} cy={-connectionMarker.y} r="0.5" fill="none" stroke="#8affc1" strokeWidth="0.2" aria-label="Connected wall endpoint" />}
                 </g>
               </svg>
 
@@ -6346,23 +6640,29 @@ export default function BlueprintLevels({
                   Finish Open to Below
                 </button>
 
-                <button disabled={!['room', 'room-redraw'].includes(tool) || draft.length < 3} onClick={() => {
+                <button disabled={!['room', 'room-redraw'].includes(tool) || !roomBoundary.region} onClick={() => {
                   const existing = roomRedrawId
                     ? (level.rooms || []).find(room => room.id === roomRedrawId)
                     : null;
                   const room = existing
                     ? {
                       ...existing,
-                      region: draft.map(point => ({ ...point })),
-                      boundary_source: 'manual',
+                      region: roomBoundary.region.map(point => ({ ...point })),
+                      boundary_wall_ids: [...roomBoundaryWallIds],
+                      boundary_source: 'walls',
                       boundary_locked: true,
                       detection_warning: null,
                     }
-                    : createRoom(building, level, draft);
+                    : {
+                      ...createRoom(building, level, roomBoundary.region),
+                      boundary_wall_ids: [...roomBoundaryWallIds],
+                      boundary_source: 'walls',
+                    };
                   updateLevel({ rooms: existing
                     ? (level.rooms || []).map(item => item.id === room.id ? room : item)
                     : [...(level.rooms || []), room] });
                   setDraft([]);
+                  setRoomBoundaryWallIds([]);
                   setRoomRedrawId(null);
                   setTool('select');
                   setSelection({ kind: 'room', id: room.id });
@@ -6400,11 +6700,54 @@ export default function BlueprintLevels({
             </div>
 
             <aside className="blueprint-selection-panel" aria-label="Selected element settings">
-              <h3>Selected element</h3>
-              {tool === 'select' && selection ? renderSelectionEditor() : (
-                <p>Select an element on the plan to edit its settings here.</p>
+              {connectionGaps.length > 0 && <div className="blueprint-tools" aria-label="Wall connections">
+                {connectionGaps.map(gap => <div key={`${gap.wallId}:${gap.endpoint}`}>
+                  <span>Wall {gap.wallId} {gap.endpoint}: {gap.distance.toFixed(2)} ft gap</span>
+                  {gap.targets.length > 1 && <label>Connection target
+                    <select aria-label={`Connection target ${gap.wallId} ${gap.endpoint}`} value={connectionRepairChoices[`${gap.wallId}:${gap.endpoint}`] || ''}
+                      onChange={event => setConnectionRepairChoices(values => ({ ...values, [`${gap.wallId}:${gap.endpoint}`]: event.target.value }))}>
+                      <option value="">Choose a wall</option>
+                      {gap.targets.map(target => <option key={target.wallId} value={target.wallId}>Wall {target.wallId} ({target.error.toFixed(2)} ft)</option>)}
+                    </select>
+                  </label>}
+                </div>)}
+                <button type="button" disabled={!connectionGaps.some(gap => gap.repairable)} onClick={() => {
+                  const repaired = repairWallConnections(level, connectionRepairChoices);
+                  if (repaired.errors.length) { setError(repaired.errors.join(' ')); return; }
+                  updateLevel({ outline: repaired.level.outline, walls: repaired.level.walls, openings: repaired.level.openings });
+                  setConnectionRepairChoices({});
+                  setError('');
+                }}>Repair Wall Connections</button>
+              </div>}
+              {tool === 'select' ? (
+                <>
+                  <h3>Selected element</h3>
+                  {selection ? renderSelectionEditor() : (
+                    <p>Select an element on the plan to edit its settings here.</p>
+                  )}
+                  <p>Delete/Backspace removes the selected element. Escape clears the selection.</p>
+                </>
+              ) : (
+                <>
+                  <h3>Tool settings</h3>
+                  <section
+                    className="blueprint-active-tool-controls"
+                    aria-label={`${tool} tool settings`}
+                  >
+                    <div className="blueprint-active-tool-heading">
+                      <strong>{tool === 'double-door' ? 'Double door' : tool}</strong>
+                    </div>
+                    {hasActiveToolControls ? (
+                      <div className="blueprint-active-tool-fields">
+                        {activeToolControls}
+                      </div>
+                    ) : (
+                      <p>This tool has no additional settings.</p>
+                    )}
+                  </section>
+                  <p>Place the element on the plan. Its settings will remain here after placement.</p>
+                </>
               )}
-              <p>Delete/Backspace removes the selected element. Escape clears the selection.</p>
             </aside>
           </fieldset>
         </DialogContent>
@@ -6418,13 +6761,102 @@ export default function BlueprintLevels({
             variant="contained"
             disabled={busy}
             onClick={() =>
-              setOpen(false)
+              { setOpen(false); onEditorClose?.(); }
             }
           >
             Done editing
           </Button>
         </DialogActions>
       </Dialog>
+      {deleteLevelImpact && <Dialog open onClose={() => setDeleteLevelImpact(null)} transitionDuration={0}
+        PaperProps={{ className: 'blueprint-level-delete-dialog' }}>
+        <DialogTitle>Delete {deleteLevelImpact?.level_name}?</DialogTitle>
+        <DialogContent>
+          <p>This permanently removes the level and its contents. Choose whether the floors above it stay in place or move down to close the gap.</p>
+          <dl className="blueprint-level-delete-impact">
+            <div><dt>Walls</dt><dd>{deleteLevelImpact?.walls || 0}</dd></div>
+            <div><dt>Openings</dt><dd>{deleteLevelImpact?.openings || 0}</dd></div>
+            <div><dt>Rooms</dt><dd>{deleteLevelImpact?.rooms || 0}</dd></div>
+            <div><dt>Vertical connections</dt><dd>{deleteLevelImpact?.stairs || 0}</dd></div>
+            <div><dt>Floor images</dt><dd>{deleteLevelImpact?.floor_images || 0}</dd></div>
+            <div><dt>Roofs affected</dt><dd>{deleteLevelImpact?.roofs || 0}</dd></div>
+            <div><dt>Chimneys affected</dt><dd>{deleteLevelImpact?.chimneys || 0}</dd></div>
+          </dl>
+          <div className="blueprint-level-delete-choices">
+            <div>
+              <strong>Leave level empty</strong>
+              <span>Keeps upper floors at their current numbers and elevations. You can add this level again later.</span>
+            </div>
+            {deleteLevelImpact.upper_levels > 0 && <div>
+              <strong>Collapse upper levels</strong>
+              <span>Moves {deleteLevelImpact.upper_levels} upper {deleteLevelImpact.upper_levels === 1 ? 'level' : 'levels'} down {deleteLevelImpact.collapse_elevation_feet} ft and closes the numbered gap.</span>
+            </div>}
+          </div>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteLevelImpact(null)}>Cancel</Button>
+          <Button color="error" variant="outlined" onClick={() => {
+            const levelId = deleteLevelImpact.level_id;
+            const next = deleteBuildingLevel(building, levelId);
+            onDeleteLevelReferences?.(levelId);
+            onChange(next);
+            setDeleteLevelImpact(null);
+          }}>Delete and leave empty</Button>
+          {deleteLevelImpact.upper_levels > 0 && <Button color="error" variant="contained" onClick={() => {
+            const levelId = deleteLevelImpact.level_id;
+            const next = deleteBuildingLevel(building, levelId, { collapseUpperLevels: true });
+            onDeleteLevelReferences?.(levelId);
+            onChange(next);
+            setDeleteLevelImpact(null);
+          }}>Delete and collapse</Button>}
+        </DialogActions>
+      </Dialog>}
+      {roofConflict && <Dialog open onClose={() => setRoofConflict(null)} transitionDuration={0}
+        PaperProps={{ className: 'blueprint-roof-conflict-dialog' }}>
+        <DialogTitle>Roof footprint conflict</DialogTitle>
+        <DialogContent>
+          <p>The new roof substantially overlaps an existing roof on the same support level.</p>
+          <div className="blueprint-roof-conflict-comparison">
+            <div>
+              <strong>Existing</strong>
+              {[...new Map(roofConflict.conflicts.map(({ existingRoof }) => [existingRoof.id, existingRoof])).values()]
+                .map(roof => <span key={roof.id}>{roof.name || roof.type}{roof.automatic ? ' · Automatic' : ''}</span>)}
+            </div>
+            <div>
+              <strong>New</strong>
+              {[...new Map(roofConflict.conflicts.map(({ newRoof }) => [newRoof.id, newRoof])).values()]
+                .map(roof => <span key={roof.id}>{roof.name || roof.type}</span>)}
+            </div>
+          </div>
+          <p>Choose which version should cover this area. The unchosen conflicting version will not be kept.</p>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            const conflictingNewIds = new Set(roofConflict.conflicts.map(({ newRoof }) => newRoof.id));
+            onChange({
+              ...roofConflict.nextBuilding,
+              roofs: (roofConflict.nextBuilding.roofs || []).filter(roof => !conflictingNewIds.has(roof.id)),
+            });
+            setRoofConflict(null);
+          }}>Keep existing</Button>
+          <Button variant="contained" onClick={() => {
+            const conflictingExistingIds = new Set(roofConflict.conflicts.map(({ existingRoof }) => existingRoof.id));
+            const automaticConflictIds = roofConflict.conflicts
+              .map(({ existingRoof }) => existingRoof)
+              .filter(roof => roof.automatic || roof.id.startsWith('automatic-'))
+              .map(roof => roof.id);
+            onChange({
+              ...roofConflict.nextBuilding,
+              roofs: (roofConflict.nextBuilding.roofs || []).filter(roof => !conflictingExistingIds.has(roof.id)),
+              suppressed_automatic_roof_ids: [...new Set([
+                ...(roofConflict.nextBuilding.suppressed_automatic_roof_ids || []),
+                ...automaticConflictIds,
+              ])],
+            });
+            setRoofConflict(null);
+          }}>Use new roof</Button>
+        </DialogActions>
+      </Dialog>}
     </section>
   );
 }

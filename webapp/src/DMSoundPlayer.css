@@ -343,18 +343,29 @@
 :where(html[data-kachhapa-ui="core"]) .sound-upload-queue-list { max-height: min(320px, 42vh); overflow-y: auto; padding: 0.35rem; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-queue-item { display: grid; grid-template-columns: minmax(0, 1fr) 38px; align-items: center; gap: 0.7rem; min-height: 48px; padding: 0.4rem 0.5rem 0.4rem 0.65rem; border-radius: 0.6rem; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-queue-item + .sound-upload-queue-item { border-top: 1px solid var(--border-main); }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-copy { display: flex; flex-direction: column; min-width: 0; gap: 0.1rem; }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-copy small { color: var(--text-subtle); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; }
-:where(html[data-kachhapa-ui="core"]) .sound-upload-progress { --sound-upload-progress: 0%; width: 34px; height: 34px; display: grid; place-items: center; padding: 3px; border-radius: 999px; background: var(--bg-surface-2); }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-progress { --sound-upload-progress: 0%; width: 34px; height: 34px; display: grid; place-items: center; padding: 3px; border-radius: 999px; background: conic-gradient(var(--accent-2) var(--sound-upload-progress), var(--bg-surface-2) 0); }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-progress > span { width: 28px; height: 28px; display: grid; place-items: center; border-radius: inherit; background: var(--bg-surface-2); color: var(--text-subtle); font-size: 0.58rem; font-variant-numeric: tabular-nums; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-complete,
-:where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator { position: relative; width: 34px; height: 34px; display: grid; place-items: center; }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator,
+:where(html[data-kachhapa-ui="core"]) .sound-upload-state { position: relative; width: 34px; height: 34px; display: grid; place-items: center; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-complete { color: var(--text-main); }
-:where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator { color: var(--danger); cursor: help; }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-queue-item.is-duplicate .sound-upload-complete { color: var(--text-subtle); }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-state { border-radius: 999px; background: var(--bg-surface-3); color: var(--text-subtle); }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-state svg { font-size: 1rem; }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-queue-item.is-processing .sound-upload-state svg { animation: sound-upload-pulse 1.2s ease-in-out infinite; color: var(--accent-2); }
+:where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator { padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--danger); cursor: pointer; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-complete svg,
 :where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator svg { font-size: 1.75rem; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator::after { content: attr(data-error); position: absolute; right: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(280px, calc(100vw - 3rem)); padding: 0.5rem 0.65rem; border: 1px solid var(--border-main); border-radius: 0.5rem; background: var(--bg-surface); color: var(--danger); box-shadow: var(--shadow-soft); font-size: 0.72rem; line-height: 1.35; opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity 0.12s ease, transform 0.12s ease; }
 :where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator:hover::after,
 :where(html[data-kachhapa-ui="core"]) .sound-upload-error-indicator:focus-visible::after { opacity: 1; transform: translateY(0); }
+
+@keyframes sound-upload-pulse {
+  50% { opacity: 0.45; transform: scale(0.88); }
+}
 
 :where(html[data-kachhapa-ui="core"]) .sound-category-mark {
   display: inline-flex;
@@ -527,6 +538,11 @@
 :where(html[data-kachhapa-ui="core"]) .sound-quick-effects-grid button.is-assigned { border-style: solid; border-color: var(--border-main); color: var(--text-main); }
 :where(html[data-kachhapa-ui="core"]) .sound-quick-effects-grid button.is-assigned:hover { background: color-mix(in srgb, var(--accent-2) 18%, var(--bg-surface-3)); }
 :where(html[data-kachhapa-ui="core"]) .sound-quick-effects.is-configurable .sound-quick-effects-grid button:not(.is-assigned):hover { border-color: var(--accent-2); }
+:where(html[data-kachhapa-ui="core"]) .sound-quick-effect-picker { display: grid; gap: .35rem; max-height: min(280px, 42vh); padding: .55rem; overflow-y: auto; border: 1px solid var(--border-main); border-radius: .65rem; background: var(--bg-surface); box-shadow: var(--shadow-soft); }
+:where(html[data-kachhapa-ui="core"]) .sound-quick-effect-picker > div { position: sticky; top: -.55rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: -.55rem -.55rem .15rem; padding: .55rem; background: var(--bg-surface); border-bottom: 1px solid var(--border-main); }
+:where(html[data-kachhapa-ui="core"]) .sound-quick-effect-picker > div button { display: grid; place-items: center; padding: .2rem; border: 0; background: transparent; color: var(--text-subtle); }
+:where(html[data-kachhapa-ui="core"]) .sound-quick-effect-picker > button { display: flex; align-items: center; gap: .45rem; width: 100%; padding: .45rem .55rem; border: 1px solid transparent; border-radius: .45rem; background: var(--bg-surface-2); color: var(--text-main); text-align: left; }
+:where(html[data-kachhapa-ui="core"]) .sound-quick-effect-picker > button:hover { border-color: var(--accent-2); }
 :where(html[data-kachhapa-ui="core"]) .sound-quick-effects-error { color: var(--danger); }
 :where(html[data-kachhapa-ui="core"]) .sound-mini-panel .sound-quick-effects { margin-bottom: 0.8rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--border-main); }
 :where(html[data-kachhapa-ui="core"]) .sound-mini-panel .sound-quick-effects-grid button { min-height: 52px; }
@@ -583,4 +599,13 @@
   :where(html[data-kachhapa-ui="core"]) .sound-now-playing { position: static; }
   :where(html[data-kachhapa-ui="core"]) .sound-now-playing .sound-decks { grid-template-columns: 1fr; }
   :where(html[data-kachhapa-ui="core"]) .sound-now-playing .sound-deck-main h3 { max-width: 48vw; }
+}
+
+@media (max-width: 700px) {
+  :where(html[data-kachhapa-ui="core"]) .sound-mini-player {
+    top: auto;
+    right: .75rem;
+    bottom: calc(var(--mobile-nav-height, 68px) + .75rem);
+    max-width: calc(100vw - 1.5rem);
+  }
 }

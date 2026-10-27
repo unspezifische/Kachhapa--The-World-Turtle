@@ -35,7 +35,7 @@ class SocketDeploymentConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Connection"):
             CHECKS.validate_nginx(self.nginx.replace(
                 "proxy_set_header Connection $connection_upgrade;",
-                'proxy_set_header Connection "Upgrade";', 1))
+                'proxy_set_header Connection "Upgrade";'))
 
     def test_query_string_logging_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "query strings"):

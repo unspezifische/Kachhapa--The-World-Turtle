@@ -1,3 +1,4 @@
+import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import React, { useEffect, useState, useRef } from 'react';
 
 import { Scene as BabylonScene } from '@babylonjs/core/scene';
@@ -27,6 +28,8 @@ import { Sound } from '@babylonjs/core/Audio/sound';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { ParticleSystem } from '@babylonjs/core/Particles/particleSystem';
 import { createStreetLampRenderer } from './streetLampRenderer';
+import { createThinBoxBatch, sameThinBoxes } from './thinBoxBatch';
+import { observeScenePerformance } from './scenePerformance';
 import { Atmosphere } from '@babylonjs/addons/atmosphere';
 import { moonIllumination, moonLitPath, moonPhaseFraction, selectedMoon } from './settlementMoon';
 import { sceneFootprintPreview } from './sceneFootprint';
@@ -224,16 +227,6 @@ void main(void) {
 
 // Babylon's PolygonMeshBuilder looks for earcut on the global window object.
 if (typeof window !== 'undefined') window.earcut = earcut;
-
-
-const ROAD_COLORS = {
-  cobblestone: '#827d72',
-  brick: '#995d49',
-  paved: '#777876',
-  dirt: '#9b7650',
-  wood: '#866447',
-  stone: '#898982'
-};
 
 
 const DEFAULT_FIRST_PERSON_SETTINGS = {
@@ -1286,6 +1279,7 @@ function installBabylonScaleObserver(
 
 function SceneContent({
   scene,
+  pauseControlRef,
   tileStore,
   tileStoreVersion,
   state,
@@ -1294,7 +1288,10 @@ function SceneContent({
   onCameraChange,
   onPointerLockChange,
   onScaleChange,
-  onSceneReady
+  onSceneReady,
+  onPerformanceSample,
+  onFirstFrame,
+  onTerrainReady
 }) {
   scene.fogMode = BabylonScene.FOGMODE_LINEAR;
 
@@ -1314,6 +1311,9 @@ function SceneContent({
   const onPointerLockChangeRef = useRef(onPointerLockChange);
   const onScaleChangeRef = useRef(onScaleChange);
   const onSceneReadyRef = useRef(onSceneReady);
+  const onPerformanceSampleRef = useRef(onPerformanceSample);
+  const onFirstFrameRef = useRef(onFirstFrame);
+  const onTerrainReadyRef = useRef(onTerrainReady);
   const sceneReadySentRef = useRef(false);
 
   const worldSamplerRef = useRef(null);
@@ -1336,6 +1336,8 @@ function SceneContent({
   const assetContainerCacheRef = useRef(new Map());
   const animatedWaterMeshesRef = useRef([]);
   const animatedShipsRef = useRef([]);
+  const buildingMeshesRef = useRef(new Map());
+  const merlonBatchesRef = useRef(new Map());
   const animationTimeRef = useRef(0);
 
   useEffect(() => {
@@ -1407,12 +1409,31 @@ function SceneContent({
     onPointerLockChangeRef.current = onPointerLockChange;
     onScaleChangeRef.current = onScaleChange;
     onSceneReadyRef.current = onSceneReady;
+    onPerformanceSampleRef.current = onPerformanceSample;
+    onFirstFrameRef.current = onFirstFrame;
+    onTerrainReadyRef.current = onTerrainReady;
   }, [
     onCameraChange,
     onPointerLockChange,
     onScaleChange,
-    onSceneReady
+    onSceneReady,
+    onPerformanceSample,
+    onFirstFrame,
+    onTerrainReady
   ]);
+
+  useEffect(() => {
+    const observer = scene.onAfterRenderObservable.addOnce(() => onFirstFrameRef.current?.());
+    return () => scene.onAfterRenderObservable.remove(observer);
+  }, [scene]);
+
+  const hasPerformanceListener = Boolean(onPerformanceSample);
+  useEffect(() => {
+    if (!hasPerformanceListener) return undefined;
+    return observeScenePerformance(scene, sample => {
+      onPerformanceSampleRef.current?.(sample);
+    });
+  }, [scene, hasPerformanceListener]);
 
   const lightningFlashRef = useRef({ next: 0, duration: 0 });
   const fogDebugRef = useRef(null);
@@ -1791,6 +1812,12 @@ function SceneContent({
     const moonDirection = new Vector3();
     const precipitationDirection1 = new Vector3();
     const precipitationDirection2 = new Vector3();
+    let previousWeatherSettings = null;
+    let cachedWeatherVisuals = null;
+    let previousLightingSignature = null;
+    let cachedLighting = null;
+    let cachedOrbit = null;
+    let previousFogColor = null;
 
     const unifiedSceneObserver = scene.onBeforeRenderObservable.add(() => {
       const curState = stateRef.current;
@@ -1819,7 +1846,11 @@ function SceneContent({
         fogColor: '#a9c9dc',
         masterVolume: 0.5
       };
-      const weatherVisuals = normalizeWeatherVisuals(config);
+      if (config !== previousWeatherSettings) {
+        previousWeatherSettings = config;
+        cachedWeatherVisuals = normalizeWeatherVisuals(config);
+      }
+      const weatherVisuals = cachedWeatherVisuals;
 
       const atmos = curState?.atmosphereSettings || {
         sunIntensity: 2.2,
@@ -1833,17 +1864,27 @@ function SceneContent({
 
       const moon = selectedMoon(curState?.celestial);
       const phaseFraction = moonPhaseFraction(moon);
-      const orbit = moonOrbit({ hour: safeHour, minute: safeMinute, phaseFraction });
-      moonDirection.copyFromFloats(orbit.azimuthX, orbit.altitude, orbit.azimuthZ).normalize();
-      const lighting = calculateSettlementLighting({
-        hour: safeHour,
-        minute: safeMinute,
-        sunIntensity: atmos.sunIntensity,
-        moonIntensity: atmos.moonIntensity,
-        cloudCover: config.cloudCover,
-        moonIllumination: moonIllumination(moon),
-        moonAltitude: moon ? orbit.altitude : 0,
-      });
+      const moonLightFraction = moonIllumination(moon);
+      const lightingSignature = [safeHour, safeMinute, phaseFraction, Boolean(moon),
+        moonLightFraction, atmos.sunIntensity, atmos.moonIntensity,
+        atmos.daylightSaturation, atmos.scatteringScale, config.cloudCover].join('|');
+      const lightingChanged = lightingSignature !== previousLightingSignature;
+      if (lightingChanged) {
+        previousLightingSignature = lightingSignature;
+        cachedOrbit = moonOrbit({ hour: safeHour, minute: safeMinute, phaseFraction });
+        moonDirection.copyFromFloats(cachedOrbit.azimuthX, cachedOrbit.altitude, cachedOrbit.azimuthZ).normalize();
+        cachedLighting = calculateSettlementLighting({
+          hour: safeHour,
+          minute: safeMinute,
+          sunIntensity: atmos.sunIntensity,
+          moonIntensity: atmos.moonIntensity,
+          cloudCover: config.cloudCover,
+          moonIllumination: moonLightFraction,
+          moonAltitude: moon ? cachedOrbit.altitude : 0,
+        });
+      }
+      const orbit = cachedOrbit;
+      const lighting = cachedLighting;
 
       const {
         cosAngle,
@@ -1851,53 +1892,57 @@ function SceneContent({
         daylightStrength,
       } = lighting;
 
-      const colorGrade = daylightColorGrade(
-        daylightStrength,
-        atmos.daylightSaturation ?? 1.12
-      );
-      if (pipeline.isSupported) {
-        pipeline.imageProcessing.contrast = colorGrade.contrast;
-        pipeline.imageProcessing.colorCurves.globalSaturation =
-          (colorGrade.saturation - 1) * 100;
-      }
-
-      sunLight.direction.copyFromFloats(cosAngle, -sinAngle, 0.2).normalize();
-      sunLight.intensity = lighting.sunIntensity;
-      if (daylightStrength > 0) {
-        sunLight.diffuse = Color3.Lerp(
-          SUNSET_LIGHT_COLOR,
-          DAY_LIGHT_COLOR,
-          daylightStrength
+      if (lightingChanged) {
+        const colorGrade = daylightColorGrade(
+          daylightStrength,
+          atmos.daylightSaturation ?? 1.12
         );
-      }
-      moonLight.direction.copyFrom(moonDirection.scale(-1));
-      moonLight.intensity = lighting.moonStrength;
-      const sunDirection = sunLight.direction.scale(-1).normalize();
-      const skyBlend = lighting.moonStrength /
-        Math.max(0.000001, lighting.sunIntensity + lighting.moonStrength);
-      const blendedDirection = Vector3.Lerp(sunDirection, moonDirection, skyBlend);
-      skyLight.direction.copyFrom((blendedDirection.lengthSquared() > 0.00001
-        ? blendedDirection : sunDirection).normalize().scale(-1));
-      skyLight.intensity = lighting.sunIntensity + lighting.moonStrength;
-      skyLight.diffuse = Color3.Lerp(sunLight.diffuse, moonLight.diffuse, skyBlend);
+        if (pipeline.isSupported) {
+          pipeline.imageProcessing.contrast = colorGrade.contrast;
+          pipeline.imageProcessing.colorCurves.globalSaturation =
+            (colorGrade.saturation - 1) * 100;
+        }
 
-      const skyDayColor = Color3.Lerp(
-        NIGHT_SKY_COLOR,
-        DAY_SKY_COLOR,
-        daylightStrength
-      );
+        sunLight.direction.copyFromFloats(cosAngle, -sinAngle, 0.2).normalize();
+        sunLight.intensity = lighting.sunIntensity;
+        if (daylightStrength > 0) {
+          sunLight.diffuse = Color3.Lerp(
+            SUNSET_LIGHT_COLOR,
+            DAY_LIGHT_COLOR,
+            daylightStrength
+          );
+        }
+        moonLight.direction.copyFrom(moonDirection.scale(-1));
+        moonLight.intensity = lighting.moonStrength;
+      }
+      const sunDirection = sunLight.direction.scale(-1).normalize();
+      if (lightingChanged) {
+        const skyBlend = lighting.moonStrength /
+          Math.max(0.000001, lighting.sunIntensity + lighting.moonStrength);
+        const blendedDirection = Vector3.Lerp(sunDirection, moonDirection, skyBlend);
+        skyLight.direction.copyFrom((blendedDirection.lengthSquared() > 0.00001
+          ? blendedDirection : sunDirection).normalize().scale(-1));
+        skyLight.intensity = lighting.sunIntensity + lighting.moonStrength;
+        skyLight.diffuse = Color3.Lerp(sunLight.diffuse, moonLight.diffuse, skyBlend);
+      }
       // Keep the background inside the far clip plane at every editor zoom.
       skyDome.scaling.setAll(camera.maxZ * 0.9 / 100);
       starDome.scaling.setAll(camera.maxZ * 0.89 / 98);
       const overcastAmount = Math.max(0, Math.min(1, weatherVisuals.cloudCover));
-      skyMaterial.emissiveColor = Color3.Lerp(
-        skyDayColor,
-        OVERCAST_SKY_COLOR,
-        overcastAmount * (0.25 + daylightStrength * 0.35)
-      );
+      if (lightingChanged) {
+        const skyDayColor = Color3.Lerp(NIGHT_SKY_COLOR, DAY_SKY_COLOR, daylightStrength);
+        skyMaterial.emissiveColor = Color3.Lerp(
+          skyDayColor,
+          OVERCAST_SKY_COLOR,
+          overcastAmount * (0.25 + daylightStrength * 0.35)
+        );
+        starMaterial.alpha = Math.max(0, lighting.nightStrength - overcastAmount * 0.72);
+      }
       if (atmosphere) {
-        atmosphere.physicalProperties.rayleighScatteringScale =
-          Math.max(0.05, Number(atmos.scatteringScale) || 1);
+        if (lightingChanged) {
+          atmosphere.physicalProperties.rayleighScatteringScale =
+            Math.max(0.05, Number(atmos.scatteringScale) || 1);
+        }
         // The add-on converts scene units from meters to kilometers. Correct
         // only its origin height so camera geometry and terrain scale stay intact.
         const metersPerSceneUnit = FEET_PER_SCENE_UNIT * 0.3048;
@@ -1906,7 +1951,6 @@ function SceneContent({
         atmosphere.originHeight =
           (camera.position.y * (metersPerSceneUnit - 1) - seaLevelMeters) / 1000;
       }
-      starMaterial.alpha = Math.max(0, lighting.nightStrength - overcastAmount * 0.72);
 
       const celestialDistance = Math.min(86, Math.max(45, camera.maxZ * 0.72));
       sunDisc.position.copyFrom(camera.position.add(sunDirection.scale(celestialDistance)));
@@ -2067,25 +2111,19 @@ function SceneContent({
       scene.fogEnd = adjustedFogEnd / FEET_PER_SCENE_UNIT;
       scene.fogDensity = config.fogDensity ?? 0.01;
 
-      const fogColor = Color3.FromHexString(
-        config.fogColor || '#a9c9dc'
-      );
-      const nightVisibility = Math.min(1,
-        0.13 + daylightStrength * 0.87 + lighting.twilight * 0.17 +
-        lighting.moonStrength * 1.1);
-      const litFogColor = fogColor.scale(nightVisibility);
-
-      scene.fogColor = litFogColor;
-
-      scene.clearColor = new Color4(
-        litFogColor.r,
-        litFogColor.g,
-        litFogColor.b,
-        1
-      );
-
-      horizonFloorMaterial.diffuseColor.copyFrom(litFogColor);
-      horizonFloorMaterial.emissiveColor.copyFrom(litFogColor);
+      const fogColorHex = config.fogColor || '#a9c9dc';
+      if (lightingChanged || fogColorHex !== previousFogColor) {
+        previousFogColor = fogColorHex;
+        const fogColor = Color3.FromHexString(fogColorHex);
+        const nightVisibility = Math.min(1,
+          0.13 + daylightStrength * 0.87 + lighting.twilight * 0.17 +
+          lighting.moonStrength * 1.1);
+        const litFogColor = fogColor.scale(nightVisibility);
+        scene.fogColor = litFogColor;
+        scene.clearColor = new Color4(litFogColor.r, litFogColor.g, litFogColor.b, 1);
+        horizonFloorMaterial.diffuseColor.copyFrom(litFogColor);
+        horizonFloorMaterial.emissiveColor.copyFrom(litFogColor);
+      }
 
       horizonFloor.position.x = camera.position.x;
       horizonFloor.position.z = camera.position.z;
@@ -2131,18 +2169,20 @@ function SceneContent({
 
       // Keep the existing authored occlusion and continuous scene lighting;
       // the Atmosphere add-on composites only into background sky pixels.
-      ambientSky.intensity = lighting.ambientIntensity;
-      ambientSky.diffuse = Color3.Lerp(
-        NIGHT_AMBIENT_COLOR,
-        DAY_AMBIENT_COLOR,
-        daylightStrength
-      );
-      ambientSky.groundColor = Color3.Lerp(
-        NIGHT_GROUND_COLOR,
-        DAY_GROUND_COLOR,
-        daylightStrength
-      );
-      topDownKey.intensity = lighting.topDownIntensity;
+      if (lightingChanged) {
+        ambientSky.intensity = lighting.ambientIntensity;
+        ambientSky.diffuse = Color3.Lerp(
+          NIGHT_AMBIENT_COLOR,
+          DAY_AMBIENT_COLOR,
+          daylightStrength
+        );
+        ambientSky.groundColor = Color3.Lerp(
+          NIGHT_GROUND_COLOR,
+          DAY_GROUND_COLOR,
+          daylightStrength
+        );
+        topDownKey.intensity = lighting.topDownIntensity;
+      }
 
 
       // -----------------------------------------------------------------------
@@ -2441,6 +2481,7 @@ function SceneContent({
     if (!scene || !isMaterialReady || !cameraRef.current || !tileStore) return undefined;
 
     const camera = cameraRef.current;
+    const pauseControl = pauseControlRef.current;
 
     const planWindow = () => {
       const position = camera.position;
@@ -2467,6 +2508,7 @@ function SceneContent({
 
     const cancelPendingTerrain = () => {
       terrainBuildRevisionRef.current += 1;
+      pauseControl.resumeTerrain = null;
 
       if (populateFrame !== null) cancelAnimationFrame(populateFrame);
       populateFrame = null;
@@ -2569,11 +2611,16 @@ function SceneContent({
         'cells'
       );
 
+      const replacesVisibleTerrain = Boolean(
+        oldTerrain && !oldTerrain.mesh.isDisposed()
+      );
+
       const dt = createTerrainWindow(
         scene,
         mapData,
         mapSubX,
-        mapSubZ
+        mapSubZ,
+        { deferNormals: replacesVisibleTerrain }
       );
 
       pendingTerrain = dt;
@@ -2595,11 +2642,6 @@ function SceneContent({
         settlement: true,
         kind: 'terrain'
       };
-
-      const replacesVisibleTerrain = Boolean(
-        oldTerrain &&
-        !oldTerrain.mesh.isDisposed()
-      );
 
       if (replacesVisibleTerrain) {
         dt.mesh.setEnabled(false);
@@ -2678,6 +2720,7 @@ function SceneContent({
         }
 
         pendingTerrain = null;
+        onTerrainReadyRef.current?.();
         reportSceneReady();
       };
 
@@ -2686,6 +2729,14 @@ function SceneContent({
           revision !== terrainBuildRevisionRef.current ||
           dt.mesh.isDisposed()
         ) {
+          return;
+        }
+
+        if (pauseControl.paused) {
+          populateFrame = null;
+          pauseControl.resumeTerrain = () => {
+            populateFrame = requestAnimationFrame(populate);
+          };
           return;
         }
 
@@ -2710,7 +2761,7 @@ function SceneContent({
           next += 1;
         } while (
           next < pending.length &&
-          performance.now() - start < 10
+          performance.now() - start < (replacesVisibleTerrain ? 4 : 8)
         );
 
         dt._windowDebug.loadedTiles = next;
@@ -2792,13 +2843,15 @@ function SceneContent({
     });
 
     return () => {
+      pauseControl.resumeTerrain = null;
       scene.onBeforeRenderObservable.remove(rebuildWatcher);
       disposeCurrentTerrain();
     };
   }, [
     scene,
     isMaterialReady,
-    tileStore
+    tileStore,
+    pauseControlRef
   ]);
 
 
@@ -3262,6 +3315,12 @@ function SceneContent({
 
     const currentState = stateRef.current;
     const transientMeshes = [];
+    const nextMerlonBatches = new Map();
+    const roadPickMaterial = new StandardMaterial('road-pick-material', scene);
+    roadPickMaterial.alpha = 0;
+    roadPickMaterial.disableLighting = true;
+    roadPickMaterial.disableDepthWrite = true;
+    roadPickMaterial.backFaceCulling = false;
 
     const heightSampler =
       worldSamplerRef.current ||
@@ -3309,20 +3368,11 @@ function SceneContent({
             heightSampler
           );
 
-          const mat = material(
-            scene,
-            `road-pick-material-${road.id}-${partIndex}`,
-            ROAD_COLORS[road.surface_type] || ROAD_COLORS.cobblestone,
-            0
-          );
-
-          mat.disableDepthWrite = true;
-
           const roadMesh = meshFromData(
             scene,
             `road-${road.id}-${partIndex}`,
             data,
-            mat,
+            roadPickMaterial,
             {
               settlement: true,
               kind: 'road',
@@ -3386,16 +3436,30 @@ function SceneContent({
 
           transientMeshes.push(wallMesh);
           if (properties.battlements) {
-            wallSegmentBattlements(wall, partIndex, heightSampler).forEach((placement, crenel) => {
-              const merlon = MeshBuilder.CreateBox(`wall-merlon-${wall.id}-${partIndex}-${crenel}`, {
-                width: 5 / FEET_PER_SCENE_UNIT, depth: properties.width_feet / FEET_PER_SCENE_UNIT, height: 4 / FEET_PER_SCENE_UNIT
-              }, scene);
-              merlon.position = worldToBabylon(placement.x, placement.y, placement.elevation);
-              merlon.rotation.y = placement.rotation;
-              merlon.material = mat;
-              merlon.metadata = wallMesh.metadata;
-              transientMeshes.push(merlon);
-            });
+            const merlons = wallSegmentBattlements(wall, partIndex, heightSampler)
+              .map(placement => {
+                const position = worldToBabylon(placement.x, placement.y, placement.elevation);
+                return {
+                  x: position.x, y: position.y, z: position.z,
+                  angle: placement.rotation,
+                  width: 5 / FEET_PER_SCENE_UNIT,
+                  depth: properties.width_feet / FEET_PER_SCENE_UNIT,
+                  height: 4 / FEET_PER_SCENE_UNIT
+                };
+              });
+            const key = `${wall.id}:${partIndex}`;
+            const previous = merlonBatchesRef.current.get(key);
+            const sameBoxes = sameThinBoxes(previous?.boxes, merlons);
+            const batch = sameBoxes ? previous.mesh : createThinBoxBatch(scene,
+              `wall-merlons-${key}`, mat, merlons,
+              { ...wallMesh.metadata, performanceCategory: 'battlements' });
+            if (batch) {
+              if (sameBoxes) {
+                batch.material = mat;
+                batch.metadata = { ...wallMesh.metadata, performanceCategory: 'battlements' };
+              }
+              nextMerlonBatches.set(key, { mesh: batch, boxes: merlons });
+            }
           }
         });
 
@@ -3453,6 +3517,11 @@ function SceneContent({
           });
       });
 
+    merlonBatchesRef.current.forEach((entry, key) => {
+      if (nextMerlonBatches.get(key)?.mesh !== entry.mesh) entry.mesh.dispose(false, false);
+    });
+    merlonBatchesRef.current = nextMerlonBatches;
+
     (currentState.wallJunctions || []).forEach(junction => {
       if (!featureIntersectsBounds(junction, visibleTerrainBounds)) return;
       const wall = (currentState.fortifications || []).find(candidate =>
@@ -3486,6 +3555,31 @@ function SceneContent({
 
 
     // -------------------------------------------------------------------------
+
+    // Canonical NPC tokens at confirmed positions; existing minis/movement remain independent.
+    (currentState.npcTokens || []).forEach(token => {
+      if (!featureIntersectsBounds(token, visibleTerrainBounds)) return;
+      const marker = token.url
+        ? MeshBuilder.CreatePlane(`npc-token-${token.npcId}`, {size: 10 / FEET_PER_SCENE_UNIT}, scene)
+        : MeshBuilder.CreateSphere(`npc-token-${token.npcId}`, {diameter: 3 / FEET_PER_SCENE_UNIT, segments: 8}, scene);
+      marker.position = worldToBabylon(token.x, token.y, heightSampler(token.x, token.y) + (Number(token.elevation) || 0) + 8);
+      marker.billboardMode = Mesh.BILLBOARDMODE_ALL;
+      const tokenMaterial = new StandardMaterial(`npc-token-material-${token.npcId}`, scene);
+      tokenMaterial.disableLighting = true; tokenMaterial.emissiveColor = new Color3(1,1,1);
+      if (token.url) { const texture = new Texture(token.url, scene); texture.hasAlpha = true; tokenMaterial.diffuseTexture = texture; tokenMaterial.useAlphaFromDiffuseTexture = true; }
+      marker.material = tokenMaterial; marker.isPickable = currentState.activeTool === 'npcs';
+      marker.metadata = {kind:'npc', npc_id:token.npcId};
+      transientMeshes.push(marker);
+      if (Number(currentState.selectedNpcTokenId) === Number(token.npcId)) {
+        const ring = MeshBuilder.CreateTorus(`npc-token-ring-${token.npcId}`, { diameter: 14 / FEET_PER_SCENE_UNIT, thickness: 1.5 / FEET_PER_SCENE_UNIT, tessellation: 36 }, scene);
+        ring.position = worldToBabylon(token.x, token.y, heightSampler(token.x, token.y) + (Number(token.elevation) || 0) + 1);
+        ring.rotation.x = Math.PI / 2;
+        const ringMaterial = new StandardMaterial(`npc-token-ring-material-${token.npcId}`, scene);
+        ringMaterial.disableLighting = true; ringMaterial.emissiveColor = Color3.FromHexString(EDITOR_ACCENT_HEX);
+        ring.material = ringMaterial; ring.isPickable = false; transientMeshes.push(ring);
+      }
+    });
+
     // 3. District / region overlays
     // -------------------------------------------------------------------------
 
@@ -3493,7 +3587,8 @@ function SceneContent({
       .filter(
         region =>
           region.visible !== false &&
-          region.points?.length >= 3
+          region.points?.length >= 3 &&
+          featureIntersectsBounds(region, visibleTerrainBounds)
       )
       .forEach(region => {
         transientMeshes.push(
@@ -3508,7 +3603,66 @@ function SceneContent({
 
 
     // -------------------------------------------------------------------------
-    // 4. Points of interest
+    // 4. Planned routes and clock-derived journey positions
+    // -------------------------------------------------------------------------
+
+    const drawRoute = (route, name, color) => {
+      const points = (route?.path || []).filter(point => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
+      if (points.length < 2) return;
+      const path = points.map(point => worldToBabylon(Number(point.x), Number(point.y), heightSampler(Number(point.x), Number(point.y)) + 2));
+      const routeMesh = MeshBuilder.CreateTube(name, { path, radius: .45 / FEET_PER_SCENE_UNIT, tessellation: 8 }, scene);
+      const routeMaterial = new StandardMaterial(`${name}-material`, scene);
+      routeMaterial.emissiveColor = color;
+      routeMaterial.albedoColor = color;
+      routeMaterial.disableLighting = true;
+      routeMesh.material = routeMaterial;
+      routeMesh.isPickable = false;
+      routeMesh.renderingGroupId = 3;
+      transientMeshes.push(routeMesh);
+    };
+    const drawAccessLeg = (leg, name) => {
+      if (!leg?.from || !leg?.to) return;
+      drawRoute({path:[leg.from,leg.to]}, name, new Color3(.94, .94, .78));
+    };
+    const drawDestination = (point, name, color) => {
+      if (!Number.isFinite(Number(point?.x)) || !Number.isFinite(Number(point?.y))) return;
+      const marker = MeshBuilder.CreateCylinder(name, { diameter: 6 / FEET_PER_SCENE_UNIT,
+        height: 8 / FEET_PER_SCENE_UNIT, tessellation: 16 }, scene);
+      marker.position = worldToBabylon(Number(point.x), Number(point.y), heightSampler(Number(point.x), Number(point.y)) + 4);
+      const material = new StandardMaterial(`${name}-material`, scene);
+      material.emissiveColor = color;
+      material.albedoColor = color;
+      marker.material = material;
+      marker.isPickable = !!currentState.accessPointBuildingId;
+      marker.metadata = currentState.accessPointBuildingId
+        ? {kind:'travel-access-handle', buildingId:currentState.accessPointBuildingId} : null;
+      marker.renderingGroupId = 3;
+      transientMeshes.push(marker);
+    };
+    drawRoute(currentState.plannedRoute, 'planned-travel-route', new Color3(.16, .78, 1));
+    drawAccessLeg(currentState.plannedRoute?.origin_access_leg, 'planned-origin-access-leg');
+    drawAccessLeg(currentState.plannedRoute?.destination_access_leg, 'planned-destination-access-leg');
+    drawDestination(currentState.destination || currentState.plannedRoute?.destination,
+      'planned-travel-destination', new Color3(.25, .92, .58));
+    (currentState.journeyPositions || []).forEach(journey => {
+      drawRoute(journey.route_snapshot, `active-travel-route-${journey.id}`, new Color3(.95, .63, .18));
+      drawAccessLeg(journey.route_snapshot?.origin_access_leg, `active-origin-access-leg-${journey.id}`);
+      drawAccessLeg(journey.route_snapshot?.destination_access_leg, `active-destination-access-leg-${journey.id}`);
+      const point = journey.current_position;
+      if (!Number.isFinite(Number(point?.x)) || !Number.isFinite(Number(point?.y))) return;
+      const marker = MeshBuilder.CreateSphere(`travelling-group-${journey.id}`, { diameter: 5 / FEET_PER_SCENE_UNIT, segments: 12 }, scene);
+      marker.position = worldToBabylon(Number(point.x), Number(point.y), heightSampler(Number(point.x), Number(point.y)) + 5);
+      const markerMaterial = new StandardMaterial(`travelling-group-${journey.id}-material`, scene);
+      markerMaterial.emissiveColor = new Color3(1, .72, .2);
+      markerMaterial.albedoColor = new Color3(1, .72, .2);
+      marker.material = markerMaterial;
+      marker.isPickable = false;
+      marker.renderingGroupId = 3;
+      transientMeshes.push(marker);
+    });
+
+    // -------------------------------------------------------------------------
+    // 5. Points of interest
     // -------------------------------------------------------------------------
 
     (currentState.pointsOfInterest || []).forEach(point => {
@@ -3570,9 +3724,11 @@ function SceneContent({
     return () => {
       transientMeshes.forEach(mesh => {
         if (mesh && typeof mesh.dispose === 'function') {
-          mesh.dispose(false, true);
+          mesh.dispose(false, mesh.material !== roadPickMaterial);
         }
       });
+
+      roadPickMaterial.dispose();
 
     };
   }, [
@@ -3582,10 +3738,23 @@ function SceneContent({
     meshState.wallJunctions,
     meshState.regions,
     meshState.pointsOfInterest,
+    meshState.partyPosition,
+    meshState.destination,
+    meshState.accessPointBuildingId,
+    meshState.plannedRoute,
+    meshState.journeyPositions,
+    meshState.npcTokens,
     bounds,
     terrainWindowKey,
     state.selectedRegionId,
+    state.activeTool,
+    state.selectedNpcTokenId,
   ]);
+
+  useEffect(() => () => {
+    merlonBatchesRef.current.forEach(entry => entry.mesh.dispose(false, false));
+    merlonBatchesRef.current.clear();
+  }, [scene]);
 
   useEffect(() => {
     if (!scene || !worldSamplerRef.current) return undefined;
@@ -3630,8 +3799,14 @@ function SceneContent({
     };
   }, [scene, meshState.waterBodies, bounds, terrainWindowKey, meshState.animateWater]);
 
+  useEffect(() => () => {
+    buildingMeshesRef.current.forEach(entry => entry.mesh?.dispose(false, true));
+    buildingMeshesRef.current.clear();
+    animatedShipsRef.current = [];
+  }, [scene]);
+
   useEffect(() => {
-    if (!scene) return undefined;
+    if (!scene) return;
 
     const currentState = stateRef.current;
     const heightSampler = worldSamplerRef.current || createTerrainHeightSampler(
@@ -3642,34 +3817,49 @@ function SceneContent({
     const assets = Object.fromEntries(
       (currentState.assets || []).map(asset => [asset.key, asset])
     );
-    const meshes = [];
+    const missingAsset = null;
+    const previous = buildingMeshesRef.current;
+    const next = new Map();
     const ships = [];
 
     [
-      ...(currentState.buildings || []),
-      ...(currentState.blueprintDraft?.levels?.[0]?.closed ? [currentState.blueprintDraft] : [])
+      ...(currentState.buildings || []).map(building => ({ building, key: `building:${building.id}` })),
+      ...(currentState.blueprintDraft?.levels?.[0]?.closed
+        ? [{ building: currentState.blueprintDraft, key: 'draft' }] : [])
     ]
-      .filter(building => {
-        const asset = assets[building.asset_key] || {};
+      .filter(({ building }) => {
+        const asset = assets[building.asset_key] || missingAsset;
         return building.visible !== false && featureIntersectsBounds({
           ...building,
-          width_feet: building.width_feet ?? asset.width_feet,
-          depth_feet: building.depth_feet ?? asset.depth_feet
+          width_feet: building.width_feet ?? asset?.width_feet,
+          depth_feet: building.depth_feet ?? asset?.depth_feet
         }, visibleBounds);
       })
-      .forEach(building => {
-        const asset = assets[building.asset_key] || {};
+      .forEach(({ building, key }) => {
+        const asset = assets[building.asset_key] || missingAsset;
+        const selected = String(currentState.selected?.id) === String(building.id);
+        const elevation = heightSampler(building.x, building.y);
+        const old = previous.get(key);
+        if (old && !old.mesh?.isDisposed?.() && old.building === building &&
+          old.asset === asset && old.selected === selected &&
+          old.viewMode === currentState.buildingViewMode &&
+          old.businesses === currentState.businesses && old.elevation === elevation &&
+          (currentState.buildingViewMode === 'satellite' || old.allBuildings === currentState.buildings)) {
+          next.set(key, old);
+          if (old.isShip) ships.push(old.mesh);
+          return;
+        }
+        old?.mesh?.dispose(false, true);
         let mesh;
 
         if (building.is_blueprint && building.levels) {
-          const selected = String(currentState.selected?.id) === String(building.id);
           const displayBuilding = selected
             ? building
             : { ...building, level_view: 'all', show_roofs: true };
           mesh = createBlueprintMesh(
             scene,
             displayBuilding,
-            heightSampler(building.x, building.y),
+            elevation,
             heightSampler
           );
           if (currentState.buildingViewMode !== 'satellite') {
@@ -3677,7 +3867,7 @@ function SceneContent({
               mesh,
               buildingViewColor(
                 building,
-                asset,
+                asset || {},
                 currentState.buildingViewMode,
                 currentState.businesses,
                 currentState.buildings
@@ -3688,34 +3878,37 @@ function SceneContent({
           mesh = createBabylonBuiltInBuilding(
             scene,
             building,
-            asset,
+            asset || {},
             currentState,
             heightSampler,
             assetContainerCacheRef.current
           );
         }
 
-        meshes.push(mesh);
-        if (['ship', 'boat', 'longship', 'barge', 'galleon'].includes(
-          asset.category || asset.key
-        )) {
-          ships.push(mesh);
-        }
+        const isShip = ['ship', 'boat', 'longship', 'barge', 'galleon'].includes(
+          asset?.category || asset?.key
+        );
+        next.set(key, { mesh, building, asset, selected, elevation,
+          viewMode: currentState.buildingViewMode, businesses: currentState.businesses,
+          allBuildings: currentState.buildings, isShip });
+        if (isShip) ships.push(mesh);
       });
 
+    previous.forEach((entry, key) => {
+      if (!next.has(key)) entry.mesh?.dispose(false, true);
+    });
+    buildingMeshesRef.current = next;
     animatedShipsRef.current = ships;
-
-    return () => {
-      if (animatedShipsRef.current === ships) animatedShipsRef.current = [];
-      meshes.forEach(mesh => mesh?.dispose(false, true));
-    };
   }, [scene, meshState.buildings, meshState.assets, state.blueprintDraft,
     state.selected?.id, state.buildingViewMode, state.businesses, bounds, terrainWindowKey]);
 
   useEffect(() => {
     if (!scene) return undefined;
     const sample = worldSamplerRef.current || (() => 0);
-    const rendered = createPropertyMeshes(scene, meshState.properties, sample, state.activeTool === 'build');
+    const rendered = createPropertyMeshes(scene, meshState.properties, sample, state.activeTool === 'build', {
+      segmentId: state.selectedBoundarySegmentId,
+      openingId: state.selectedBoundaryOpeningId,
+    });
     const draft = state.propertyDraft || [];
     const previewMeshes = [];
     const material = new StandardMaterial('property-polygon-guide-material', scene);
@@ -3749,7 +3942,8 @@ function SceneContent({
     if (draft.length >= 3) drawEdge(draft[draft.length - 1], draft[0]);
     if (draft.length && !state.editingPropertyBoundaryId && state.blueprintHoverPoint) drawEdge(draft[draft.length - 1], state.blueprintHoverPoint);
     return () => { rendered.dispose(); previewMeshes.forEach(mesh => mesh.dispose()); material.dispose(); };
-  }, [scene, meshState.properties, state.propertyDraft, state.editingPropertyBoundaryId, state.blueprintHoverPoint, state.activeTool, terrainWindowKey]);
+  }, [scene, meshState.properties, state.propertyDraft, state.editingPropertyBoundaryId, state.blueprintHoverPoint,
+    state.activeTool, state.selectedBoundarySegmentId, state.selectedBoundaryOpeningId, terrainWindowKey]);
 
   useEffect(() => {
     if (!scene || !worldSamplerRef.current) return undefined;
@@ -3910,6 +4104,7 @@ function SceneContent({
 
 
 export default function BabylonSettlementHost({
+  paused = false,
   tileStore,
   tileStoreVersion,
   state,
@@ -3918,10 +4113,16 @@ export default function BabylonSettlementHost({
   onCameraChange,
   onPointerLockChange,
   onScaleChange,
-  onSceneReady
+  onSceneReady,
+  onPerformanceSample,
+  onFirstFrame,
+  onTerrainReady
 }) {
   const tileStoreRef = useRef(tileStore);
   const canvasRef = useRef(null);
+  const renderLoopRef = useRef(null);
+  const pauseControlRef = useRef({ paused, resumeTerrain: null });
+  pauseControlRef.current.paused = paused;
   const [scene, setScene] = useState(null);
 
   useEffect(() => {
@@ -3931,9 +4132,9 @@ export default function BabylonSettlementHost({
     const engine = new BabylonEngine(canvas, true, undefined, true);
     const nextScene = new BabylonScene(engine);
 
-    engine.runRenderLoop(() => {
+    renderLoopRef.current = () => {
       if (!nextScene.isDisposed) nextScene.render();
-    });
+    };
 
     const resize = () => engine.resize();
     window.addEventListener('resize', resize);
@@ -3950,10 +4151,26 @@ export default function BabylonSettlementHost({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', resize);
       engine.stopRenderLoop();
+      renderLoopRef.current = null;
       nextScene.dispose();
       engine.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    if (!scene || !renderLoopRef.current) return undefined;
+    const engine = scene.getEngine();
+    const renderLoop = renderLoopRef.current;
+    if (paused) {
+      engine.stopRenderLoop(renderLoop);
+      if (document.pointerLockElement === canvasRef.current) document.exitPointerLock?.();
+    } else {
+      const resumeTerrain = pauseControlRef.current.resumeTerrain;
+      pauseControlRef.current.resumeTerrain = null;
+      resumeTerrain?.();
+      engine.runRenderLoop(renderLoop);
+    }
+  }, [scene, paused]);
 
   return (
     <>
@@ -3965,6 +4182,7 @@ export default function BabylonSettlementHost({
       {scene && (
         <SceneContent
           scene={scene}
+          pauseControlRef={pauseControlRef}
           tileStore={tileStoreRef.current}
           tileStoreVersion={tileStoreVersion}
           state={state}
@@ -3974,6 +4192,9 @@ export default function BabylonSettlementHost({
           onPointerLockChange={onPointerLockChange}
           onScaleChange={onScaleChange}
           onSceneReady={onSceneReady}
+          onPerformanceSample={onPerformanceSample}
+          onFirstFrame={onFirstFrame}
+          onTerrainReady={onTerrainReady}
         />
       )}
     </>

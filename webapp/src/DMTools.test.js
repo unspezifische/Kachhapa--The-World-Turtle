@@ -84,6 +84,29 @@ describe('DMTools Component', () => {
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Create Loot Box' })).toHaveLength(1));
   });
 
+  test('shows and rolls environment encounter tables on the Random Tables page', async () => {
+    mock.onGet('/api/random_tables').reply(200, []);
+    mock.onGet('/api/encounter-presets').reply(200, [{
+      id: '4:0', name: 'Coastal Encounters', source: 'XGE', min_level: 1, max_level: 4, entry_count: 20,
+    }]);
+    mock.onPost('/api/encounter-presets/roll').reply(200, {
+      name: 'Coastal Encounters — Random Result', notes: 'A hungry giant crab patrols the tide pools.',
+      participants: [{ id: 12, name: 'Giant Crab', quantity: 1 }],
+    });
+
+    render(<BrowserRouter><DMTools headers={headers} /></BrowserRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Random Tables' }));
+
+    expect(await screen.findByRole('heading', { name: 'Random Encounter Tables' })).toBeInTheDocument();
+    expect(await screen.findByText('Coastal Encounters')).toBeInTheDocument();
+    expect(screen.getByText('1–4')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Roll' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('A hungry giant crab patrols the tide pools.');
+    expect(screen.getByRole('status')).toHaveTextContent('1 × Giant Crab');
+    expect(JSON.parse(mock.history.post[0].data)).toEqual({ preset_id: '4:0' });
+  });
+
   test('filters, sorts, and configures NPC Library columns', async () => {
     mock.onGet('/api/npcs').reply(200, [
       { id: 1, name: 'Veteran Guard', creature_type: 'Humanoid', challenge: '3', ac: '17', hp: '58', strength: 16 },
@@ -162,8 +185,9 @@ describe('DMTools Component', () => {
       target: { value: 'New Loot Box' }
     });
 
-    // Add an item to the loot box
-    fireEvent.click(screen.getByText('Item 1'));
+    // Repeated additions increase quantity instead of creating duplicate association rows.
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     // Save the loot box
     fireEvent.click(screen.getByText('Save'));
@@ -171,8 +195,38 @@ describe('DMTools Component', () => {
     // Wait for the POST request to be made and the modal to close
     await waitFor(() => {
       expect(mock.history.post.length).toBe(1);
+      expect(JSON.parse(mock.history.post[0].data).items).toEqual([{id:1,quantity:2}]);
       expect(screen.queryByPlaceholderText('Loot Box Name')).not.toBeInTheDocument();
     });
+  });
+
+  test('loads item details before editing a loot box from the list', async () => {
+    mock.onGet('/api/lootboxes').reply(200, {lootBoxes:[{id:1,name:'Loot Box 1',editable:true}]});
+    mock.onGet('/api/lootboxes/1').reply(200, {id:1,name:'Loot Box 1',items:[{id:9,name:'Potion',quantity:2}]});
+    mock.onPut('/api/lootboxes/1').reply(200, {message:'Loot box updated successfully'});
+    render(<BrowserRouter><DMTools headers={headers}/></BrowserRouter>);
+
+    fireEvent.click(screen.getByRole('button',{name:'Loot Boxes',exact:true}));
+    await screen.findByText('Loot Box 1');
+    fireEvent.click(screen.getByRole('button',{name:'Edit'}));
+    expect(await screen.findByText('Potion')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Save'}));
+
+    await waitFor(() => expect(JSON.parse(mock.history.put[0].data).items).toEqual([{id:9,quantity:2}]));
+  });
+
+  test('keeps the editor open and shows the server error when saving fails', async () => {
+    mock.onGet('/api/items').reply(200, {items:[]});
+    mock.onPost('/api/lootboxes').reply(500, {message:'Database rejected the loot box'});
+    render(<BrowserRouter><DMTools headers={headers}/></BrowserRouter>);
+
+    fireEvent.click(screen.getByRole('button',{name:'Loot Boxes',exact:true}));
+    fireEvent.click(screen.getAllByText('Create Loot Box')[0]);
+    fireEvent.change(screen.getByPlaceholderText('Loot Box Name'),{target:{value:'Broken save'}});
+    fireEvent.click(screen.getByRole('button',{name:'Save'}));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Database rejected the loot box');
+    expect(screen.getByPlaceholderText('Loot Box Name')).toHaveValue('Broken save');
   });
 
   test('updates an existing loot box', async () => {

@@ -19,6 +19,7 @@ import {
 import {
   normalizeBlueprint,
   isRoofVisible,
+  roofBaseElevation,
   automaticRoofFootprints,
   openCorners,
   blueprintWalls,
@@ -43,6 +44,7 @@ import {
 
 import { createBlueprintRoofMesh } from './roofMesh';
 import { structureWorldElevation } from './settlementProperties';
+import { createThinBoxBatch } from './thinBoxBatch';
 
 export function createBlueprintMesh(
   scene,
@@ -621,6 +623,8 @@ export function createBlueprintMesh(
       const walls =
         blueprintWalls(level);
 
+      const arcWallBatches = new Map();
+
       walls.forEach(
         (
           wall,
@@ -747,35 +751,31 @@ export function createBlueprintMesh(
                     distance
                   );
 
-                box(
-                  `wall-${level.id}-${wallIndex}-${panelIndex}-${pieceIndex}`,
-
-                  point.x,
-
-                  elevation +
-                  panel.y,
-
-                  point.y,
-
-                  pieceWidth +
-                  0.06,
-
-                  panel.height,
-
-                  wall.thickness ||
-                  0.5,
-
-                  Math.atan2(
-                    tangent.y,
-                    tangent.x
-                  ),
-                  wallFinish
-                );
+                const key = wallFinish.name;
+                if (!arcWallBatches.has(key)) {
+                  arcWallBatches.set(key, { material: wallFinish, boxes: [] });
+                }
+                arcWallBatches.get(key).boxes.push({
+                  x: point.x / SCALE,
+                  y: (elevation + panel.y) / SCALE,
+                  z: point.y / SCALE,
+                  width: (pieceWidth + 0.06) / SCALE,
+                  height: panel.height / SCALE,
+                  depth: (wall.thickness || 0.5) / SCALE,
+                  angle: -Math.atan2(tangent.y, tangent.x),
+                });
               }
             }
           );
         }
       );
+
+      arcWallBatches.forEach(({ material, boxes }, key) => {
+        createThinBoxBatch(scene, `arc-walls-${building.id}-${level.id}-${key}`,
+          material, boxes,
+          { settlement: true, kind: 'building', item: source,
+            performanceCategory: 'blueprint arc walls' }, root);
+      });
 
       // Wall panels end at their centerline nodes. Seal the exposed wedge at
       // shared endpoints, which grows noticeable with thick exterior walls.
@@ -1203,33 +1203,25 @@ export function createBlueprintMesh(
                 segment.kind ===
                 'landing'
               ) {
+                const landingHeight = 0.3;
                 box(
                   `stair-${stairIndex}-landing-${segmentIndex}`,
 
-                  (
-                    segment.start.x +
-                    segment.end.x
-                  ) /
-                  2,
+                  segment.center?.x ?? (segment.start.x + segment.end.x) / 2,
 
                   stairElevation +
                   segment.rise_start +
-                  0.15,
+                  landingHeight / 2 - landingHeight,
 
-                  (
-                    segment.start.y +
-                    segment.end.y
-                  ) /
-                  2,
+                  segment.center?.y ?? (segment.start.y + segment.end.y) / 2,
 
-                  run,
+                  segment.depth || run,
 
-                  0.3,
+                  landingHeight,
 
-                  stair.width ||
-                  3,
+                  segment.width || stair.width || 3,
 
-                  angle,
+                  segment.direction ?? angle,
 
                   stairMaterial
                 );
@@ -1419,10 +1411,7 @@ export function createBlueprintMesh(
       const mesh = createBlueprintRoofMesh(
         scene,
         roof,
-        support.elevation_feet +
-          support.floor_height +
-          building.foundation_height_feet +
-          roof.elevation_offset,
+        roofBaseElevation(building, roof),
         building.id
       );
       if (!mesh) return;

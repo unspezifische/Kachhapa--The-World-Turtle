@@ -125,6 +125,17 @@ class WorldAtlasTest(unittest.TestCase):
         self.assertEqual(sampled['values'], [0, 2, 4, 10, 12, 14, 20, 22, 24])
         self.assertEqual(tile['grid_width'], 5)
 
+    def test_terrain_tile_endpoint_rejects_worker_sized_responses(self):
+        self.assertEqual(app_module.terrain_tile_batch_limit(16), 4)
+        self.assertEqual(app_module.terrain_tile_batch_limit(1024), 4)
+        with app_module.app.test_request_context(
+            '/api/settlement-map/12/terrain-tiles?settlement_id=3&min_x=0&max_x=4&min_z=0&max_z=0&cell_feet=16'
+        ), patch.object(app_module.Campaign, 'query', QueryResult(first=self.campaign)), \
+                patch.object(app_module.WorldAtlasLocation, 'query', QueryResult(first=self.location)):
+            response, status = app_module.get_settlement_terrain_tiles.__wrapped__(12)
+        self.assertEqual(status, 413)
+        self.assertIn('At most 4', response.get_json()['message'])
+
 
 if __name__ == '__main__':
     unittest.main()

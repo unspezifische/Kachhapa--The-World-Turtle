@@ -32,6 +32,7 @@ class QueryResult:
 class RecordingSession:
     def __init__(self):
         self.pages = []
+        self.statements = []
 
     def add(self, value):
         if isinstance(value, app_module.Campaign):
@@ -44,8 +45,8 @@ class RecordingSession:
     def flush(self):
         pass
 
-    def execute(self, _statement):
-        pass
+    def execute(self, statement):
+        self.statements.append(statement)
 
     def commit(self):
         pass
@@ -99,6 +100,10 @@ class CampaignWikiSeedingTest(unittest.TestCase):
             session.pages[1].content,
             'This campaign is using the Starter Module module.',
         )
+        self.assertEqual(len(session.statements), 1)
+        membership_values = session.statements[0].compile().params
+        self.assertEqual(membership_values['userID'], 7)
+        self.assertEqual(membership_values['campaignID'], 42)
 
         campaign = session.pages[0].wiki
         with app_module.app.app_context(), patch.object(

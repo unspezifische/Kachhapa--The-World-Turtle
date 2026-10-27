@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
   <textarea id="editor">{{ content }}</textarea>
-  <button id="saveButton" class="btn btn-primary mt-2">Save</button>
+  {% if save_mode == 'proposal' %}
+    <p class="alert alert-info mt-3">Your changes will be sent to the DM for approval before they appear in the wiki.</p>
+  {% endif %}
+  <button id="saveButton" class="btn btn-primary mt-2">{{ 'Submit for approval' if save_mode == 'proposal' else 'Save' }}</button>
   <script>
     document.addEventListener("DOMContentLoaded", function () {
         var editor = Jodit.make('#editor', {
@@ -78,7 +81,7 @@
           console.log("Saving content:", content);
           var campaignName = encodeURIComponent('{{ campaign_name }}');
           var pageTitle = encodeURIComponent('{{ page_title }}');
-          var url = `/wiki/${campaignName}/${pageTitle}/edit`;
+          var url = {{ ('`/wiki/${campaignName}/${pageTitle}/create`' if is_new_page else '`/wiki/${campaignName}/${pageTitle}/edit`')|safe }};
           console.log("URL:", url);
           console.log("window.location.href:", window.location.href);
 
@@ -92,8 +95,13 @@
           })
             .then(response => {
               console.log('Content saved successfully:', response.data);
+              if (response.data.pending_approval) {
+                window.alert('Your wiki change was sent to the DM for approval.');
+              }
               // Remove '/edit' from the current URL
-              const newUrl = window.location.href.replace('/edit', '');
+              const newUrl = response.data.pending_approval && {{ 'true' if is_new_page else 'false' }}
+                ? `/wiki/${campaignName}/Main%20Page`
+                : `/wiki/${campaignName}/${pageTitle}`;
               console.log('Redirecting to:', newUrl);
               window.location.href = newUrl;
             })

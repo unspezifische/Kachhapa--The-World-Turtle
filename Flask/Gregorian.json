@@ -27,6 +27,12 @@
     { "name": "November", "subtitle": null, "length": 30 },
     { "name": "December", "subtitle": null, "length": 31 }
   ],
+  "seasons": [
+    { "name": "Winter", "months": [11, 0, 1], "end_month_index": 1 },
+    { "name": "Spring", "months": [2, 3, 4], "end_month_index": 4 },
+    { "name": "Summer", "months": [5, 6, 7], "end_month_index": 7 },
+    { "name": "Autumn", "months": [8, 9, 10], "end_month_index": 10 }
+  ],
   "leap_rule": {
     "type": "gregorian"
   },

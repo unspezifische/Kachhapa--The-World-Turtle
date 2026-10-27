@@ -111,7 +111,9 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
     return (
       interaction.type === 'building' ||
+      interaction.type === 'travel-access' ||
       interaction.type === 'property-boundary-point' ||
+      interaction.type === 'property-boundary-opening' ||
       interaction.type === 'road-point' ||
       interaction.type === 'road-points' ||
       interaction.type === 'road-segments' ||
@@ -149,6 +151,11 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
   const addTerrainPoint = point => {
     const state = getState();
 
+    if (state.activeTool === 'npcs' && state.placementNpcId) {
+      state.onNpcPlacementPoint?.(point);
+      return;
+    }
+
 
     // -------------------------------------------------------------------------
     // Building editing / placement
@@ -168,6 +175,7 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
       if (state.buildMode === 'move-selected') {
         if (!state.selected) return;
+        state.recordBuildingMove?.(state.selected);
         const moved = { ...state.selected, x: point.x, y: point.y };
         state.setBuildings(values => values.map(building =>
           building.id === moved.id ? { ...building, x: moved.x, y: moved.y } : building));
@@ -414,8 +422,19 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
     if (!interaction) return;
 
     const state = getState();
+    if (interaction.type === 'travel-access') {
+      state.onTravelAccessMove?.(point);
+      return;
+    }
     if (interaction.type === 'property-boundary-point') {
       state.onPropertyBoundaryVertexMove?.(interaction.index, point);
+      return;
+    }
+    if (interaction.type === 'property-boundary-opening') {
+      state.onPropertyBoundaryOpeningMove?.(point, {
+        openingId: interaction.id,
+        propertyId: interaction.corner?.propertyId,
+      });
       return;
     }
 
@@ -456,6 +475,12 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
     if (interaction.type === 'building') {
       const buildingId = interaction.id;
+      if (!interaction.undoRecorded) {
+        state.recordBuildingMove?.(
+          interaction.before || state.buildings.find(building => building.id === buildingId)
+        );
+        interaction.undoRecorded = true;
+      }
       state.setBuildings(values =>
         values.map(building =>
           building.id === buildingId
@@ -660,9 +685,36 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
 
   const selectMesh = (metadata, point, event) => {
     const state = getState();
+    if (metadata?.kind === 'npc' && event.button === 0 && state.activeTool === 'npcs') {
+      state.onNpcSelect?.(metadata.npc_id);
+      return true;
+    }
+    if (metadata?.kind === 'travel-access-handle' && event.button === 0 &&
+        state.activeTool === 'travel' && state.accessPointBuildingId === metadata.buildingId) {
+      interaction = {type:'travel-access', id:metadata.buildingId};
+      return true;
+    }
     if (metadata?.kind === 'property-boundary-handle' && event.button === 0 &&
         state.buildMode === 'edit-property-boundary' && metadata.propertyId === state.editingPropertyBoundaryId) {
       interactionInstance.beginPointDrag('property-boundary-point', metadata.propertyId, metadata.index);
+      return true;
+    }
+    if (metadata?.kind === 'property-boundary-opening' && event.button === 0 && state.activeTool === 'build') {
+      state.onPropertyBoundarySelect?.({
+        propertyId: metadata.propertyId,
+        segmentId: metadata.segmentId,
+        openingId: metadata.openingId,
+        point,
+      });
+      interactionInstance.beginPointDrag('property-boundary-opening', metadata.openingId, 0, { propertyId: metadata.propertyId });
+      return true;
+    }
+    if (metadata?.kind === 'property-boundary' && event.button === 0 && state.activeTool === 'build') {
+      state.onPropertyBoundarySelect?.({
+        propertyId: metadata.propertyId,
+        segmentId: metadata.segmentId,
+        point,
+      });
       return true;
     }
     const isBuilding = metadata?.kind === 'building' || metadata?.kind === 'building-roof';
@@ -748,7 +800,9 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
         if (event.button === 0 && item.id === state.selected?.id) {
           interaction = {
             type: 'building',
-            id: item.id
+            id: item.id,
+            before: item,
+            undoRecorded: false,
           };
         }
 
@@ -766,17 +820,6 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
           name: item.name || (isBuilding ? 'Unnamed Structure' : 'Unnamed Landmark'),
           description: item.public_description || item.description || '',
         });
-      }
-
-      if (
-        isBuilding && state.activeTool === 'build' &&
-        ['refine', 'select-placed'].includes(state.buildMode) &&
-        event.button === 0
-      ) {
-        interaction = {
-          type: 'building',
-          id: item.id
-        };
       }
 
       return true;
@@ -1288,6 +1331,7 @@ export function createSettlementBabylonWorkflow(getState, getLatestBrushRadius) 
         // ---------------------------------------------------------------------
 
         if (info.type === PointerEventTypes.POINTERUP) {
+          if (interaction?.type === 'travel-access') state.onTravelAccessEnd?.();
           if (interaction?.type === 'wall-point' && interaction.undoRecorded) {
             state.commitWallPointSnap?.(interaction.id, interaction.index);
           }

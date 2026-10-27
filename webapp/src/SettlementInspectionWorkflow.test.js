@@ -9,8 +9,11 @@ jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), put: jest.fn() }));
 jest.mock('./AtlasViewport', () => () => null);
 jest.mock('./BabylonSettlementHost', () => {
   const React = require('react');
-  return function MockScene({ state }) {
-    return React.createElement(React.Fragment, null, React.createElement('output', { 'data-testid': 'camera-command' }, JSON.stringify(state.viewCommand)), React.createElement('button', { onClick: () => {
+  return function MockScene({ state, paused }) {
+    return React.createElement(React.Fragment, null,
+      React.createElement('output', { 'data-testid': 'scene-paused' }, String(paused)),
+      React.createElement('output', { 'data-testid': 'scene-level-name' }, state.buildings[0]?.levels?.[0]?.name || ''),
+      React.createElement('output', { 'data-testid': 'camera-command' }, JSON.stringify(state.viewCommand)), React.createElement('button', { onClick: () => {
       const building = state.buildings[0];
       state.setSelected(building);
       state.setInspectSelection({ entityKind: 'building', id: building.id, item: building, kind: 'Building' });
@@ -79,8 +82,14 @@ test('Inspect selection shows details, survives map modes and editing, and clear
   fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Properties' }));
   expect(buildingPanel.querySelector('[aria-label="Existing buildings"]')).not.toBeInTheDocument();
   expect(buildingPanel.querySelector('[aria-label="Properties and structures"]')).toBeInTheDocument();
-  expect(buildingPanel.querySelector('.building-inspector')).toBeInTheDocument();
+  expect(buildingPanel.querySelector('.building-inspector')).not.toBeInTheDocument();
+  expect(within(buildingPanel).getByRole('button', { name: 'Property Copper Kettle' })).toHaveAttribute('aria-pressed', 'true');
+  expect(within(buildingPanel).getByRole('button', { name: 'Focus Property Boundary' })).toBeInTheDocument();
+  fireEvent.click(within(buildingPanel).getByText(/Buildings on this property/));
+  fireEvent.click(within(buildingPanel).getByRole('button', { name: /Building Copper Kettle/ }));
+  expect(buildingPanel.querySelector('.building-inspector')).not.toBeInTheDocument();
   fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Buildings' }));
+  expect(buildingPanel.querySelector('.building-inspector')).toBeInTheDocument();
   fireEvent.click(within(buildingPanel).getByRole('button', { name: 'Place' }));
   expect(within(buildingPanel).getByRole('button', { name: /Tavern/ })).toBeInTheDocument();
   expect(buildingPanel.querySelector('.building-inspector')).not.toBeInTheDocument();
@@ -125,6 +134,29 @@ test('a blueprint opens the metadata editor with its custom model preserved', as
   expect(within(dialog).getByRole('combobox', { name: 'Model & Footprint' })).toHaveAttribute('aria-disabled', 'true');
   expect(within(dialog).getByText('Custom blueprint')).toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+});
+
+test('the floor plan dialog pauses the settlement scene until it closes', async () => {
+  const defaultGet = axios.get.getMockImplementation();
+  const blueprint = { ...building, is_blueprint: true, coordinate_space: 'local', asset_key: 'custom-blueprint',
+    levels: [{ id: 'ground', name: 'Ground floor', elevation_feet: 0,
+      corners: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }] }], roofs: [] };
+  axios.get.mockImplementation(url => url.includes('settlement-map') && !url.includes('terrain-tiles')
+    ? Promise.resolve({ data: { ...map, buildings: [blueprint] } })
+    : defaultGet(url));
+  render(<SettlementManager headers={headers} />);
+  fireEvent.click(await screen.findByRole('button', { name: /Test town Not placed/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Pick building on map' }, { timeout: 10000 }));
+  fireEvent.click(screen.getByRole('button', { name: 'Building details & levels' }));
+  expect(screen.getByTestId('scene-paused')).toHaveTextContent('false');
+  fireEvent.click(screen.getByRole('button', { name: 'Edit floor plan & walls' }));
+  expect(screen.getByTestId('scene-paused')).toHaveTextContent('true');
+  const previousLevelName = screen.getByTestId('scene-level-name').textContent;
+  fireEvent.change(screen.getByLabelText('Level name'), { target: { value: 'Upper hall' } });
+  expect(screen.getByTestId('scene-level-name')).toHaveTextContent(previousLevelName);
+  fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+  expect(screen.getByTestId('scene-paused')).toHaveTextContent('false');
+  expect(screen.getByTestId('scene-level-name')).toHaveTextContent('Upper hall');
 });
 
 test('searching an empty estate selects its property and focuses its boundary', async () => {

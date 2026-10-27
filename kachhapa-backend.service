@@ -10,6 +10,7 @@ WorkingDirectory=/home/ijohnson/Kachhapa/Flask
 
 Environment="DATABASE_URL=postgresql://admin:admin@localhost:5432/db"
 Environment="TMPDIR=/home/ijohnson/Kachhapa/tmp"
+Environment="SOUND_UPLOAD_ROOT=/home/ijohnson/Kachhapa/tmp/sound-uploads"
 
 
 # Make sure the socket ends up group-readable/writeable

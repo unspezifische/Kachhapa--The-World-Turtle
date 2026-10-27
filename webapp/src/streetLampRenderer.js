@@ -20,7 +20,7 @@ export function createStreetLampRenderer(scene, camera) {
     const material = new StandardMaterial(`${name}-material`, scene);
     material.diffuseColor = Color3.FromHexString(color);
     material.specularColor = Color3.Black();
-    material.maxSimultaneousLights = 12;
+    material.maxSimultaneousLights = 4;
     if (emissive) {
       material.disableLighting = true;
       material.emissiveColor = new Color3(2.5, 1.5, 0.5);
@@ -42,12 +42,14 @@ export function createStreetLampRenderer(scene, camera) {
     light.specular = Color3.Black();
     light.range = 65 / unit;
     light.intensity = 0;
+    light.setEnabled(false);
     return { light, lampId: null, next: null };
   });
   let elapsed = 1;
   let signature = '';
   let visible = [];
   let configuredMaterialCount = -1;
+  let configuredLightLimit = -1;
   const buffer = (mesh, positions, scale = 1) => {
     mesh.setEnabled(positions.length > 0);
     if (!positions.length) return;
@@ -102,11 +104,13 @@ export function createStreetLampRenderer(scene, camera) {
           slot.next = next || null;
           if (next) wanted.delete(next.id);
         });
-        if (configuredMaterialCount !== scene.materials.length) {
+        const lightLimit = camera.radius * unit <= 1000 ? 12 : 4;
+        if (configuredMaterialCount !== scene.materials.length || configuredLightLimit !== lightLimit) {
           configuredMaterialCount = scene.materials.length;
+          configuredLightLimit = lightLimit;
           scene.materials.forEach(material => {
-            if ('maxSimultaneousLights' in material && material.maxSimultaneousLights !== 12) {
-              material.maxSimultaneousLights = 12;
+            if ('maxSimultaneousLights' in material && material.maxSimultaneousLights !== lightLimit) {
+              material.maxSimultaneousLights = lightLimit;
             }
           });
         }
@@ -122,6 +126,8 @@ export function createStreetLampRenderer(scene, camera) {
         } else if (sameLamp) {
           slot.light.position.copyFrom(slot.next.position);
         }
+        const shouldEnable = Boolean(slot.next) || slot.light.intensity >= 0.02;
+        if (slot.light.isEnabled() !== shouldEnable) slot.light.setEnabled(shouldEnable);
       });
     },
     dispose() {

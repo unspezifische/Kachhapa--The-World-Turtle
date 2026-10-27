@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 ## For database stuff
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select, Numeric, text, func, UniqueConstraint
+from sqlalchemy import select, Numeric, text, func, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
@@ -73,6 +73,49 @@ class UserCampaignPreference(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), primary_key=True)
     landing_path = db.Column(db.String(80), nullable=False)
+
+
+class FriendConnection(db.Model):
+    __tablename__ = 'friend_connection'
+    id = db.Column(db.Integer, primary_key=True)
+    user_low_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_high_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False, index=True)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=True)
+    status = db.Column(db.String(16), nullable=False, default='pending', server_default='pending')
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        UniqueConstraint('user_low_id', 'user_high_id', name='uq_friend_connection_pair'),
+        CheckConstraint('user_low_id < user_high_id', name='ck_friend_connection_order'),
+        CheckConstraint("status IN ('pending','accepted')", name='ck_friend_connection_status'),
+    )
+
+
+class CampaignInvitation(db.Model):
+    __tablename__ = 'campaign_invitation'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    inviter_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False)
+    invitee_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False, index=True)
+    status = db.Column(db.String(16), nullable=False, default='pending', server_default='pending')
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    responded_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint('campaign_id', 'invitee_id', name='uq_campaign_invitation_invitee'),
+        CheckConstraint("status IN ('pending','accepted','declined','revoked')", name='ck_campaign_invitation_status'),
+    )
+
+
+class CampaignWikiRole(db.Model):
+    __tablename__ = 'campaign_wiki_role'
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), primary_key=True)
+    role = db.Column(db.String(24), nullable=False, default='read_only', server_default='read_only')
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        CheckConstraint("role IN ('scribe','scribe_approval','read_only')", name='ck_campaign_wiki_role'),
+    )
 
 
 class QuickNote(db.Model):
@@ -257,6 +300,9 @@ class Character(db.Model):
         }
 
 class Campaign(db.Model):
+    __table_args__ = (
+        CheckConstraint("wiki_permission IN ('everyone','scribes_only','dm_only')", name='ck_campaign_wiki_permission'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     system = db.Column(db.String(50), nullable=False)    
@@ -267,6 +313,7 @@ class Campaign(db.Model):
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     dm_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     scribes = db.Column(ARRAY(db.Integer), default=[])  
+    wiki_permission = db.Column(db.String(24), nullable=False, default='everyone', server_default='everyone')
     
     # Overworld Atlas Config Columns
     atlas_image_url = db.Column(db.String(255), nullable=True)
@@ -303,6 +350,7 @@ class Campaign(db.Model):
             'dm': self.dm.username if self.dm else None,
             'dm_id': self.dm.id if self.dm else None,
             'scribes': self.scribes,
+            'wiki_permission': self.wiki_permission or 'everyone',
             # 🚀 NEW: Expose to the React frontend AtlasViewport container
             'atlas': {
                 'image_url': self.atlas_image_url,
@@ -345,6 +393,25 @@ class Revisions(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     user = db.relationship('User', backref=db.backref('revisions', lazy=True))
     page = db.relationship('Page', backref='revisions')
+
+
+class WikiEditProposal(db.Model):
+    __tablename__ = 'wiki_edit_proposal'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    page_id = db.Column(db.Integer, db.ForeignKey('page.id', ondelete='CASCADE'), nullable=True)
+    page_title = db.Column(db.String(80), nullable=False)
+    submitted_by_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(16), nullable=False, default='pending', server_default='pending')
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    reviewed_by_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'), nullable=True)
+    reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    submitter = db.relationship('User', foreign_keys=[submitted_by_id])
+    page = db.relationship('Page')
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','approved','rejected')", name='ck_wiki_edit_proposal_status'),
+    )
 
 # Loot association table
 loot_box_items = db.Table('loot_box_items',
@@ -417,28 +484,60 @@ class Spell(db.Model):
     __tablename__ = 'spells'
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+    source = db.Column(db.String(80), nullable=True)
+    page = db.Column(db.Integer, nullable=True)
     level = db.Column(db.String(80), nullable=False)
-    casting_time = db.Column(db.String(80), nullable=False)
-    range = db.Column(db.String(80), nullable=False)
-    components = db.Column(db.String(80), nullable=False)
-    duration = db.Column(db.String(80), nullable=False)
+    casting_time = db.Column(db.String(200), nullable=False)
+    range = db.Column(db.String(200), nullable=False)
+    components = db.Column(db.String(500), nullable=False)
+    duration = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=False)
-    classes = db.Column(db.String(80), nullable=False)
+    classes = db.Column(db.String(500), nullable=False)
     school = db.Column(db.String(80), nullable=False)
+    damage_types = db.Column(JSONB, nullable=False, default=list, server_default='[]')
+    conditions = db.Column(JSONB, nullable=False, default=list, server_default='[]')
+    saving_throws = db.Column(JSONB, nullable=False, default=list, server_default='[]')
+    spell_attacks = db.Column(JSONB, nullable=False, default=list, server_default='[]')
+    misc_tags = db.Column(JSONB, nullable=False, default=list, server_default='[]')
+    area_tags = db.Column(JSONB, nullable=False, default=list, server_default='[]')
+    ritual = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    concentration = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    data = db.Column(JSONB, nullable=True)
+    __table_args__ = (UniqueConstraint('source', 'name', name='uq_spells_source_name'),)
 
     def to_dict(self):
+        classes = [value.strip() for value in (self.classes or '').split(',') if value.strip()]
+        components = [value.strip() for value in (self.components or '').split(',') if value.strip()]
         return {
             'id': self.id,
             'Name': self.name,
+            'name': self.name,
+            'source': self.source,
+            'page': self.page,
             'Level': self.level,
+            'level': int(self.level) if str(self.level).isdigit() else self.level,
             'casting_time': self.casting_time,
             'Range': self.range,
-            'Components': self.components.split(","),
+            'range': self.range,
+            'Components': components,
+            'components': components,
             'Duration': self.duration,
+            'duration': self.duration,
             'Description': self.description,
-            'Classes': self.classes.split(","),
-            'School': self.school
+            'description': self.description,
+            'Classes': classes,
+            'classes': classes,
+            'School': self.school,
+            'school': self.school,
+            'damage_types': self.damage_types or [],
+            'conditions': self.conditions or [],
+            'saving_throws': self.saving_throws or [],
+            'spell_attacks': self.spell_attacks or [],
+            'misc_tags': self.misc_tags or [],
+            'area_tags': self.area_tags or [],
+            'ritual': bool(self.ritual),
+            'concentration': bool(self.concentration),
         }
 
 class SpellItem(db.Model):
@@ -532,10 +631,10 @@ class Spellbook(db.Model):
             'Level': self.spell.level,
             'casting_time': self.spell.casting_time,
             'Range': self.spell.range,
-            'Components': self.spell.components.split(","),
+            'Components': [value.strip() for value in (self.spell.components or '').split(",") if value.strip()],
             'Duration': self.spell.duration,
             'Description': self.spell.description,
-            'Classes': self.spell.classes.split(","),
+            'Classes': [value.strip() for value in (self.spell.classes or '').split(",") if value.strip()],
             'School': self.spell.school,
             'equipped': self.equipped,
         }
@@ -601,6 +700,7 @@ class Journal(db.Model):
         }
 
 class Message(db.Model):
+    sender_npc_id = db.Column(db.Integer, db.ForeignKey('npc.id'), nullable=True)
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
     sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -638,6 +738,10 @@ class NPC(db.Model):
 
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
     name = db.Column(db.String(80), nullable=False)
+    birth_year = db.Column(db.Integer, nullable=True)
+    birth_season = db.Column(db.String(20), nullable=True)
+    birth_month_index = db.Column(db.Integer, nullable=True)
+    birth_day = db.Column(db.Integer, nullable=True)
     size = db.Column(db.String(20), nullable=False)  # Example: "Medium"
     creature_type = db.Column(db.String(50), nullable=False)  # Example: "humanoid"
     creature_subtype = db.Column(db.String(50), nullable=True)  # Example: "goblinoid"
@@ -671,6 +775,10 @@ class NPC(db.Model):
     actions = db.Column(db.String(1000), nullable=True)  # Example: "Morningstar: +4 to hit, 11 (2d8+2) piercing damage"
 
     description = db.Column(db.Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('id', 'campaign_id', name='uq_npc_id_campaign'),
+    )
     
     def to_dict(self):
         return {
@@ -680,6 +788,10 @@ class NPC(db.Model):
             'module_key': self.module_key, 'source_key': self.source_key,
             'is_override': bool(self.override_patch), 'profile_metadata': self.profile_metadata or {},
             'name': self.name,
+            'birth_year': self.birth_year,
+            'birth_season': self.birth_season,
+            'birth_month_index': self.birth_month_index,
+            'birth_day': self.birth_day,
             'size': self.size,
             'creature_type': self.creature_type,
             'creature_subtype': self.creature_subtype,
@@ -721,10 +833,47 @@ class CreatureCatalog(db.Model):
     __table_args__ = (UniqueConstraint('source', 'name', name='uq_creature_catalog_source_name'),)
 
     def summary(self):
-        return {key: getattr(self, key) for key in (
+        data = self.data or {}
+        creature_type = data.get('type', 'unknown')
+        if isinstance(creature_type, dict):
+            creature_type = creature_type.get('type', 'unknown')
+        size = data.get('size') or []
+        if not isinstance(size, list):
+            size = [size]
+        size_names = {'T': 'Tiny', 'S': 'Small', 'M': 'Medium', 'L': 'Large', 'H': 'Huge', 'G': 'Gargantuan', 'V': 'Varies'}
+        alignment_names = {'L': 'lawful', 'N': 'neutral', 'C': 'chaotic', 'G': 'good', 'E': 'evil', 'U': 'unaligned', 'A': 'any alignment'}
+        alignment = data.get('alignment') or []
+        alignment_text = ' '.join(alignment_names.get(item, str(item)) for item in alignment if isinstance(item, str)) or 'unknown'
+
+        def readable(values):
+            if not values:
+                return ''
+            if not isinstance(values, list):
+                values = [values]
+            labels = []
+            for value in values:
+                if isinstance(value, str):
+                    labels.append(value)
+                elif isinstance(value, dict):
+                    nested = value.get('resist', value.get('immune', value.get('vulnerable', [])))
+                    labels.extend(str(item) for item in (nested if isinstance(nested, list) else [nested]) if item)
+            return ', '.join(labels)
+
+        result = {key: getattr(self, key) for key in (
             'id', 'source', 'name', 'is_adventure', 'is_named',
             'challenge', 'ac', 'hp', 'dexterity',
         )}
+        result.update(
+            creature_type=str(creature_type),
+            size=', '.join(size_names.get(item, str(item)) for item in size),
+            alignment=alignment_text,
+            environment=', '.join(str(item).replace('_', ' ') for item in (data.get('environment') or [])),
+            vulnerabilities=readable(data.get('vulnerable')),
+            resistances=readable(data.get('resist')),
+            immunities=readable(data.get('immune')),
+            condition_immunities=readable(data.get('conditionImmune')),
+        )
+        return result
 
 
 class AdventureCatalog(db.Model):
@@ -942,6 +1091,7 @@ class Calendar(db.Model):
             'days': weekdays,
             'moons': moons,
             'holidays': holidays,
+            'seasons': format_data.get('seasons', []),
             'events': [event.to_dict() for event in self.events],
         }
 
@@ -956,12 +1106,24 @@ class CalendarEvent(db.Model):
     color = db.Column(db.String(20), nullable=True)
 
     start_year = db.Column(db.Integer, nullable=False)
-    start_month_index = db.Column(db.Integer, nullable=False)
-    start_day = db.Column(db.Integer, nullable=False)
+    season = db.Column(db.String(20), nullable=True)
+    start_month_index = db.Column(db.Integer, nullable=True)
+    start_day = db.Column(db.Integer, nullable=True)
+    end_year = db.Column(db.Integer, nullable=True)
+    end_season = db.Column(db.String(20), nullable=True)
+    end_month_index = db.Column(db.Integer, nullable=True)
+    end_day = db.Column(db.Integer, nullable=True)
     start_hour = db.Column(db.Integer, nullable=True)
     start_minute = db.Column(db.Integer, nullable=True)
 
     is_player_visible = db.Column(db.Boolean, nullable=False, default=False)
+
+    characters = db.relationship(
+        'NPC',
+        secondary='calendar_event_npc',
+        lazy='select',
+        backref=db.backref('timeline_events', lazy='dynamic'),
+    )
 
     def to_dict(self):
         return {
@@ -971,12 +1133,25 @@ class CalendarEvent(db.Model):
             'description': self.description,
             'color': self.color,
             'year': self.start_year,
+            'season': self.season,
             'month_index': self.start_month_index,
             'day': self.start_day,
+            'end_year': self.end_year,
+            'end_season': self.end_season,
+            'end_month_index': self.end_month_index,
+            'end_day': self.end_day,
             'hour': self.start_hour,
             'minute': self.start_minute,
             'is_player_visible': self.is_player_visible,
+            'npc_ids': [npc.id for npc in self.characters],
         }
+
+
+calendar_event_npc = db.Table(
+    'calendar_event_npc',
+    db.Column('event_id', db.Integer, db.ForeignKey('calendar_event.id', ondelete='CASCADE'), primary_key=True),
+    db.Column('npc_id', db.Integer, db.ForeignKey('npc.id', ondelete='CASCADE'), primary_key=True),
+)
 
 
 class CampaignModuleInstallation(db.Model):
@@ -1405,7 +1580,16 @@ class OccupationDefinition(db.Model):
     minimum_suitability=db.Column(db.Float,nullable=False,default=.42)
     base_wage_cp=db.Column(db.Integer,nullable=False,default=20)
     produces_commodity_key=db.Column(db.String(80),nullable=True)
-    __table_args__=(UniqueConstraint('campaign_id','occupation_key',name='uq_occupation_campaign_key'),)
+    description=db.Column(db.Text,nullable=True)
+    category=db.Column(db.String(80),nullable=True)
+    schedule_archetype=db.Column(db.JSON().with_variant(JSONB(), 'postgresql'),nullable=False,default=dict,server_default='{}')
+    activity_weights=db.Column(db.JSON().with_variant(JSONB(), 'postgresql'),nullable=False,default=dict,server_default='{}')
+    is_custom=db.Column(db.Boolean,nullable=False,default=True,server_default='true')
+    active=db.Column(db.Boolean,nullable=False,default=True,server_default='true')
+    __table_args__=(
+        UniqueConstraint('campaign_id','occupation_key',name='uq_occupation_campaign_key'),
+        UniqueConstraint('id','campaign_id',name='uq_occupation_id_campaign'),
+    )
     def simulation_dict(self):
         return {
             'key':self.occupation_key,
@@ -1422,8 +1606,163 @@ class OccupationDefinition(db.Model):
             'ability_weights':self.ability_weights,
             'target_workers':self.target_workers,
             'base_wage_cp':self.base_wage_cp,
-            'produces_commodity_key':self.produces_commodity_key
+            'produces_commodity_key':self.produces_commodity_key,
+            'description':self.description,
+            'category':self.category,
+            'schedule_archetype':self.schedule_archetype or {},
+            'activity_weights':self.activity_weights or {},
+            'is_custom':self.is_custom,
+            'active':self.active,
         }
+
+
+class NpcOccupationAssociation(db.Model):
+    __tablename__ = 'npc_occupation_association'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    npc_id = db.Column(db.Integer, nullable=False, index=True)
+    occupation_id = db.Column(db.Integer, nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='current', server_default='current')
+    is_primary = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    started_at_world_date = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    ended_at_world_date = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    notes = db.Column(db.Text, nullable=False, default='', server_default='')
+    provenance = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        db.ForeignKeyConstraint(('npc_id', 'campaign_id'), ('npc.id', 'npc.campaign_id'), ondelete='CASCADE'),
+        db.ForeignKeyConstraint(('occupation_id', 'campaign_id'), ('occupation_definition.id', 'occupation_definition.campaign_id'), ondelete='CASCADE'),
+        CheckConstraint("status IN ('current','former','inactive')", name='ck_npc_occupation_status'),
+        db.Index('uq_npc_primary_current_occupation', 'npc_id', unique=True,
+                 postgresql_where=text("status = 'current' AND is_primary"),
+                 sqlite_where=text("status = 'current' AND is_primary")),
+    )
+
+    def to_dict(self):
+        return {key: getattr(self, key) for key in (
+            'id', 'campaign_id', 'npc_id', 'occupation_id', 'status', 'is_primary',
+            'started_at_world_date', 'ended_at_world_date', 'notes', 'provenance')}
+
+
+class NpcRoleAssignment(db.Model):
+    __tablename__ = 'npc_role_assignment'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    npc_id = db.Column(db.Integer, nullable=False, index=True)
+    occupation_association_id = db.Column(db.Integer, db.ForeignKey('npc_occupation_association.id', ondelete='SET NULL'), nullable=True)
+    position_title = db.Column(db.String(160), nullable=False)
+    organization_name = db.Column(db.String(200), nullable=True)
+    organization_element_id = db.Column(db.Integer, db.ForeignKey('game_element.id', ondelete='SET NULL'), nullable=True)
+    employer_business_id = db.Column(db.Integer, db.ForeignKey('settlement_business.id', ondelete='SET NULL'), nullable=True)
+    noble_family_id = db.Column(db.Integer, db.ForeignKey('noble_family.id', ondelete='SET NULL'), nullable=True)
+    workplace_location_id = db.Column(db.Integer, db.ForeignKey('world_atlas_location.id', ondelete='SET NULL'), nullable=True)
+    workplace = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    responsibilities = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=list, server_default='[]')
+    schedule_override = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='active', server_default='active')
+    is_primary = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    priority = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    compensation_cp = db.Column(db.Integer, nullable=True)
+    compensation_period = db.Column(db.String(40), nullable=True)
+    started_at_world_date = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    ended_at_world_date = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    provenance = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    __table_args__ = (
+        db.ForeignKeyConstraint(('npc_id', 'campaign_id'), ('npc.id', 'npc.campaign_id'), ondelete='CASCADE'),
+        CheckConstraint("status IN ('active','former','inactive')", name='ck_npc_role_status'),
+        CheckConstraint('priority >= 0', name='ck_npc_role_priority'),
+    )
+
+    def to_dict(self):
+        return {key: getattr(self, key) for key in (
+            'id', 'campaign_id', 'npc_id', 'occupation_association_id', 'position_title',
+            'organization_name', 'organization_element_id', 'employer_business_id', 'noble_family_id',
+            'workplace_location_id', 'workplace', 'responsibilities', 'schedule_override', 'status',
+            'is_primary', 'priority', 'compensation_cp', 'compensation_period',
+            'started_at_world_date', 'ended_at_world_date', 'provenance')}
+
+
+class NpcSocialPosition(db.Model):
+    __tablename__ = 'npc_social_position'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    npc_id = db.Column(db.Integer, nullable=False, index=True)
+    name = db.Column(db.String(160), nullable=False)
+    category = db.Column(db.String(80), nullable=True)
+    organization_name = db.Column(db.String(200), nullable=True)
+    organization_element_id = db.Column(db.Integer, db.ForeignKey('game_element.id', ondelete='SET NULL'), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='active', server_default='active')
+    is_primary = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    started_at_world_date = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    ended_at_world_date = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    notes = db.Column(db.Text, nullable=False, default='', server_default='')
+    provenance = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    __table_args__ = (
+        db.ForeignKeyConstraint(('npc_id', 'campaign_id'), ('npc.id', 'npc.campaign_id'), ondelete='CASCADE'),
+        CheckConstraint("status IN ('active','former','inactive')", name='ck_npc_social_position_status'),
+    )
+
+    def to_dict(self):
+        return {key: getattr(self, key) for key in (
+            'id', 'campaign_id', 'npc_id', 'name', 'category', 'organization_name',
+            'organization_element_id', 'status', 'is_primary', 'started_at_world_date',
+            'ended_at_world_date', 'notes', 'provenance')}
+
+
+class NpcCombatProfile(db.Model):
+    __tablename__ = 'npc_combat_profile'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    npc_id = db.Column(db.Integer, nullable=False, index=True)
+    name = db.Column(db.String(160), nullable=False, default='Primary', server_default='Primary')
+    authoring_mode = db.Column(db.String(24), nullable=False)
+    ruleset_id = db.Column(db.String(80), nullable=True)
+    ruleset_version = db.Column(db.String(40), nullable=True)
+    template_creature_id = db.Column(db.Integer, db.ForeignKey('creature_catalog.id', ondelete='RESTRICT'), nullable=True)
+    character_id = db.Column(db.Integer, db.ForeignKey('character.id', ondelete='SET NULL'), nullable=True)
+    custom_definition = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    overrides = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    spellcasting = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    is_active = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    provenance = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        db.ForeignKeyConstraint(('npc_id', 'campaign_id'), ('npc.id', 'npc.campaign_id'), ondelete='CASCADE'),
+        CheckConstraint("authoring_mode IN ('template','class','custom','none')", name='ck_npc_combat_authoring_mode'),
+        db.Index('uq_npc_active_combat_profile', 'npc_id', unique=True,
+                 postgresql_where=text('is_active'), sqlite_where=text('is_active')),
+    )
+
+    def to_dict(self):
+        return {key: getattr(self, key) for key in (
+            'id', 'campaign_id', 'npc_id', 'name', 'authoring_mode', 'ruleset_id',
+            'ruleset_version', 'template_creature_id', 'character_id', 'custom_definition',
+            'overrides', 'spellcasting', 'is_active', 'provenance')}
+
+
+class NpcClassProgression(db.Model):
+    __tablename__ = 'npc_class_progression'
+    id = db.Column(db.Integer, primary_key=True)
+    combat_profile_id = db.Column(db.Integer, db.ForeignKey('npc_combat_profile.id', ondelete='CASCADE'), nullable=False, index=True)
+    class_element_id = db.Column(db.Integer, db.ForeignKey('game_element.id', ondelete='SET NULL'), nullable=True)
+    subclass_element_id = db.Column(db.Integer, db.ForeignKey('game_element.id', ondelete='SET NULL'), nullable=True)
+    class_name = db.Column(db.String(100), nullable=False)
+    subclass_name = db.Column(db.String(120), nullable=True)
+    level = db.Column(db.Integer, nullable=False)
+    choices = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict, server_default='{}')
+    source_ruleset = db.Column(db.String(80), nullable=True)
+    display_order = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    __table_args__ = (
+        CheckConstraint('level >= 1 AND level <= 20', name='ck_npc_class_progression_level'),
+        UniqueConstraint('combat_profile_id', 'class_name', name='uq_npc_profile_class_name'),
+    )
+
+    def to_dict(self):
+        return {key: getattr(self, key) for key in (
+            'id', 'combat_profile_id', 'class_element_id', 'subclass_element_id', 'class_name',
+            'subclass_name', 'level', 'choices', 'source_ruleset', 'display_order')}
 
 
 class NobleFamily(db.Model):
@@ -1513,6 +1852,8 @@ class SoundAsset(db.Model):
     name = db.Column(db.String(120), nullable=False)
     filename = db.Column(db.String(255), nullable=False, unique=True)
     original_filename = db.Column(db.String(255), nullable=False)
+    original_byte_size = db.Column(db.BigInteger)
+    content_sha256 = db.Column(db.String(64), unique=True, index=True)
     mimetype = db.Column(db.String(100), nullable=False)
     category = db.Column(db.String(20), nullable=False, default='music', server_default='music')
     cover_filename = db.Column(db.String(255))
@@ -1529,11 +1870,63 @@ class SoundAsset(db.Model):
             'category': self.category,
             'mimetype': self.mimetype,
             'originalFilename': self.original_filename,
+            'byteSize': self.original_byte_size,
             'url': f'/media/sounds/{self.filename}',
             'coverUrl': f'/media/sounds/covers/{self.cover_filename}' if self.cover_filename else None,
             'durationSeconds': self.duration_seconds,
             'uploadedBy': self.uploaded_by.username if self.uploaded_by else None,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SoundUploadJob(db.Model):
+    __tablename__ = 'sound_upload_job'
+
+    id = db.Column(db.String(32), primary_key=True)
+    idempotency_key = db.Column(db.String(128), nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    sound_asset_id = db.Column(db.Integer, db.ForeignKey('sound_asset.id', ondelete='SET NULL'), index=True)
+    name = db.Column(db.String(120), nullable=False)
+    category = db.Column(db.String(20), nullable=False, default='music', server_default='music')
+    original_filename = db.Column(db.String(255), nullable=False)
+    staged_filename = db.Column(db.String(255), nullable=False)
+    mimetype = db.Column(db.String(100), nullable=False)
+    byte_size = db.Column(db.BigInteger, nullable=False)
+    content_sha256 = db.Column(db.String(64), index=True)
+    status = db.Column(db.String(20), nullable=False, default='receiving', server_default='receiving', index=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    error_code = db.Column(db.String(80))
+    error_message = db.Column(db.Text)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+    started_at = db.Column(db.DateTime(timezone=True))
+    finished_at = db.Column(db.DateTime(timezone=True))
+    uploaded_by = db.relationship('User')
+    sound_asset = db.relationship('SoundAsset')
+
+    __table_args__ = (
+        db.UniqueConstraint('uploaded_by_id', 'idempotency_key', name='uq_sound_upload_job_user_key'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'idempotencyKey': self.idempotency_key,
+            'name': self.name,
+            'category': self.category,
+            'originalFilename': self.original_filename,
+            'byteSize': self.byte_size,
+            'status': self.status,
+            'attemptCount': self.attempt_count,
+            'error': ({'code': self.error_code, 'message': self.error_message}
+                      if self.error_code or self.error_message else None),
+            'sound': self.sound_asset.to_dict() if self.sound_asset else None,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+            'startedAt': self.started_at.isoformat() if self.started_at else None,
+            'finishedAt': self.finished_at.isoformat() if self.finished_at else None,
         }
 
 
@@ -1626,6 +2019,31 @@ class SettlementRestActivity(db.Model):
                 'updated_at': self.updated_at.isoformat() if self.updated_at else None}
 
 
+class NpcMapPlacement(db.Model):
+    """The DM's explicit canonical map position for one campaign NPC."""
+    __tablename__ = 'npc_map_placement'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    settlement_id = db.Column(db.Integer, db.ForeignKey('world_atlas_location.id', ondelete='CASCADE'), nullable=False, index=True)
+    npc_id = db.Column(db.Integer, db.ForeignKey('npc.id', ondelete='CASCADE'), nullable=False, index=True)
+    x = db.Column(db.Float, nullable=False)
+    y = db.Column(db.Float, nullable=False)
+    elevation = db.Column(db.Float, nullable=False, default=0)
+    visible = db.Column(db.Boolean, nullable=False, default=True)
+    revision = db.Column(db.Integer, nullable=False, default=1)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('campaign_id', 'npc_id', name='uq_npc_map_placement_campaign_npc'),)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'campaign_id': self.campaign_id, 'settlement_id': self.settlement_id,
+            'npc_id': self.npc_id, 'x': self.x, 'y': self.y, 'elevation': self.elevation,
+            'visible': self.visible, 'revision': self.revision,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class NpcScheduleDefinition(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     npc_id = db.Column(db.Integer, db.ForeignKey('npc.id'), nullable=False, index=True)
@@ -1681,3 +2099,143 @@ class UserColorTheme(db.Model):
     version = db.Column(db.Integer, nullable=False, default=1)
     revision = db.Column(db.Integer, nullable=False, default=1)
     palettes = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False)
+
+
+class SpatialSpace(db.Model):
+    """Campaign-owned coordinate system, optionally backed by a settlement building."""
+    __tablename__ = 'spatial_space'
+    id = db.Column(db.String(36), primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    settlement_id = db.Column(db.Integer, db.ForeignKey('world_atlas_location.id', ondelete='CASCADE'), nullable=True, index=True)
+    building_id = db.Column(db.String(160), nullable=True, index=True)
+    parent_space_id = db.Column(db.String(36), db.ForeignKey('spatial_space.id', ondelete='RESTRICT'), nullable=True, index=True)
+    physical_key = db.Column(db.String(255), nullable=True, unique=True)
+    name = db.Column(db.String(160), nullable=False)
+    space_type = db.Column(db.String(24), nullable=False)
+    status = db.Column(db.String(24), nullable=False, default='planned')
+    coordinate_system = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+    environment_settings = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+    details = db.Column('metadata', db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+    independent_blueprint = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        CheckConstraint("space_type IN ('physical','extradimensional')", name='ck_spatial_space_type'),
+        CheckConstraint("status IN ('planned','draft','complete')", name='ck_spatial_space_status'),
+    )
+
+
+class SpatialEndpoint(db.Model):
+    __tablename__ = 'spatial_endpoint'
+    id = db.Column(db.String(36), primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    space_id = db.Column(db.String(36), db.ForeignKey('spatial_space.id', ondelete='RESTRICT'), nullable=False, index=True)
+    name = db.Column(db.String(160), nullable=True)
+    endpoint_type = db.Column(db.String(32), nullable=False, default='doorway')
+    status = db.Column(db.String(24), nullable=False, default='planned')
+    local_position = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    local_orientation = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    geometry_reference = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    details = db.Column('metadata', db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        CheckConstraint("status IN ('planned','positioned')", name='ck_spatial_endpoint_status'),
+    )
+
+
+class SpatialConnection(db.Model):
+    __tablename__ = 'spatial_connection'
+    id = db.Column(db.String(36), primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    source_endpoint_id = db.Column(db.String(36), db.ForeignKey('spatial_endpoint.id', ondelete='RESTRICT'), nullable=False, index=True)
+    destination_endpoint_id = db.Column(db.String(36), db.ForeignKey('spatial_endpoint.id', ondelete='RESTRICT'), nullable=False, index=True)
+    connection_type = db.Column(db.String(24), nullable=False)
+    bidirectional = db.Column(db.Boolean, nullable=False, default=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    status = db.Column(db.String(24), nullable=False, default='draft')
+    traversal_duration_seconds = db.Column(db.Float, nullable=True)
+    visible_through_opening = db.Column(db.Boolean, nullable=False, default=False)
+    transition_effect = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=True)
+    details = db.Column('metadata', db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        CheckConstraint("connection_type IN ('physical','dimensional','teleportation')", name='ck_spatial_connection_type'),
+        CheckConstraint("status IN ('draft','ready')", name='ck_spatial_connection_status'),
+        CheckConstraint('traversal_duration_seconds IS NULL OR traversal_duration_seconds >= 0', name='ck_spatial_connection_duration'),
+        CheckConstraint('source_endpoint_id <> destination_endpoint_id', name='ck_spatial_connection_distinct_endpoints'),
+    )
+
+
+class SpatialGraphLayout(db.Model):
+    """Presentation-only React Flow state; never interpreted as physical geometry."""
+    __tablename__ = 'spatial_graph_layout'
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), nullable=False, index=True)
+    settlement_id = db.Column(db.Integer, db.ForeignKey('world_atlas_location.id', ondelete='CASCADE'), nullable=False, index=True)
+    building_id = db.Column(db.String(160), nullable=False)
+    view_mode = db.Column(db.String(16), nullable=False, default='space')
+    layout = db.Column(db.JSON().with_variant(JSONB(), 'postgresql'), nullable=False, default=dict)
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    __table_args__ = (
+        UniqueConstraint('campaign_id', 'settlement_id', 'building_id', 'view_mode', name='uq_spatial_graph_layout'),
+        CheckConstraint("view_mode IN ('space','room')", name='ck_spatial_graph_layout_view'),
+    )
+
+
+class NpcMediaAsset(db.Model):
+    """Persistent opaque filesystem asset; module defaults are installed, never edited by campaign APIs."""
+    id = db.Column(db.String(36), primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), index=True)
+    module_key = db.Column(db.String(120))
+    media_type = db.Column(db.String(16), nullable=False)
+    storage_key = db.Column(db.String(100), nullable=False, unique=True)
+    original_filename = db.Column(db.String(255), nullable=False)
+    mime_type = db.Column(db.String(100), nullable=False)
+    file_size = db.Column(db.Integer, nullable=False)
+    sha256 = db.Column(db.String(64), nullable=False)
+    width = db.Column(db.Integer)
+    height = db.Column(db.Integer)
+    duration_ms = db.Column(db.Integer)
+    variants = db.Column(db.JSON, nullable=False, default=dict)
+    status = db.Column(db.String(16), nullable=False, default='ready')
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class NpcVoiceLine(db.Model):
+    id = db.Column(db.String(36), primary_key=True)
+    npc_id = db.Column(db.Integer, db.ForeignKey('npc.id', ondelete='CASCADE'), index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), index=True)
+    module_key = db.Column(db.String(120))
+    source_key = db.Column(db.String(120))
+    inherited_from = db.Column(db.String(36))
+    media_asset_id = db.Column(db.String(36), db.ForeignKey('npc_media_asset.id'), nullable=False)
+    label = db.Column(db.String(160), nullable=False)
+    category = db.Column(db.String(32), nullable=False, default='Custom')
+    transcript = db.Column(db.Text, nullable=False, default='')
+    description = db.Column(db.Text, nullable=False, default='')
+    quick_slot = db.Column(db.Integer)
+    display_order = db.Column(db.Integer, nullable=False, default=0)
+    gain = db.Column(db.Float, nullable=False, default=1)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+
+
+class NpcVoiceTrigger(db.Model):
+    id = db.Column(db.String(36), primary_key=True)
+    voice_line_id = db.Column(db.String(36), db.ForeignKey('npc_voice_line.id', ondelete='CASCADE'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), index=True)
+    inherited_from = db.Column(db.String(36))
+    event_type = db.Column(db.String(80), nullable=False)
+    conditions = db.Column(db.JSON, nullable=False, default=dict)
+    priority = db.Column(db.Integer, nullable=False, default=0)
+    probability = db.Column(db.Float, nullable=False, default=1)
+    cooldown_ms = db.Column(db.Integer, nullable=False, default=0)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    interrupt = db.Column(db.Boolean, nullable=False, default=False)
+    randomized = db.Column(db.Boolean, nullable=False, default=False)
+
+
+class NpcVoiceSettings(db.Model):
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), primary_key=True)
+    automatic_enabled = db.Column(db.Boolean, nullable=False, default=False)

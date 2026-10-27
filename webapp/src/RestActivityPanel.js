@@ -1,3 +1,4 @@
+import NpcIdentity from './NpcIdentity';
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import { Box, Button, Checkbox, FormControlLabel, MenuItem, TextField, Typography } from '@mui/material';
@@ -17,6 +18,7 @@ export default function RestActivityPanel({ campaignId, settlementId, headers, o
   const refresh = useCallback(async () => {
     const { data } = await axios.get(base, { headers, params: { settlement_id: Number(settlementId) } });
     setNpcs(data.npcs); setActivities(data.activities);
+    window.dispatchEvent(new Event('npc-rest-activities-changed'));
   }, [base, headers, settlementId]);
   useEffect(() => { setPreview(null); setNpcId(''); setActivities([]); setError(''); }, [campaignId, settlementId]);
   useEffect(() => {
@@ -43,6 +45,7 @@ export default function RestActivityPanel({ campaignId, settlementId, headers, o
       <TextField select label="NPC seeking rest" size="small" value={npcId} onChange={event => { setNpcId(event.target.value); setPreview(null); }}>
         {npcs.map(npc => <MenuItem key={npc.id} value={npc.id}>{npc.name}</MenuItem>)}
       </TextField>
+      {npcId && <NpcIdentity npcId={Number(npcId)} name={npcs.find(npc=>String(npc.id)===String(npcId))?.name} headers={headers} />}
       {!npcs.length && <Typography variant="caption">No campaign NPCs are available.</Typography>}
       {Object.entries({ resident: 'Resident', staff: 'Staff', authorized: 'Authorized private access', can_open_doors: 'Can open unlocked doors' }).map(([key, label]) =>
         <FormControlLabel key={key} label={label} control={<Checkbox size="small" checked={permissions[key]} onChange={event => { setPermissions(value => ({ ...value, [key]: event.target.checked })); setPreview(null); }} />} />)}

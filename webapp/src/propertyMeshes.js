@@ -14,7 +14,7 @@ const materialFor = (scene, id, color) => {
   return material;
 };
 
-export function createPropertyMeshes(scene, properties, sampleHeight, editing = false) {
+export function createPropertyMeshes(scene, properties, sampleHeight, editing = false, selection = {}) {
   const result = [];
   const materials = [];
   let layerOrder = 0;
@@ -31,9 +31,10 @@ export function createPropertyMeshes(scene, properties, sampleHeight, editing = 
       const height = Number(segment.height) > 0 ? Number(segment.height) : 8;
       const thickness = Number(segment.thickness) > 0 ? Number(segment.thickness) : 1;
       const color = segment.material?.startsWith?.('#') ? segment.material : COLOR[segment.treatment] || COLOR.wall;
-      const material = physical ? materialFor(scene, `boundary-material-${segment.id}`, color) : null;
+      const selectedSegment = selection.segmentId === segment.id;
+      const material = physical ? materialFor(scene, `boundary-material-${segment.id}`, selectedSegment ? '#ffe08a' : color) : null;
       if (material) materials.push(material);
-      const makeRun = (from, to, runHeight = height, bottom = 0, runMaterial = material) => {
+      const makeRun = (from, to, runHeight = height, bottom = 0, runMaterial = material, opening = null) => {
         if (to - from < 0.01) return;
         const offset = (from + to) / 2;
         const x = start.x + dx * offset;
@@ -46,7 +47,9 @@ export function createPropertyMeshes(scene, properties, sampleHeight, editing = 
         mesh.position.set(x / SCALE, (sampleHeight(x, y) + bottom + runHeight / 2) / SCALE, y / SCALE);
         mesh.rotation.y = -Math.atan2(dz, dx);
         mesh.material = runMaterial;
-        mesh.metadata = { kind: 'property-boundary', propertyId: property.id, segmentId: segment.id };
+        mesh.metadata = opening
+          ? { kind: 'property-boundary-opening', propertyId: property.id, segmentId: segment.id, openingId: opening.id }
+          : { kind: 'property-boundary', propertyId: property.id, segmentId: segment.id };
         result.push(mesh);
       };
       if (physical) {
@@ -72,7 +75,9 @@ export function createPropertyMeshes(scene, properties, sampleHeight, editing = 
             makeRun(from, to, height - clearance, clearance);
           }
           if (['gate', 'door'].includes(opening.opening_kind) && opening.state !== 'open') {
-            const panel = materialFor(scene, `gate-material-${opening.id}`, opening.panel_style === 'wrought_iron' ? '#41484b' : '#775039');
+            const panel = materialFor(scene, `gate-material-${opening.id}`, selection.openingId === opening.id
+              ? '#ff6b62'
+              : opening.panel_style === 'wrought_iron' ? '#41484b' : '#775039');
             materials.push(panel);
             const panelHeight = Math.min(height, Number(opening.height) || 7);
             if (opening.panel_style === 'wrought_iron') {
@@ -80,17 +85,37 @@ export function createPropertyMeshes(scene, properties, sampleHeight, editing = 
               const barCount = Math.max(2, Math.ceil((to - from) / 0.8));
               for (let bar = 0; bar <= barCount; bar += 1) {
                 const center = from + (to - from) * bar / barCount;
-                makeRun(Math.max(from, center - barWidth / 2), Math.min(to, center + barWidth / 2), panelHeight, 0, panel);
+                makeRun(Math.max(from, center - barWidth / 2), Math.min(to, center + barWidth / 2), panelHeight, 0, panel, opening);
               }
-              makeRun(from, to, 0.16, Math.max(0, panelHeight * 0.22), panel);
-              makeRun(from, to, 0.16, Math.max(0, panelHeight * 0.78), panel);
+              makeRun(from, to, 0.16, Math.max(0, panelHeight * 0.22), panel, opening);
+              makeRun(from, to, 0.16, Math.max(0, panelHeight * 0.78), panel, opening);
             } else if (opening.leaf_configuration === 'double') {
               const middle = (from + to) / 2;
-              makeRun(from, middle - 0.04, panelHeight, 0, panel);
-              makeRun(middle + 0.04, to, panelHeight, 0, panel);
+              makeRun(from, middle - 0.04, panelHeight, 0, panel, opening);
+              makeRun(middle + 0.04, to, panelHeight, 0, panel, opening);
             } else {
-              makeRun(from, to, panelHeight, 0, panel);
+              makeRun(from, to, panelHeight, 0, panel, opening);
             }
+          }
+          if (editing) {
+            const center = (from + to) / 2;
+            const handleX = start.x + dx * center;
+            const handleY = start.y + dz * center;
+            const handle = MeshBuilder.CreateBox(`boundary-opening-handle-${opening.id}`, {
+              width: Math.min(2, Math.max(1, to - from)) / SCALE,
+              height: 2 / SCALE,
+              depth: Math.max(1.5, thickness + 0.5) / SCALE,
+            }, scene);
+            handle.position.set(handleX / SCALE, (sampleHeight(handleX, handleY) + 1) / SCALE, handleY / SCALE);
+            handle.rotation.y = -Math.atan2(dz, dx);
+            const handleMaterial = materialFor(scene, `boundary-opening-handle-material-${opening.id}`,
+              selection.openingId === opening.id ? '#ff6b62' : '#ffe08a');
+            handleMaterial.alpha = selection.openingId === opening.id ? 0.9 : 0.55;
+            materials.push(handleMaterial);
+            handle.material = handleMaterial;
+            handle.metadata = { kind: 'property-boundary-opening', propertyId: property.id,
+              segmentId: segment.id, openingId: opening.id };
+            result.push(handle);
           }
         });
       } else if (editing) {
@@ -101,8 +126,9 @@ export function createPropertyMeshes(scene, properties, sampleHeight, editing = 
             point.y / SCALE,
           )),
         }, scene);
-        line.color = Color3.FromHexString('#ff2d2d');
-        line.isPickable = false;
+        line.color = Color3.FromHexString(selectedSegment ? '#ffe08a' : '#ff2d2d');
+        line.isPickable = true;
+        line.metadata = { kind: 'property-boundary', propertyId: property.id, segmentId: segment.id };
         result.push(line);
       }
     });
